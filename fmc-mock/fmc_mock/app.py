@@ -7,6 +7,9 @@ Configuration (environment):
   MOCK_PASSWORD_FILE       file holding the API password (required)
   MOCK_TOKEN_TTL_SECONDS   token lifetime (default 1800, as on a real FMC)
   MOCK_GET_PER_MINUTE      GET rate limit per IP (default 300, as on a real FMC)
+  MOCK_CLUSTERS            number of FTD HA pairs to generate (default 3)
+  MOCK_RULES_PER_POLICY    approximate rules per access policy (default 200)
+  MOCK_SEED                generator seed (default 1) — same seed, same data
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ from fastapi.responses import JSONResponse
 
 from fmc_mock.auth import TokenStore
 from fmc_mock.limits import GET_PER_MINUTE, FmcLimitsMiddleware
+from fmc_mock.resources import build_router
+from fmc_mock.seed import FmcData, generate
 
 GLOBAL_DOMAIN_UUID = "e276abec-e0f2-11e3-8169-6d9ed49b625f"
 SERVER_VERSION = "10.1.0 (build 117)"
@@ -39,7 +44,11 @@ def _unauthorized() -> JSONResponse:
     )
 
 
-def create_app(store: TokenStore | None = None, get_per_minute: int | None = None) -> FastAPI:
+def create_app(
+    store: TokenStore | None = None,
+    get_per_minute: int | None = None,
+    data: FmcData | None = None,
+) -> FastAPI:
     if store is None:
         password = Path(os.environ["MOCK_PASSWORD_FILE"]).read_text(encoding="utf-8").strip()
         store = TokenStore(
@@ -48,9 +57,16 @@ def create_app(store: TokenStore | None = None, get_per_minute: int | None = Non
             ttl_seconds=float(os.environ.get("MOCK_TOKEN_TTL_SECONDS", "1800")),
         )
     limit = get_per_minute or int(os.environ.get("MOCK_GET_PER_MINUTE", str(GET_PER_MINUTE)))
+    if data is None:
+        data = generate(
+            clusters=int(os.environ.get("MOCK_CLUSTERS", "3")),
+            rules_per_policy=int(os.environ.get("MOCK_RULES_PER_POLICY", "200")),
+            seed=int(os.environ.get("MOCK_SEED", "1")),
+        )
 
     app = FastAPI(title="FMC 10.1 mock", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.tokens = store
+    app.state.data = data
     app.add_middleware(FmcLimitsMiddleware, get_per_minute=limit)
 
     def token_headers(access: str, refresh: str) -> dict[str, str]:
@@ -104,4 +120,11 @@ def create_app(store: TokenStore | None = None, get_per_minute: int | None = Non
             }
         )
 
+    app.include_router(
+        build_router(
+            data,
+            GLOBAL_DOMAIN_UUID,
+            lambda request: store.valid(request.headers.get("X-auth-access-token")),
+        )
+    )
     return app
