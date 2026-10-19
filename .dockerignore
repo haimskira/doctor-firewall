@@ -1,0 +1,27 @@
+# Build context is the repo root; send only what the Dockerfiles COPY.
+**
+!backend/app/**
+!backend/alembic/**
+!backend/alembic.ini
+!backend/requirements*.txt
+!backend/pyproject.toml
+!backend/tests/**
+!fmc-mock/fmc_mock/**
+!fmc-mock/tests/**
+!fmc-mock/requirements.txt
+!fmc-mock/pyproject.toml
+!frontend/**
+!infra/nginx/**
+!vendor/wheels/**
+!vendor/npm-cache/**
+
+# never, even inside allowed trees
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+frontend/dist
+**/*.pem
+**/*.key
+**/.env

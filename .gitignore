@@ -1,0 +1,51 @@
+# ---- Secrets: never in Git ----
+.env
+*.env
+!.env.example
+infra/secrets/
+infra/certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ---- Offline bundle & vendored deps: transferred separately (media/scp), never in Git ----
+vendor/
+dist/
+*.tar
+*.tar.gz
+*.tgz
+*.whl
+
+# ---- Local spec drafts (kept out of the public repo) ----
+/firewall-doctrine.html
+/firewall-policy-system-spec.html
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# ---- Node ----
+node_modules/
+frontend/dist/
+frontend/coverage/
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+reports/
+
+# CI scratch (ephemeral secrets/certs)
+infra/.ci/
