@@ -1,0 +1,4 @@
+# FMC 10.1 emulator for dev/test only. Never shipped to production.
+fastapi
+uvicorn
+pydantic

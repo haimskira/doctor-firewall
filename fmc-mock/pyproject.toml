@@ -1,0 +1,29 @@
+[project]
+name = "fmc-mock"
+version = "0.1.0"
+description = "FMC 10.1 REST API emulator for development and tests (never shipped to production)"
+requires-python = ">=3.12,<3.13"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "N", "C4", "SIM", "RUF", "PT", "DTZ", "T20", "BLE", "ERA"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fmc_mock"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
