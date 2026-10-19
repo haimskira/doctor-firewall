@@ -65,6 +65,13 @@ user `api_user`, password in `infra/secrets/fmc_mock_password`.
 | Stop the dev stack | `.\scripts\dev-up.ps1 --down` |
 | Re-lock dependencies after editing `*.in` / `package.json` | `.\scripts\lock-deps.ps1` then `.\scripts\vendor.ps1` |
 
+Editor support (VS Code type information) needs local `node_modules`; builds and CI do not
+use them (they run in the pinned Node container). Use Node 22.23+ locally, then:
+
+```powershell
+cd frontend; npm ci
+```
+
 Line endings are handled by `.gitattributes` (LF everywhere, CRLF for `*.ps1`), so scripts
 and container files work on both platforms.
 
