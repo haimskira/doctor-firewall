@@ -34,12 +34,12 @@ Source of truth for requirements: the system specification and the firewall doct
 | `worker` | same image, `python -m app.workers.worker` | RQ jobs (JSON serializer, allow-listed functions) |
 | `scheduler` | same image, `python -m app.workers.scheduler` | periodic jobs (interval slots claimed in Redis) |
 | `migrate` | same image, `alembic upgrade head` | one-shot, runs as schema owner before api/worker start |
-| `postgres` | `postgres:16` (digest-pinned) | system of record (JSONB + recursive CTEs for the object graph) |
+| `postgres` | `doctor-firewall/postgres` (from digest-pinned `postgres:16.15`) | system of record (JSONB + recursive CTEs for the object graph); starts as `postgres`, gosu removed |
 | `redis` | `redis:7.4` (digest-pinned) | password-protected, admin commands disabled |
 | `fmc-mock` | dev/CI only | FMC 10.1 emulator over TLS |
 
-All containers run as non-root, `read_only` root FS, `cap_drop: ALL`, `no-new-privileges`
-(postgres keeps the minimal capabilities its entrypoint needs).
+All containers run as non-root from the first process, `read_only` root FS,
+`cap_drop: ALL` (nothing added back), `no-new-privileges`.
 
 ## Backend layout (`backend/app`)
 

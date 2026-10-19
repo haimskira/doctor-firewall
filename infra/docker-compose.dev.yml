@@ -5,6 +5,11 @@
 # (signed by the throw-away dev CA that the backend trusts), and dev settings.
 
 services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: infra/docker/postgres.Dockerfile
+
   api:
     build:
       context: ..

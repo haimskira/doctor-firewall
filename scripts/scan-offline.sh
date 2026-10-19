@@ -20,7 +20,7 @@ log "Lock files (requirements*.txt, package-lock.json)"
 ok "no known vulnerable dependencies"
 
 log "Images (fixable HIGH/CRITICAL)"
-for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "$POSTGRES_IMAGE" "$REDIS_IMAGE"; do
+for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "$REDIS_IMAGE"; do
     docker save "$image" | "${TRIVY[@]}" -i --entrypoint sh "$TRIVY_IMAGE" -c \
         "cat > /tmp/i.tar && trivy image --input /tmp/i.tar ${COMMON[*]} --ignore-unfixed --severity HIGH,CRITICAL"
     ok "$image"

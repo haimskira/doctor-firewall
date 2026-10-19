@@ -12,6 +12,7 @@
 !fmc-mock/pyproject.toml
 !frontend/**
 !infra/nginx/**
+!infra/postgres/init/**
 !vendor/wheels/**
 !vendor/npm-cache/**
 

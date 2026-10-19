@@ -5,15 +5,13 @@ name: doctor-firewall-ci
 
 services:
   postgres:
-    image: postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+    image: doctor-firewall/postgres:ci
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
       POSTGRES_DB: postgres
     secrets: [db_admin_password, db_owner_password, db_app_password]
-    volumes:
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-    tmpfs: ["/var/lib/postgresql/data"]
+    tmpfs: ["/var/lib/postgresql/data:uid=999,gid=999,mode=0700", "/var/run/postgresql:uid=999,gid=999,mode=2775"]
     networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d doctor_firewall -h 127.0.0.1"]

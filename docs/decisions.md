@@ -3,6 +3,18 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-010 — Derived PostgreSQL image without gosu
+The offline image gate found 25 fixable HIGH/CRITICAL issues in `gosu` (static Go binary,
+old Go stdlib) in both the Debian and Alpine `postgres:16.15` images. We never need it:
+`infra/docker/postgres.Dockerfile` removes it and starts as `postgres` directly, which also
+lets the container run with `cap_drop: ALL` and a read-only root FS. The role bootstrap
+script is baked into the image.
+
+### D-009 — nginx 1.30.6 alpine-slim base
+`nginx-unprivileged:1.28.2-alpine` had fixable HIGH/CRITICAL CVEs (nginx, pcre2, zlib,
+libtiff). The current stable line on the `-slim` variant (no image-filter/njs modules) scans
+clean.
+
 ### D-008 — PowerShell scripts delegate to the POSIX scripts
 Every `scripts/*.ps1` runs the matching `*.sh` through Git for Windows' `bash.exe`. One
 implementation means Windows and Linux execute identical logic and cannot drift; Git for

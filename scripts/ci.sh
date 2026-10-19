@@ -24,6 +24,7 @@ trap cleanup EXIT
 log "Building images (offline, from vendor/)"
 docker build -q -f "$INFRA_HOST/docker/backend.Dockerfile" --target test -t doctor-firewall/api-test:ci "$ROOT_HOST" >/dev/null
 docker build -q -f "$INFRA_HOST/docker/fmc-mock.Dockerfile" -t doctor-firewall/fmc-mock:ci "$ROOT_HOST" >/dev/null
+docker build -q -f "$INFRA_HOST/docker/postgres.Dockerfile" -t doctor-firewall/postgres:ci "$ROOT_HOST" >/dev/null
 docker build -q -f "$INFRA_HOST/docker/web.Dockerfile" --target test -t doctor-firewall/web-test:ci "$ROOT_HOST" >/dev/null
 ok "images built"
 
