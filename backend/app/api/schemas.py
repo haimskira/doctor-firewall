@@ -86,12 +86,16 @@ class UserResponse(BaseModel):
 # ---- FMC connection (admin) ----
 
 
+SyncInterval = Annotated[int, Field(ge=15, le=10080)]
+
+
 class FmcConnectionCreate(StrictModel):
     name: ConnectionName
     host: Host
     port: Annotated[int, Field(ge=1, le=65535)] = 443
     username: Username
     password: Password
+    sync_interval_minutes: SyncInterval | None = None
 
 
 class FmcConnectionUpdate(StrictModel):
@@ -100,6 +104,8 @@ class FmcConnectionUpdate(StrictModel):
     port: Annotated[int, Field(ge=1, le=65535)] | None = None
     username: Username | None = None
     password: Password | None = None
+    sync_interval_minutes: SyncInterval | None = None
+    disable_sync: bool = False
 
 
 class FmcConnectionResponse(BaseModel):
@@ -112,6 +118,7 @@ class FmcConnectionResponse(BaseModel):
     server_version: str | None
     last_test_at: datetime | None
     last_test_ok: bool | None
+    sync_interval_minutes: int | None
 
 
 class FmcTestResponse(BaseModel):

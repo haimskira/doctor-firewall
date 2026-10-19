@@ -53,6 +53,7 @@ def _to_response(conn: FmcConnection) -> FmcConnectionResponse:
         server_version=conn.server_version,
         last_test_at=conn.last_test_at,
         last_test_ok=conn.last_test_ok,
+        sync_interval_minutes=conn.sync_interval_minutes,
     )
 
 
@@ -113,6 +114,7 @@ def create_connection(
         host=body.host,
         port=body.port,
         username=body.username,
+        sync_interval_minutes=body.sync_interval_minutes,
         password_enc=box.encrypt(body.password.encode(), FmcConnection.password_context(conn_id)),
     )
     db.add(conn)
@@ -146,14 +148,23 @@ def update_connection(
         if value is not None and value != getattr(conn, field):
             setattr(conn, field, value)
             changed.append(field)
+    if body.disable_sync and conn.sync_interval_minutes is not None:
+        conn.sync_interval_minutes = None
+        changed.append("sync_interval_minutes")
+    elif body.sync_interval_minutes is not None and (
+        body.sync_interval_minutes != conn.sync_interval_minutes
+    ):
+        conn.sync_interval_minutes = body.sync_interval_minutes
+        changed.append("sync_interval_minutes")
     if body.password is not None:
         conn.password_enc = box.encrypt(
             body.password.encode(), FmcConnection.password_context(conn.id)
         )
         changed.append("password")
-    if changed:
+    if set(changed) & {"name", "host", "port", "username", "password"}:
         # Connection identity changed: the last test result no longer applies.
         conn.last_test_ok = None
+    if changed:
         _audit(
             audit,
             db,
