@@ -48,7 +48,9 @@ All containers run as non-root from the first process, `read_only` root FS,
 | `core/` | settings (secrets from files), crypto keyring/AES-GCM, JSON logging with masking, error handling, ASGI security middleware, thread-safe singletons |
 | `auth/` | Argon2id passwords, provider abstraction (`local` now; TACACS+/LDAP in phase 6 — roles stay local), Redis sessions, login throttle, RBAC + CSRF dependencies |
 | `audit/` | HMAC hash-chained, append-only audit log |
-| `fmc/` | FMC REST client (token lifecycle, verified TLS, response validation); version adapters arrive in phase 1 |
+| `fmc/` | FMC REST client (token lifecycle, verified TLS, token-bucket throttle, 429 backoff, paging), `normalize` (canonical values), `records` (version-neutral records), `adapters/` (FMC 10.1) |
+| `collector/` | snapshot lifecycle (`runner`), staged checkpointed collection (`service`), bulk storage (`store`), rule match signature |
+| `analysis/` | object-group graph algorithms (cycles, depth, duplicate paths) and phase-1 findings |
 | `api/` | routers; every route declares a guard (enforced by test) |
 | `models/` + `alembic/` | ORM models, migrations (run as owner role) |
 | `workers/` | queues, jobs, allow-list worker, scheduler |
@@ -63,8 +65,9 @@ All containers run as non-root from the first process, `read_only` root FS,
 | Reuse one token; refresh ≤ 3 times then regenerate; revoke at end | done (per session); shared cross-worker token manager in phase 1 |
 | `Domain_UUID` kept as a parameter (single Global domain today) | done (stored per connection) |
 | Verified TLS against internal trust store, hostname checked | done |
-| Paging `offset/limit` (max 1000), `expanded=true`, hit counts | phase 1 |
-| Limits: 300 GET/min/IP, 10 connections/IP, 1 write at a time, 2 MB payload | mock enforces all; client token bucket + Redis write lock in phase 1 / 5 |
+| Paging `offset/limit` (max 1000), `expanded=true`, hit counts per device | done |
+| Limits: 300 GET/min/IP, 10 connections/IP | done: token bucket (default 240/min) + concurrency cap (4) + 429 backoff with `Retry-After` |
+| 1 write at a time, 2 MB payload | mock enforces; Redis write lock in phase 5 |
 | Writes: GET → merge → PUT with version; dependency ordering; bulk ≤ 1000 rules | phase 5 |
 | Deploy as async job, poll `jobhistories` until DEPLOYED, rollback requests, ticket ids | phase 5 |
 
@@ -73,9 +76,41 @@ All containers run as non-root from the first process, `read_only` root FS,
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Secure foundation: auth, RBAC, audit, secrets, FMC client core + connection test, mock, offline build/CI/bundle, UI shell (he/en) | **done** |
-| 1 | Collection & mapping (MVP): version adapter 10.1, paged/checkpointed pull of policies, rules (order + category), objects, groups, zones, routes, hit counts; snapshots; object graph; faithful rulebase view; where-used / membership; basic duplicates | next |
-| 2 | Analysis & score: ACE expansion, shadowing, dead rules/objects, asset table + bootstrap, explained rule score | |
+| 1 | Collection & mapping (MVP): version adapter 10.1, paged/checkpointed pull of policies, rules (order + category), objects, groups, zones, interfaces, static routes, BGP, hit counts; snapshots with retention and auto-sync; object graph; faithful rulebase view; where-used / membership; basic duplicates, nesting, cycles, literals, unused | **done** |
+| 2 | Analysis & score: ACE expansion, shadowing, dead rules/objects, asset table + bootstrap, explained rule score | next |
 | 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview & deploy cost | |
 | 4 | Connectivity map: three views, filtering, risk colouring, before/after | |
 | 5 | Controlled enforcement: changesets, batching under the per-cluster deploy limit, approval, deploy, verification, rollback | |
 | 6 | SSL/IPS recommendations; TACACS+ (ISE) and LDAP providers | |
+
+## Collection (phase 1)
+
+```
+POST /api/fmc/connections/{id}/collect      (collect:run)   -> snapshot "pending" -> RQ "collect"
+worker: run_collection
+  token -> serverversion -> select_adapter("10.1") (unknown versions are refused)
+  objects (15 resource types, paged, checkpointed per page)
+  devices + HA pairs + policy assignments -> clusters
+  per assigned access policy: categories, rules (paged; count verified), hit counts per unit
+  per cluster (primary unit): interfaces (4 kinds), IPv4 static routes, BGP
+  stub objects for referenced-only ids (applications, …); connected routes from interfaces
+  -> "complete" -> RQ "analysis" -> findings -> analyzed_at
+```
+
+* **Read-only**: GET only (plus the token lifecycle).
+* **Resume**: `POST /api/snapshots/{id}/resume` continues a failed run from the last committed page.
+* **Consistency**: if a policy's collected rule count differs from the FMC's total (config changed
+  mid-pull), that policy is discarded and the run fails with `config_changed`; resume re-reads it.
+* **Auto-sync**: per connection `sync_interval_minutes` (15–10080); the scheduler checks every 5 min.
+* **Retention**: newest `DF_SNAPSHOT_RETENTION` (default 10) finished snapshots per connection.
+* **Runtime routing table**: the config API provides interfaces, static routes and BGP neighbours;
+  BGP-learned routes (the device's live routing table) are not part of the configuration API and
+  are not collected yet — see the open question in the phase-1 report.
+
+### Payload validation before production
+
+The 10.1 adapter's schemas follow the documented API and the FMC mock. Before the first pull from
+the production FMC, run a collection against it in a test window and review any `unexpected_response`
+failure: the error names the resource, the item id and the offending fields (never values). Real,
+sanitised payloads (accessrules `expanded=true`, networkgroups, hitcounts, ipv4staticroutes) can be
+added as adapter test fixtures to lock the behaviour in.

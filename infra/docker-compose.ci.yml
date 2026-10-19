@@ -39,6 +39,12 @@ services:
     environment:
       MOCK_USERNAME: api_user
       MOCK_PASSWORD_FILE: /run/secrets/fmc_mock_password
+      MOCK_CLUSTERS: "2"
+      MOCK_RULES_PER_POLICY: "150"
+      MOCK_SEED: "1"
+      # Many collections run back to back in tests; the 300/min limit itself is
+      # covered by the mock's and the client's own tests.
+      MOCK_GET_PER_MINUTE: "100000"
     secrets: [fmc_mock_password]
     volumes:
       - ./.ci/certs/fmc-mock:/certs:ro
@@ -62,6 +68,9 @@ services:
       DF_MIGRATION_DB_PASSWORD_FILE: /run/secrets/db_owner_password
       DF_TEST_OTHER_CA: /ci-certs/other-ca.pem
       DF_TEST_FMC_PASSWORD_FILE: /run/secrets/fmc_mock_password
+      MOCK_CLUSTERS: "2"
+      MOCK_RULES_PER_POLICY: "150"
+      MOCK_SEED: "1"
     secrets: [db_owner_password, db_app_password, redis_password, master_keyring, fmc_mock_password]
     volumes:
       - ./.ci/certs/trust:/ci-certs:ro

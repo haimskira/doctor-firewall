@@ -62,6 +62,25 @@ conn_id="$(call POST /api/fmc/connections \
 result="$(call POST "/api/fmc/connections/$conn_id/test")"
 [[ "$(json_field "['ok']" <<<"$result")" == "True" ]] || die "FMC test failed: $result"
 ok "FMC $(json_field "['server_version']" <<<"$result"), domain $(json_field "['domain_uuid']" <<<"$result")"
+
+log "Read-only pull into a snapshot, then analysis"
+snap_id="$(call POST "/api/fmc/connections/$conn_id/collect" | json_field "['id']")"
+status="pending"
+for _ in $(seq 1 120); do
+    snap="$(call GET "/api/snapshots/$snap_id")"
+    status="$(json_field "['status']" <<<"$snap")"
+    analyzed="$(json_field "['analyzed_at']" <<<"$snap")"
+    [[ "$status" == "complete" && "$analyzed" != "None" ]] && break
+    [[ "$status" == "failed" ]] && die "collection failed: $snap"
+    sleep 2
+done
+[[ "$status" == "complete" ]] || die "collection did not finish in time (status $status)"
+ok "snapshot $snap_id: $(json_field "['stats']['rules']" <<<"$snap") rules, $(json_field "['stats']['objects']" <<<"$snap") objects, $(json_field "['stats']['clusters']" <<<"$snap") clusters"
+policy="$(call GET "/api/snapshots/$snap_id/clusters" | json_field "[0]['policy_fmc_id']")"
+first_rule="$(call GET "/api/snapshots/$snap_id/policies/$policy/rules?limit=1" | json_field "['rows'][0]['name']")"
+findings="$(call GET "/api/snapshots/$snap_id/findings?limit=1" | json_field "['total']")"
+[[ "$findings" -gt 0 ]] || die "analysis produced no findings"
+ok "rulebase readable (first rule: $first_rule); $findings findings"
 call DELETE "/api/fmc/connections/$conn_id" >/dev/null
 
 log "Audit chain"

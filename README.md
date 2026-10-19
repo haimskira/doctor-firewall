@@ -6,10 +6,12 @@ configuration from the FMC **read-only**, analyses them against the firewall doc
 recommends clean-ups and SSL/IPS placement, and pushes changes **only** after explicit
 approval, in batches that never exceed the deploy limit.
 
-> **Status: phase 0 — secure foundation.** Authentication, RBAC, tamper-evident audit,
-> encrypted credential storage, a verified-TLS FMC client (connection test), the FMC 10.1
-> mock, the offline build/CI/bundle pipeline and the UI shell (Hebrew/English) are done.
-> Data collection (phase 1) is next. See [docs/architecture.md](docs/architecture.md#roadmap).
+> **Status: phase 1 — collection & mapping (MVP).** On top of the secure foundation (auth,
+> RBAC, tamper-evident audit, encrypted credentials, offline build/CI/bundle), the system pulls
+> the full configuration of every cluster read-only into versioned snapshots, shows the rulebase
+> exactly as in the FMC, explores objects (where-used, membership) and reports the first findings
+> (duplicates, cycles, deep nesting, orphan literals, unused objects). Phase 2 (analysis & score)
+> is next. See [docs/architecture.md](docs/architecture.md#roadmap).
 
 The system is designed for an **air-gapped production network**: nothing at runtime talks to
 anything except the FMC, and production installs from an offline bundle without internet.

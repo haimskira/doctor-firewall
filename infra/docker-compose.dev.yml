@@ -43,6 +43,9 @@ services:
     environment:
       MOCK_USERNAME: api_user
       MOCK_PASSWORD_FILE: /run/secrets/fmc_mock_password
+      # A realistic-size demo estate: 3 HA pairs, ~2,000 rules each.
+      MOCK_CLUSTERS: "3"
+      MOCK_RULES_PER_POLICY: "2000"
     secrets: [fmc_mock_password]
     volumes:
       - ./certs/fmc-mock/fmc-mock.pem:/certs/fmc-mock.pem:ro
