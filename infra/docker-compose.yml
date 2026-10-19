@@ -70,7 +70,9 @@ services:
 
   redis:
     <<: *hardening
-    image: redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    # Tagged locally from redis:7.4.11-bookworm@sha256:4fa24486b8bc... (see scripts/lib.sh):
+    # plain tags survive `docker load` on the offline server.
+    image: doctor-firewall/redis:${DF_VERSION:?set DF_VERSION in .env}
     user: "999:999"
     entrypoint: ["sh", "/usr/local/bin/df-redis-start.sh"]
     secrets: [redis_password]

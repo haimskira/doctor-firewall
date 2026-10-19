@@ -14,6 +14,7 @@ for image in "${BASE_IMAGES[@]}"; do
     docker pull -q "$image" >/dev/null
     ok "$image"
 done
+docker tag "$TRIVY_IMAGE" "$TRIVY_LOCAL"
 
 log "Downloading Python wheels (Linux, hash-verified)"
 mkdir -p "$VENDOR/wheels"

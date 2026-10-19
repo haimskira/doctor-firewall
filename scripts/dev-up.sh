@@ -25,6 +25,7 @@ if [[ ! -f "$INFRA/.env" ]]; then
 fi
 
 init_secret_dir "$INFRA/secrets" with_mock
+docker tag "$REDIS_IMAGE" doctor-firewall/redis:dev
 log "Building images (offline)"
 "${COMPOSE[@]}" build --quiet
 DF_VERSION=dev "$ROOT/scripts/gen-certs.sh" --dev

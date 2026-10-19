@@ -15,13 +15,13 @@ TRIVY=(docker run --rm --tmpfs /cache -v "$(host_path "$CACHE/db"):/cache/db:ro"
 COMMON=(--cache-dir /cache --skip-db-update --skip-java-db-update --offline-scan --quiet --scanners vuln --exit-code 1)
 
 log "Lock files (requirements*.txt, package-lock.json)"
-"${TRIVY[@]}" -v "$ROOT_HOST:/repo:ro" "$TRIVY_IMAGE" fs "${COMMON[@]}" \
+"${TRIVY[@]}" -v "$ROOT_HOST:/repo:ro" "$TRIVY_LOCAL" fs "${COMMON[@]}" \
     --skip-dirs /repo/vendor --skip-dirs /repo/frontend/node_modules /repo
 ok "no known vulnerable dependencies"
 
 log "Images (fixable HIGH/CRITICAL)"
-for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "$REDIS_IMAGE"; do
-    docker save "$image" | "${TRIVY[@]}" -i --entrypoint sh "$TRIVY_IMAGE" -c \
+for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "doctor-firewall/redis:$VERSION"; do
+    docker save "$image" | "${TRIVY[@]}" -i --entrypoint sh "$TRIVY_LOCAL" -c \
         "cat > /tmp/i.tar && trivy image --input /tmp/i.tar ${COMMON[*]} --ignore-unfixed --severity HIGH,CRITICAL"
     ok "$image"
 done

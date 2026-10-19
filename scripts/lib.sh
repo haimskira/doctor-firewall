@@ -16,6 +16,10 @@ NGINX_IMAGE="nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a
 POSTGRES_IMAGE="postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4"
 REDIS_IMAGE="redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85"
 TRIVY_IMAGE="aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222"
+# Local plain tags for third-party images used at runtime on the offline server.
+# `docker load` does not reliably keep repo digests, so compose/scripts there refer to
+# these tags (created from the digest-pinned images) instead of name@digest.
+TRIVY_LOCAL="doctor-firewall/trivy:0.76.0"
 BASE_IMAGES=("$PYTHON_IMAGE" "$NODE_IMAGE" "$NGINX_IMAGE" "$POSTGRES_IMAGE" "$REDIS_IMAGE" "$TRIVY_IMAGE")
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

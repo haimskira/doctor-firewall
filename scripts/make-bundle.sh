@@ -43,10 +43,12 @@ docker build -q -f "$INFRA_HOST/docker/web.Dockerfile" --target runtime \
     --label "org.opencontainers.image.version=$VERSION" --label "org.opencontainers.image.revision=$SHA" \
     -t "doctor-firewall/web:$VERSION" "$ROOT_HOST" >/dev/null
 docker build -q -f "$INFRA_HOST/docker/postgres.Dockerfile"     --label "org.opencontainers.image.version=$VERSION" --label "org.opencontainers.image.revision=$SHA"     -t "doctor-firewall/postgres:$VERSION" "$ROOT_HOST" >/dev/null
+docker tag "$REDIS_IMAGE" "doctor-firewall/redis:$VERSION"
+docker tag "$TRIVY_IMAGE" "$TRIVY_LOCAL"
 ok "images built"
 
 log "Scanning runtime images offline (Trivy, fixable HIGH/CRITICAL fail the bundle)"
-for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "$REDIS_IMAGE"; do
+for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "doctor-firewall/redis:$VERSION"; do
     # Writable tmpfs cache with the vulnerability DB mounted read-only inside it.
     docker save "$image" | docker run --rm -i --tmpfs /cache \
         -v "$(host_path "$VENDOR/trivy-cache/db"):/cache/db:ro" \
@@ -59,7 +61,9 @@ done
 
 log "Writing bundle to dist/$NAME"
 rm -rf "$OUT"; mkdir -p "$OUT/vendor"
-IMAGES=("doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "$REDIS_IMAGE" "$TRIVY_IMAGE")
+# Plain tags only: they survive `docker load` on any image store.
+IMAGES=("doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION"
+        "doctor-firewall/redis:$VERSION" "$TRIVY_LOCAL")
 docker save "${IMAGES[@]}" | gzip -6 > "$OUT/images.tar.gz"
 cp -r "$VENDOR/wheels" "$VENDOR/npm-cache" "$VENDOR/trivy-cache" "$OUT/vendor/"
 
