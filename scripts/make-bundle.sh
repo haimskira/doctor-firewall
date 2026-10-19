@@ -63,7 +63,7 @@ IMAGES=("doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-fi
 docker save "${IMAGES[@]}" | gzip -6 > "$OUT/images.tar.gz"
 cp -r "$VENDOR/wheels" "$VENDOR/npm-cache" "$VENDOR/trivy-cache" "$OUT/vendor/"
 
-python - "$OUT/manifest.json" "$VERSION" "$SHA" "$(cat "$VENDOR/trivy-cache/DOWNLOADED_AT" 2>/dev/null || echo unknown)" "${IMAGES[@]}" <<'PY'
+"$PYTHON" - "$ROOT_HOST/dist/$NAME/manifest.json" "$VERSION" "$SHA" "$(cat "$VENDOR/trivy-cache/DOWNLOADED_AT" 2>/dev/null || echo unknown)" "${IMAGES[@]}" <<'PY'
 import json, subprocess, sys, datetime
 out, version, sha, trivy_date, *images = sys.argv[1:]
 ids = {img: subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", img],

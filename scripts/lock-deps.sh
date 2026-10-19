@@ -7,12 +7,12 @@
 # the pinned Node image, as below.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-command -v python >/dev/null || die "python is required"
-python -m uv --version >/dev/null 2>&1 || die "uv is required: python -m pip install --user uv"
-CUTOFF="$(python -c 'import datetime as d; print((d.date.today()-d.timedelta(days=14)).isoformat())')"
+command -v "$PYTHON" >/dev/null || die "$PYTHON is required"
+"$PYTHON" -m uv --version >/dev/null 2>&1 || die "uv is required: $PYTHON -m pip install --user uv"
+CUTOFF="$("$PYTHON" -c 'import datetime as d; print((d.date.today()-d.timedelta(days=14)).isoformat())')"
 
 for req in backend/requirements backend/requirements-dev fmc-mock/requirements; do
-    python -m uv pip compile --quiet --universal --python-version 3.12 --generate-hashes \
+    "$PYTHON" -m uv pip compile --quiet --universal --python-version 3.12 --generate-hashes \
         --exclude-newer "$CUTOFF" --no-header "$ROOT/$req.in" -o "$ROOT/$req.txt"
     ok "$req.txt"
 done

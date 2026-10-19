@@ -29,6 +29,10 @@ host_path() {
     if is_windows; then (cd "$1" && pwd -W); else (cd "$1" && pwd); fi
 }
 
+# Python interpreter name ("python3" on Linux; "python" with the Windows installer,
+# where "python3" may be the Store stub).
+if is_windows; then PYTHON="python"; else PYTHON="python3"; fi
+
 # Null device for native Windows tools (curl) when path conversion is disabled.
 if is_windows; then NULL_DEV="NUL"; else NULL_DEV="/dev/null"; fi
 

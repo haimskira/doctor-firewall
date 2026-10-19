@@ -18,7 +18,7 @@ USER_NAME="smoke-$(random_secret | cut -c1-6 | tr 'A-Z' 'a-z')"
 TEMP_PW="Tmp-$(random_secret | cut -c1-16)-1a"
 NEW_PW="New-$(random_secret | cut -c1-16)-2b"
 
-json_field() { python -c "import json,sys; print(json.load(sys.stdin)$1)"; }
+json_field() { "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)$1)"; }
 call() {  # call METHOD PATH [JSON] -> body on stdout; fails on HTTP >= 400
     local method="$1" path="$2" data="${3:-}"
     local args=(--silent --show-error --fail-with-body --cacert "$CA" -b "$JAR" -c "$JAR"
@@ -70,7 +70,7 @@ verify="$(call POST /api/audit/verify)"
 ok "audit chain intact ($(json_field "['checked']" <<<"$verify") records)"
 
 log "Deactivate smoke account"
-uid="$(call GET /api/users | python -c "import json,sys; print([u['id'] for u in json.load(sys.stdin) if u['username']=='$USER_NAME'][0])")"
+uid="$(call GET /api/users | "$PYTHON" -c "import json,sys; print([u['id'] for u in json.load(sys.stdin) if u['username']=='$USER_NAME'][0])")"
 # The account is the caller itself; deactivation is refused if it is the last admin.
 call PATCH "/api/users/$uid" '{"is_active": false}' >/dev/null 2>&1 \
     || log "kept $USER_NAME active (last administrator) — deactivate it after creating your own admin"
