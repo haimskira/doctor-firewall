@@ -19,6 +19,15 @@ export function Layout() {
           <NavLink to="/" end>
             {t('nav.home')}
           </NavLink>
+          {can('policy:read') && (
+            <>
+              <NavLink to="/snapshots">{t('nav.snapshots')}</NavLink>
+              <NavLink to="/clusters">{t('nav.clusters')}</NavLink>
+              <NavLink to="/rules">{t('nav.rules')}</NavLink>
+              <NavLink to="/objects">{t('nav.objects')}</NavLink>
+              <NavLink to="/findings">{t('nav.findings')}</NavLink>
+            </>
+          )}
           {can('users:manage') && <NavLink to="/users">{t('nav.users')}</NavLink>}
           {can('fmc:manage') && <NavLink to="/fmc">{t('nav.fmc')}</NavLink>}
           {can('audit:read') && <NavLink to="/audit">{t('nav.audit')}</NavLink>}

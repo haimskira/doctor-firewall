@@ -1,0 +1,134 @@
+import { useEffect, useState } from 'react';
+
+import { api, errorCode } from '../api/client';
+import type { Snapshot } from '../api/types';
+import { useAuth } from '../auth/AuthProvider';
+import { Alert, DateTime, Ltr } from '../components/common';
+import { useApi } from '../hooks';
+import { useI18n } from '../i18n/I18nProvider';
+
+interface ConnectionName {
+  id: number;
+  name: string;
+  sync_interval_minutes: number | null;
+}
+
+const POLL_MS = 3000;
+
+export function SnapshotsPage() {
+  const { t, tError } = useI18n();
+  const { can } = useAuth();
+  const connections = useApi<ConnectionName[]>('/api/connections');
+  const snapshots = useApi<Snapshot[]>('/api/snapshots?limit=100');
+  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+  const reloadSnapshots = snapshots.reload;
+  const active = (snapshots.data ?? []).some((s) => s.status === 'pending' || s.status === 'running');
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(reloadSnapshots, POLL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [active, reloadSnapshots]);
+
+  async function trigger(path: string) {
+    setMessage(null);
+    try {
+      await api<Snapshot>(path, 'POST');
+      setMessage({ kind: 'success', text: t('snap.started') });
+      reloadSnapshots();
+    } catch (err: unknown) {
+      setMessage({ kind: 'error', text: tError(errorCode(err)) });
+    }
+  }
+
+  const error = connections.error ?? snapshots.error;
+  return (
+    <div className="stack">
+      <h1>{t('snap.title')}</h1>
+      <p className="muted">{t('snap.help')}</p>
+      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+      {message !== null && <Alert kind={message.kind}>{message.text}</Alert>}
+
+      {can('collect:run') && (
+        <section className="card row">
+          {(connections.data ?? []).map((c) => (
+            <button key={c.id} type="button" onClick={() => void trigger(`/api/fmc/connections/${String(c.id)}/collect`)}>
+              {t('snap.collect')}: {c.name}
+            </button>
+          ))}
+        </section>
+      )}
+
+      <section className="card">
+        {(snapshots.data ?? []).length === 0 ? (
+          <p className="muted">{t('common.none')}</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>FMC</th>
+                <th>{t('audit.outcome')}</th>
+                <th>{t('snap.created')}</th>
+                <th>{t('snap.finished')}</th>
+                <th>{t('snap.by')}</th>
+                <th>{t('common.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(snapshots.data ?? []).map((s) => (
+                <tr key={s.id}>
+                  <td>{s.id}</td>
+                  <td>
+                    {s.connection_name}
+                    {s.fmc_version !== null && (
+                      <div className="muted small">
+                        <Ltr>{s.fmc_version}</Ltr>
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`badge status-${s.status}`}>{t(`snap.status.${s.status}`)}</span>
+                    {s.status === 'complete' && (
+                      <div className="small">
+                        {t('snap.stats', {
+                          rules: s.stats.rules ?? 0,
+                          objects: s.stats.objects ?? 0,
+                          clusters: s.stats.clusters ?? 0,
+                        })}
+                        {s.analyzed_at === null && <span className="muted"> · {t('snap.analyzing')}</span>}
+                      </div>
+                    )}
+                    {s.error !== null && <div className="bad small">{tError(s.error)}</div>}
+                  </td>
+                  <td>
+                    <DateTime value={s.created_at} />
+                  </td>
+                  <td>
+                    <DateTime value={s.finished_at} />
+                  </td>
+                  <td>
+                    <Ltr>{s.requested_by}</Ltr>
+                  </td>
+                  <td>
+                    {s.status === 'failed' && can('collect:run') && (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void trigger(`/api/snapshots/${String(s.id)}/resume`)}
+                      >
+                        {t('snap.resume')}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </div>
+  );
+}

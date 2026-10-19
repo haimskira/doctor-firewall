@@ -12,9 +12,10 @@ interface FormState {
   port: string;
   username: string;
   password: string;
+  sync: string; // minutes; empty = manual only
 }
 
-const EMPTY: FormState = { name: '', host: '', port: '443', username: '', password: '' };
+const EMPTY: FormState = { name: '', host: '', port: '443', username: '', password: '', sync: '' };
 
 type Message = { kind: 'error' | 'success'; text: string } | null;
 
@@ -47,11 +48,13 @@ export function FmcPage() {
       port: String(conn.port),
       username: conn.username,
       password: '',
+      sync: conn.sync_interval_minutes === null ? '' : String(conn.sync_interval_minutes),
     });
   }
 
   async function save(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    const sync = form.sync.trim() === '' ? null : Number(form.sync);
     const base = {
       name: form.name.trim(),
       host: form.host.trim(),
@@ -63,12 +66,17 @@ export function FmcPage() {
         await api<FmcConnection>('/api/fmc/connections', 'POST', {
           ...base,
           password: form.password,
+          sync_interval_minutes: sync,
         });
       } else {
         await api<FmcConnection>(
           `/api/fmc/connections/${String(editingId)}`,
           'PATCH',
-          form.password === '' ? base : { ...base, password: form.password },
+          {
+            ...base,
+            ...(form.password === '' ? {} : { password: form.password }),
+            ...(sync === null ? { disable_sync: true } : { sync_interval_minutes: sync }),
+          },
         );
       }
       setForm(EMPTY);
@@ -126,6 +134,7 @@ export function FmcPage() {
     form.host !== '' &&
     form.username !== '' &&
     /^\d{1,5}$/.test(form.port) &&
+    (form.sync.trim() === '' || /^\d{2,5}$/.test(form.sync.trim())) &&
     (!creating || form.password !== '');
 
   return (
@@ -145,6 +154,7 @@ export function FmcPage() {
                 <th>{t('fmc.version')}</th>
                 <th>{t('fmc.domain')}</th>
                 <th>{t('fmc.lastTest')}</th>
+                <th>{t('fmc.sync')}</th>
                 <th>{t('common.actions')}</th>
               </tr>
             </thead>
@@ -171,6 +181,7 @@ export function FmcPage() {
                     {conn.last_test_ok === true && <span className="ok">✔</span>}
                     {conn.last_test_ok === false && <span className="bad">✘</span>}
                   </td>
+                  <td>{conn.sync_interval_minutes === null ? t('fmc.syncOff') : `${String(conn.sync_interval_minutes)}′`}</td>
                   <td className="actions">
                     <button
                       type="button"
@@ -258,6 +269,19 @@ export function FmcPage() {
               value={form.password}
               onChange={(e) => {
                 setForm({ ...form, password: e.target.value });
+              }}
+            />
+          </label>
+          <label>
+            {t('fmc.syncMinutes')}
+            <input
+              dir="ltr"
+              inputMode="numeric"
+              maxLength={5}
+              placeholder={t('fmc.syncOff')}
+              value={form.sync}
+              onChange={(e) => {
+                setForm({ ...form, sync: e.target.value });
               }}
             />
           </label>

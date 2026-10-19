@@ -7,10 +7,16 @@ import { Layout } from './components/Layout';
 import { useI18n } from './i18n/I18nProvider';
 import { AuditPage } from './pages/AuditPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { ClustersPage } from './pages/ClustersPage';
+import { FindingsPage } from './pages/FindingsPage';
 import { FmcPage } from './pages/FmcPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
+import { ObjectDetailPage } from './pages/ObjectDetailPage';
+import { ObjectsPage } from './pages/ObjectsPage';
+import { RulebasePage } from './pages/RulebasePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SnapshotsPage } from './pages/SnapshotsPage';
 import { UsersPage } from './pages/UsersPage';
 
 /** UI-side gate only (hides pages); the server enforces every permission itself. */
@@ -40,6 +46,18 @@ export function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<HomePage />} />
+        {(
+          [
+            ['snapshots', <SnapshotsPage key="s" />],
+            ['clusters', <ClustersPage key="c" />],
+            ['rules', <RulebasePage key="r" />],
+            ['objects', <ObjectsPage key="o" />],
+            ['objects/:objectId', <ObjectDetailPage key="d" />],
+            ['findings', <FindingsPage key="f" />],
+          ] as const
+        ).map(([path, element]) => (
+          <Route key={path} path={path} element={<RequirePermission permission="policy:read">{element}</RequirePermission>} />
+        ))}
         <Route
           path="users"
           element={
