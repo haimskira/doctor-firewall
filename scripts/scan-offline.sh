@@ -10,7 +10,8 @@ CACHE="$VENDOR/trivy-cache"
 log "Trivy DB downloaded at: $(cat "$CACHE/DOWNLOADED_AT" 2>/dev/null || echo unknown)"
 
 VERSION="$(grep -E '^DF_VERSION=' "$INFRA/.env" | cut -d= -f2-)"
-TRIVY=(docker run --rm -v "$(host_path "$CACHE"):/cache:ro")
+# Writable tmpfs cache with the vulnerability DB mounted read-only inside it.
+TRIVY=(docker run --rm --tmpfs /cache -v "$(host_path "$CACHE/db"):/cache/db:ro")
 COMMON=(--cache-dir /cache --skip-db-update --skip-java-db-update --offline-scan --quiet --scanners vuln --exit-code 1)
 
 log "Lock files (requirements*.txt, package-lock.json)"

@@ -46,11 +46,13 @@ ok "images built"
 
 log "Scanning runtime images offline (Trivy, fixable HIGH/CRITICAL fail the bundle)"
 for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "$POSTGRES_IMAGE" "$REDIS_IMAGE"; do
-    docker save "$image" | docker run --rm -i -v "$(host_path "$VENDOR/trivy-cache"):/cache:ro" \
+    # Writable tmpfs cache with the vulnerability DB mounted read-only inside it.
+    docker save "$image" | docker run --rm -i --tmpfs /cache \
+        -v "$(host_path "$VENDOR/trivy-cache/db"):/cache/db:ro" \
         --entrypoint sh "$TRIVY_IMAGE" -c 'cat > /tmp/i.tar && trivy image --input /tmp/i.tar \
             --cache-dir /cache --skip-db-update --skip-java-db-update --offline-scan --quiet \
             --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1' \
-        || die "vulnerabilities found in $image"
+        || die "scan failed or fixable HIGH/CRITICAL vulnerabilities in $image (see output above)"
     ok "$image"
 done
 
