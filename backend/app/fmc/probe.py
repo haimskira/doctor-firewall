@@ -24,6 +24,15 @@ class _ServerVersionResponse(BaseModel):
     items: list[_ServerVersionItem] = Field(min_length=1, max_length=16)
 
 
+async def server_version(session: FmcSession) -> str:
+    raw = await session.get_json(SERVER_VERSION_PATH)
+    try:
+        parsed = _ServerVersionResponse.model_validate(raw)
+    except ValidationError as exc:
+        raise FmcProtocolError("serverversion response failed validation") from exc
+    return parsed.items[0].server_version
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     server_version: str
@@ -49,12 +58,5 @@ async def probe(
         timeout=timeout,
         transport=transport,
     ) as session:
-        raw = await session.get_json(SERVER_VERSION_PATH)
-        try:
-            parsed = _ServerVersionResponse.model_validate(raw)
-        except ValidationError as exc:
-            raise FmcProtocolError("serverversion response failed validation") from exc
-        return ProbeResult(
-            server_version=parsed.items[0].server_version,
-            domain_uuid=session.domain_uuid,
-        )
+        version = await server_version(session)
+        return ProbeResult(server_version=version, domain_uuid=session.domain_uuid)

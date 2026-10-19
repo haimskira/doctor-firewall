@@ -12,7 +12,7 @@ import pytest
 from fmc_mock.app import GLOBAL_DOMAIN_UUID, SERVER_VERSION, create_app
 from fmc_mock.auth import TokenStore
 
-from app.fmc.client import FmcSession, build_ssl_context
+from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import (
     FmcAuthError,
     FmcProtocolError,
@@ -117,15 +117,30 @@ def test_refresh_then_regenerate_after_three_refreshes(store: TokenStore) -> Non
     asyncio.run(run())
 
 
-def test_rate_limit_surfaces_as_error(store: TokenStore) -> None:
+def test_rate_limit_backs_off_then_surfaces(store: TokenStore) -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
     async def run() -> None:
-        async with _session(store, transport=_transport(store, get_per_minute=2)) as session:
-            await session.get_json(SERVER_VERSION_PATH)
-            await session.get_json(SERVER_VERSION_PATH)
-            await session.get_json(SERVER_VERSION_PATH)
+        async with FmcSession(
+            host="fmc-mock",
+            port=443,
+            username="api_user",
+            password_provider=lambda: bytearray(PASSWORD.encode()),
+            ssl_context=_ssl(),
+            timeout=5,
+            transport=_transport(store, get_per_minute=2),
+            throttle=ThrottlePolicy(max_retries=3, sleep=fake_sleep),
+        ) as session:
+            for _ in range(3):
+                await session.get_json(SERVER_VERSION_PATH)
 
     with pytest.raises(FmcRateLimitedError):
         asyncio.run(run())
+    backoffs = [s for s in slept if s >= 1]
+    assert backoffs == [2.0, 4.0, 8.0]  # exponential, then give up
 
 
 def _handler_transport(

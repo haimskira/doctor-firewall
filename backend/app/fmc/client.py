@@ -10,6 +10,10 @@ Procedures implemented here (Cisco FMC REST API Quick Start Guide 10.1):
   generated. One token is reused for the whole session (no token-per-call, which
   would exhaust the FMC's shared API/UI session limit).
 * The token is revoked (``/auth/revokeaccess``) when the session ends.
+* Hard API limits (300 GET/min per IP, 10 concurrent connections) are respected with
+  a client-side token bucket (default 240/min) and a concurrency cap (default 4);
+  HTTP 429 is retried with exponential backoff (``Retry-After`` honoured).
+* Collections are read with ``offset``/``limit`` paging (max 1000 per page).
 
 TLS: the server certificate is always verified against the internal trust store,
 with hostname checking. There is no code path that disables verification.
@@ -19,16 +23,19 @@ Everything the FMC returns is treated as untrusted data and validated before use
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import ssl
-from collections.abc import Callable
-from dataclasses import dataclass
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.crypto import zeroize
 from app.fmc.errors import (
@@ -45,6 +52,8 @@ log = logging.getLogger(__name__)
 AUTH_BASE = "/api/fmc_platform/v1/auth"
 MAX_REFRESHES = 3
 MAX_RESPONSE_BYTES = 50 * 1024 * 1024
+MAX_PAGE_SIZE = 1000
+MAX_PAGES = 100_000
 
 # Returns the API password freshly decrypted; the client zeroizes it after use.
 PasswordProvider = Callable[[], bytearray]
@@ -58,6 +67,64 @@ def build_ssl_context(ca_bundle: Path) -> ssl.SSLContext:
     if not ctx.check_hostname or ctx.verify_mode != ssl.CERT_REQUIRED:  # pragma: no cover
         raise FmcTlsError("refusing an SSL context without full verification")
     return ctx
+
+
+@dataclass(frozen=True)
+class ThrottlePolicy:
+    """Client-side protection of the FMC (and of our shared API session budget)."""
+
+    requests_per_minute: int = 240  # FMC hard limit is 300 GET/min per source IP
+    burst: int = 10
+    concurrency: int = 4  # FMC hard limit is 10 connections per source IP
+    max_retries: int = 5  # on HTTP 429
+    backoff_base: float = 2.0
+    max_backoff: float = 60.0
+    sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep, compare=False)
+
+
+class TokenBucket:
+    """Async token bucket: ``rate_per_minute`` tokens per minute, up to ``burst`` stored."""
+
+    def __init__(
+        self,
+        rate_per_minute: int,
+        burst: int,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if rate_per_minute <= 0 or burst <= 0:
+            raise ValueError("rate and burst must be positive")
+        self._rate = rate_per_minute / 60.0
+        self._burst = float(burst)
+        self._tokens = float(burst)
+        self._sleep = sleep
+        self._clock = clock
+        self._updated = clock()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            while True:
+                now = self._clock()
+                self._tokens = min(self._burst, self._tokens + (now - self._updated) * self._rate)
+                self._updated = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
+                await self._sleep((1 - self._tokens) / self._rate)
+
+
+class _Paging(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=MAX_PAGE_SIZE)
+    count: int = Field(ge=0, le=50_000_000)
+
+
+class _Page(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_PAGE_SIZE)
+    paging: _Paging | None = None
 
 
 @dataclass
@@ -90,7 +157,13 @@ class FmcSession:
         ssl_context: ssl.SSLContext,
         timeout: float,
         transport: httpx.AsyncBaseTransport | None = None,
+        throttle: ThrottlePolicy | None = None,
     ) -> None:
+        self._throttle = throttle or ThrottlePolicy()
+        self._bucket = TokenBucket(
+            self._throttle.requests_per_minute, self._throttle.burst, self._throttle.sleep
+        )
+        self._concurrency = asyncio.Semaphore(self._throttle.concurrency)
         self._username = username
         self._password_provider = password_provider
         self._client = httpx.AsyncClient(
@@ -129,15 +202,32 @@ class FmcSession:
             raise FmcAuthError("no active FMC session")
         return self._tokens.domain_uuid
 
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        header = response.headers.get("Retry-After", "")
+        if header.isdigit():
+            return min(float(header), self._throttle.max_backoff)
+        delay: float = self._throttle.backoff_base * float(2**attempt)
+        return min(delay, self._throttle.max_backoff)
+
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        try:
-            response = await self._client.request(method, path, **kwargs)
-        except httpx.TransportError as exc:
-            if _is_tls_failure(exc):
-                raise FmcTlsError("TLS verification of the FMC failed") from exc
-            raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
-        if response.status_code == 429:
-            raise FmcRateLimitedError("FMC rate limit hit (429)")
+        attempt = 0
+        while True:
+            await self._bucket.acquire()
+            async with self._concurrency:
+                try:
+                    response = await self._client.request(method, path, **kwargs)
+                except httpx.TransportError as exc:
+                    if _is_tls_failure(exc):
+                        raise FmcTlsError("TLS verification of the FMC failed") from exc
+                    raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
+            if response.status_code != 429:
+                break
+            if attempt >= self._throttle.max_retries:
+                raise FmcRateLimitedError("FMC rate limit hit (429), retries exhausted")
+            delay = self._retry_delay(response, attempt)
+            log.warning("FMC returned 429; backing off", extra={"delay_s": delay, "path": path})
+            await self._throttle.sleep(delay)
+            attempt += 1
         if len(response.content) > MAX_RESPONSE_BYTES:
             raise FmcProtocolError("FMC response exceeds size limit")
         return response
@@ -207,8 +297,18 @@ class FmcSession:
             # The token expires by itself within 30 minutes; do not mask the real outcome.
             log.warning("FMC token revoke failed; token will expire on its own")
 
-    async def get_json(self, path: str, params: dict[str, str | int] | None = None) -> Any:
-        """Authenticated GET; one transparent token refresh on 401."""
+    async def get_json(
+        self,
+        path: str,
+        params: dict[str, str | int] | None = None,
+        *,
+        allow_not_found: bool = False,
+    ) -> Any:
+        """Authenticated GET; one transparent token refresh on 401.
+
+        With ``allow_not_found`` a 404 returns ``None`` (optional sub-resources such as
+        BGP on a device without BGP configuration).
+        """
         for attempt in (1, 2):
             if self._tokens is None:
                 raise FmcAuthError("no active FMC session")
@@ -223,6 +323,8 @@ class FmcSession:
                 continue
             if response.status_code == 401:
                 raise FmcAuthError("FMC rejected the access token")
+            if response.status_code == 404 and allow_not_found:
+                return None
             if response.status_code != 200:
                 raise FmcProtocolError(f"GET {path} returned HTTP {response.status_code}")
             try:
@@ -230,3 +332,43 @@ class FmcSession:
             except ValueError as exc:
                 raise FmcProtocolError(f"GET {path} returned invalid JSON") from exc
         raise FmcProtocolError("unreachable")  # pragma: no cover
+
+    async def iter_pages(
+        self,
+        path: str,
+        *,
+        start_offset: int = 0,
+        page_size: int = MAX_PAGE_SIZE,
+        params: dict[str, str | int] | None = None,
+        optional: bool = False,
+    ) -> AsyncIterator[tuple[int, list[dict[str, Any]]]]:
+        """Yield ``(offset, items)`` for every page of an FMC collection (``expanded=true``).
+
+        ``start_offset`` resumes a partially collected resource (checkpointing). An empty
+        collection (the FMC omits ``items``) yields nothing.
+        """
+        if not 1 <= page_size <= MAX_PAGE_SIZE:
+            raise ValueError("page_size must be 1..1000")
+        offset = start_offset
+        for _ in range(MAX_PAGES):
+            query: dict[str, str | int] = {
+                "offset": offset,
+                "limit": page_size,
+                "expanded": "true",
+                **(params or {}),
+            }
+            raw = await self.get_json(path, query, allow_not_found=optional)
+            if raw is None:
+                return
+            try:
+                page = _Page.model_validate(raw)
+            except ValidationError as exc:
+                raise FmcProtocolError(f"GET {path}: malformed page") from exc
+            if not page.items:
+                return
+            yield offset, page.items
+            offset += len(page.items)
+            total = page.paging.count if page.paging is not None else offset
+            if offset >= total:
+                return
+        raise FmcProtocolError(f"GET {path}: paging did not terminate")
