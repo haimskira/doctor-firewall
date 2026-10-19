@@ -1,0 +1,77 @@
+[project]
+name = "doctor-firewall"
+version = "0.1.0"
+description = "Cisco Secure Firewall (FMC/FTD) policy analysis and controlled-enforcement system"
+requires-python = ">=3.12,<3.13"
+
+# Dependencies are declared in requirements.in and locked (with hashes) in
+# requirements.txt. This file only configures tooling.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F",   # pycodestyle / pyflakes
+  "I",             # isort
+  "B",             # bugbear
+  "UP",            # pyupgrade
+  "S",             # flake8-bandit (security)
+  "N",             # naming
+  "C4",            # comprehensions
+  "SIM",           # simplify
+  "RUF",           # ruff-specific
+  "PT",            # pytest style
+  "DTZ",           # timezone-aware datetimes only
+  "T20",           # no print()
+  "BLE",           # no blind except
+  "ERA",           # no commented-out code
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+# backend/alembic/ (migrations dir) must not make the alembic package look first-party.
+known-third-party = ["fmc_mock", "alembic"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # asserts and literal test passwords are fine in tests
+"app/cli.py" = ["T20"]                  # the CLI talks to a human on stdout
+"app/tools/**" = ["T20"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "integration: needs real PostgreSQL + Redis (run inside the CI compose stack)",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true

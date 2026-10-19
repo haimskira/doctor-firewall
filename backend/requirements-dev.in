@@ -1,0 +1,11 @@
+# Dev/test/CI tooling. Constrained to the runtime lock so versions never diverge.
+-c requirements.txt
+pytest
+pytest-cov
+mypy
+ruff
+bandit
+pip-audit
+fakeredis
+# Starlette >=1.x TestClient transport (tests only; runtime uses httpx with an explicit SSL context)
+httpx2

@@ -1,0 +1,14 @@
+# Runtime dependencies (top-level only). Locked with hashes into requirements.txt
+# via scripts/lock-deps.*  — never edit requirements.txt by hand.
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+sqlalchemy
+psycopg[binary]
+alembic
+redis
+rq
+httpx
+argon2-cffi
+cryptography
