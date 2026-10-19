@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Refuse commits that contain secrets-looking files or heavy/binary artefacts.
+set -euo pipefail
+MAX_BYTES=$((1024 * 1024))
+fail=0
+while IFS= read -r -d '' path; do
+    case "$path" in
+        *.pem|*.key|*.crt|*.p12|*.pfx|*.env|.env|*/.env|infra/secrets/*|infra/certs/*)
+            echo "pre-commit: refusing secret/cert file: $path" >&2; fail=1 ;;
+        *.tar|*.tar.gz|*.tgz|*.whl|*.zip|vendor/*|dist/*)
+            echo "pre-commit: refusing bundle/vendored artefact: $path (transfer it separately)" >&2; fail=1 ;;
+    esac
+    size=$(git cat-file -s ":$path" 2>/dev/null || echo 0)
+    if [ "$size" -gt "$MAX_BYTES" ]; then
+        echo "pre-commit: refusing large file ($size bytes): $path" >&2; fail=1
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+# Obvious credential material in staged text.
+if git diff --cached -U0 --diff-filter=ACMR | grep -nE '^\+.*(-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16})' >/dev/null; then
+    echo "pre-commit: staged content contains private key / access key material" >&2; fail=1
+fi
+exit $fail

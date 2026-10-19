@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Every push must pass the full local CI gate (tests, lint, types, SAST, SCA).
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/ci.sh"
