@@ -30,7 +30,7 @@ ok "bundle contents verified"
 read_manifest() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$DIR/manifest.json" "$1"; }
 VERSION="$(read_manifest version)"
 BUNDLE_SHA="$(read_manifest git_commit)"
-HEAD_SHA="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+HEAD_SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD)"
 [[ "$BUNDLE_SHA" == "$HEAD_SHA" ]] \
     || die "bundle built from commit $BUNDLE_SHA but this checkout is $HEAD_SHA — git checkout $BUNDLE_SHA first"
 ok "bundle $VERSION matches checkout $HEAD_SHA (Trivy DB: $(read_manifest trivy_db_downloaded_at))"

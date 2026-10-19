@@ -23,10 +23,10 @@ done
 
 require_vendor
 [[ -d "$VENDOR/trivy-cache/db" ]] || die "vendor/trivy-cache missing — run scripts/vendor.sh"
-if [[ -z "$ALLOW_DIRTY" ]] && ! git -C "$ROOT" diff --quiet HEAD --; then
+if [[ -z "$ALLOW_DIRTY" ]] && ! git -C "$ROOT_HOST" diff --quiet HEAD --; then
     die "working tree has uncommitted changes — commit first (or --allow-dirty for a test bundle)"
 fi
-SHA="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD)"
 NAME="doctor-firewall-bundle-$VERSION-$SHA"
 OUT="$ROOT/dist/$NAME"
 
