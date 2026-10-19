@@ -16,7 +16,13 @@ class FmcConnection(Base):
     """
 
     __tablename__ = "fmc_connections"
-    __table_args__ = (CheckConstraint("port BETWEEN 1 AND 65535", name="port_range"),)
+    __table_args__ = (
+        CheckConstraint("port BETWEEN 1 AND 65535", name="port_range"),
+        CheckConstraint(
+            "sync_interval_minutes IS NULL OR sync_interval_minutes BETWEEN 15 AND 10080",
+            name="sync_interval_range",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -29,6 +35,8 @@ class FmcConnection(Base):
     server_version: Mapped[str | None] = mapped_column(String(128))
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_test_ok: Mapped[bool | None] = mapped_column()
+    # Periodic read-only collection; NULL disables automatic sync.
+    sync_interval_minutes: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

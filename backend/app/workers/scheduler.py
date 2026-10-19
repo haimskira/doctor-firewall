@@ -40,6 +40,7 @@ class Schedule:
 
 SCHEDULES: tuple[Schedule, ...] = (
     Schedule("verify_audit_chain", jobs.verify_audit_chain, QueueName.MAINTENANCE, 3600),
+    Schedule("auto_collect", jobs.schedule_due_collections, QueueName.MAINTENANCE, 300),
 )
 
 

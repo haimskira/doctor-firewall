@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     # always on; there is deliberately no setting to disable it.
     fmc_ca_bundle: Path = Path("/etc/doctor-firewall/trust/fmc-ca.pem")
     fmc_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    # Client-side throttling towards the FMC (hard limits: 300 GET/min, 10 connections).
+    fmc_requests_per_minute: int = Field(default=240, ge=10, le=290)
+    fmc_concurrency: int = Field(default=4, ge=1, le=8)
+
+    # Snapshots.
+    snapshot_retention: int = Field(default=10, ge=2, le=500)
+    collect_stale_minutes: int = Field(default=15, ge=5, le=240)
+    collect_job_timeout_seconds: int = Field(default=6 * 3600, ge=600, le=48 * 3600)
 
     # Sessions.
     session_idle_minutes: int = Field(default=30, ge=5, le=240)

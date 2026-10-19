@@ -10,6 +10,8 @@ from rq.serializers import JSONSerializer
 
 
 class QueueName(StrEnum):
+    COLLECT = "collect"  # FMC reads (one connection at a time per snapshot)
+    ANALYSIS = "analysis"  # CPU-heavy analysis of stored snapshots
     MAINTENANCE = "maintenance"
 
 
