@@ -1,0 +1,90 @@
+# CI stack for backend integration tests (used by scripts/ci.*). Ephemeral:
+# secrets and certs are generated per run under ./.ci and removed afterwards.
+
+name: doctor-firewall-ci
+
+services:
+  postgres:
+    image: postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+      POSTGRES_DB: postgres
+    secrets: [db_admin_password, db_owner_password, db_app_password]
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    tmpfs: ["/var/lib/postgresql/data"]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d doctor_firewall -h 127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  redis:
+    image: redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    user: "999:999"
+    entrypoint: ["sh", "/usr/local/bin/df-redis-start.sh"]
+    secrets: [redis_password]
+    tmpfs: ["/data:uid=999,gid=999,mode=0700", "/tmp:uid=999,gid=999,mode=0700"]
+    volumes:
+      - ./redis/start.sh:/usr/local/bin/df-redis-start.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  fmc-mock:
+    image: doctor-firewall/fmc-mock:ci
+    environment:
+      MOCK_USERNAME: api_user
+      MOCK_PASSWORD_FILE: /run/secrets/fmc_mock_password
+    secrets: [fmc_mock_password]
+    volumes:
+      - ./.ci/certs/fmc-mock:/certs:ro
+    networks:
+      fmc:
+        # "fmc-wrong-name" is NOT in the certificate's SAN: used to prove hostname checks.
+        aliases: [fmc-mock, fmc-wrong-name]
+
+  tests:
+    image: doctor-firewall/api-test:ci
+    environment:
+      DF_ENVIRONMENT: test
+      DF_INTEGRATION: "1"
+      DF_DB_HOST: postgres
+      DF_REDIS_HOST: redis
+      DF_DB_PASSWORD_FILE: /run/secrets/db_app_password
+      DF_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      DF_KEYRING_FILE: /run/secrets/master_keyring
+      DF_FMC_CA_BUNDLE: /ci-certs/ca.pem
+      DF_MIGRATION_DB_USER: df_owner
+      DF_MIGRATION_DB_PASSWORD_FILE: /run/secrets/db_owner_password
+      DF_TEST_OTHER_CA: /ci-certs/other-ca.pem
+      DF_TEST_FMC_PASSWORD_FILE: /run/secrets/fmc_mock_password
+    secrets: [db_owner_password, db_app_password, redis_password, master_keyring, fmc_mock_password]
+    volumes:
+      - ./.ci/certs/trust:/ci-certs:ro
+      - ./.ci/reports:/reports
+    networks: [backend, fmc]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      fmc-mock: { condition: service_started }
+    command: ["pytest", "-p", "no:cacheprovider", "--cov=app", "--cov-report=term", "--cov-report=xml:/reports/coverage.xml"]
+
+networks:
+  backend:
+    internal: true
+  fmc:
+    internal: true
+
+secrets:
+  db_admin_password: { file: ./.ci/secrets/db_admin_password }
+  db_owner_password: { file: ./.ci/secrets/db_owner_password }
+  db_app_password:   { file: ./.ci/secrets/db_app_password }
+  redis_password:    { file: ./.ci/secrets/redis_password }
+  master_keyring:    { file: ./.ci/secrets/master_keyring }
+  fmc_mock_password: { file: ./.ci/secrets/fmc_mock_password }

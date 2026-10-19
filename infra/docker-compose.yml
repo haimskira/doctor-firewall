@@ -1,0 +1,168 @@
+# Doctor Firewall — production stack (single host, offline).
+#
+# Images are loaded from the offline bundle (docker load); nothing is pulled.
+# Secrets are files in ./secrets (created by scripts/init-secrets.*), mounted as
+# Docker secrets — never environment variables, never in Git.
+#
+# Networks:
+#   backend - internal only (no route outside the host): db, redis, api, workers, web
+#   edge    - the published HTTPS port of the web container
+#   fmc     - egress for api/worker towards the FMC VIP (restrict on the host firewall
+#             to the FMC address only)
+
+name: doctor-firewall
+
+x-backend-env: &backend-env
+  DF_ENVIRONMENT: ${DF_ENVIRONMENT:-prod}
+  DF_LOG_LEVEL: ${DF_LOG_LEVEL:-INFO}
+  DF_DB_HOST: postgres
+  DF_REDIS_HOST: redis
+  DF_DB_PASSWORD_FILE: /run/secrets/db_app_password
+  DF_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+  DF_KEYRING_FILE: /run/secrets/master_keyring
+  DF_FMC_CA_BUNDLE: /etc/doctor-firewall/trust/fmc-ca.pem
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "5" }
+
+x-backend: &backend
+  <<: *hardening
+  image: doctor-firewall/api:${DF_VERSION:?set DF_VERSION in .env}
+  environment: *backend-env
+  secrets: [db_app_password, redis_password, master_keyring]
+  volumes:
+    - ${DF_FMC_CA_FILE:-./trust/fmc-ca.pem}:/etc/doctor-firewall/trust/fmc-ca.pem:ro
+
+services:
+  postgres:
+    image: postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets: [db_admin_password, db_owner_password, db_app_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  redis:
+    <<: *hardening
+    image: redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    user: "999:999"
+    entrypoint: ["sh", "/usr/local/bin/df-redis-start.sh"]
+    secrets: [redis_password]
+    volumes:
+      - redisdata:/data
+      - ./redis/start.sh:/usr/local/bin/df-redis-start.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *backend-env
+      DF_MIGRATION_DB_USER: df_owner
+      DF_MIGRATION_DB_PASSWORD_FILE: /run/secrets/db_owner_password
+    secrets: [db_owner_password]
+    volumes: []
+    networks: [backend]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *backend
+    networks: [backend, fmc]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.workers.worker"]
+    healthcheck:
+      # Liveness of the main process (PID 1) without exposing any port.
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [backend, fmc]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  scheduler:
+    <<: *backend
+    command: ["python", "-m", "app.workers.scheduler"]
+    healthcheck:
+      # Liveness of the main process (PID 1) without exposing any port.
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    secrets: [redis_password]
+    networks: [backend]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  web:
+    <<: *hardening
+    image: doctor-firewall/web:${DF_VERSION:?set DF_VERSION in .env}
+    ports:
+      - "${DF_HTTPS_BIND:-0.0.0.0}:${DF_HTTPS_PORT:-443}:8443"
+    volumes:
+      # Per-file mounts: the host directory stays root-only (0700).
+      - ${DF_UI_TLS_DIR:-./certs/ui}/ui.pem:/etc/nginx/tls/ui.pem:ro
+      - ${DF_UI_TLS_DIR:-./certs/ui}/ui.key:/etc/nginx/tls/ui.key:ro
+    networks: [backend, edge]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tmp/nginx.pid && kill -0 \"$$(cat /tmp/nginx.pid)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+  fmc: {}
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+
+secrets:
+  db_admin_password: { file: ./secrets/db_admin_password }
+  db_owner_password: { file: ./secrets/db_owner_password }
+  db_app_password:   { file: ./secrets/db_app_password }
+  redis_password:    { file: ./secrets/redis_password }
+  master_keyring:    { file: ./secrets/master_keyring }

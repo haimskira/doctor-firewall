@@ -1,0 +1,50 @@
+# Development override (Windows/Linux workstation). Use via scripts/dev-up.*:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env up -d
+#
+# Adds: local image builds (offline, from vendor/), the FMC 10.1 mock over TLS
+# (signed by the throw-away dev CA that the backend trusts), and dev settings.
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/backend.Dockerfile
+      target: runtime
+    environment:
+      DF_ENVIRONMENT: dev
+    depends_on:
+      fmc-mock: { condition: service_started }
+
+  worker:
+    environment:
+      DF_ENVIRONMENT: dev
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+      target: runtime
+
+  fmc-mock:
+    image: doctor-firewall/fmc-mock:dev
+    build:
+      context: ..
+      dockerfile: infra/docker/fmc-mock.Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m"]
+    environment:
+      MOCK_USERNAME: api_user
+      MOCK_PASSWORD_FILE: /run/secrets/fmc_mock_password
+    secrets: [fmc_mock_password]
+    volumes:
+      - ./certs/fmc-mock/fmc-mock.pem:/certs/fmc-mock.pem:ro
+      - ./certs/fmc-mock/fmc-mock.key:/certs/fmc-mock.key:ro
+    networks:
+      fmc:
+        aliases: [fmc-mock]
+
+secrets:
+  fmc_mock_password: { file: ./secrets/fmc_mock_password }
