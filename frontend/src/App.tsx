@@ -1,0 +1,73 @@
+import { Navigate, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
+
+import type { Permission } from './api/types';
+import { useAuth } from './auth/AuthProvider';
+import { Layout } from './components/Layout';
+import { useI18n } from './i18n/I18nProvider';
+import { AuditPage } from './pages/AuditPage';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { FmcPage } from './pages/FmcPage';
+import { HomePage } from './pages/HomePage';
+import { LoginPage } from './pages/LoginPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { UsersPage } from './pages/UsersPage';
+
+/** UI-side gate only (hides pages); the server enforces every permission itself. */
+function RequirePermission({ permission, children }: { permission: Permission; children: ReactNode }) {
+  const { can } = useAuth();
+  return can(permission) ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+export function App() {
+  const { state } = useAuth();
+  const { t } = useI18n();
+
+  if (state.status === 'loading') {
+    return <p className="center-page muted">{t('common.loading')}</p>;
+  }
+  if (state.status === 'anonymous') {
+    return <LoginPage />;
+  }
+  if (state.me.must_change_password) {
+    return (
+      <div className="center-page">
+        <ChangePasswordPage />
+      </div>
+    );
+  }
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<HomePage />} />
+        <Route
+          path="users"
+          element={
+            <RequirePermission permission="users:manage">
+              <UsersPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="fmc"
+          element={
+            <RequirePermission permission="fmc:manage">
+              <FmcPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="audit"
+          element={
+            <RequirePermission permission="audit:read">
+              <AuditPage />
+            </RequirePermission>
+          }
+        />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="password" element={<ChangePasswordPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}
