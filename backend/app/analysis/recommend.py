@@ -33,6 +33,7 @@ from typing import Any
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
+from app.analysis.connectivity import NodeMapper, edges_for, rule_risk, worst
 from app.analysis.expand import Leaves, Resolver, ace_estimate, build_space, literal_leaves
 from app.analysis.naming import (
     MAX_NAME,
@@ -42,10 +43,10 @@ from app.analysis.naming import (
     service_name,
     value_token,
 )
-from app.analysis.score import PERMIT_ACTIONS, AssetIndex, RuleFacts, score_rule
+from app.analysis.score import PERMIT_ACTIONS, AssetIndex, RuleFacts, ScoreResult, score_rule
 from app.analysis.semantic import load_assets
 from app.analysis.shadow import verdict
-from app.analysis.space import AddressSet, PortSet
+from app.analysis.space import AddressSet, MatchSpace, PortSet
 from app.models.assets import Asset, RuleScore
 from app.models.inventory import (
     ClusterPolicy,
@@ -210,6 +211,7 @@ class Estate:
                 self.members[group].append(Ref(None, literal, literal, literal_kind))
         self.resolver = Resolver.load(session, snapshot_id)
         self.assets: AssetIndex = load_assets(session)
+        self.mapper = NodeMapper(self.assets)
         self.asset_rows = list(session.scalars(select(Asset).where(Asset.confirmed.is_(True))))
         self.conventions: dict[str, Convention] = {
             c.kind: Convention(c.kind, c.template, c.letter_case)
@@ -438,12 +440,28 @@ class Evaluator:
 
     def evaluate(self, info: RuleInfo, refs: dict[str, list[Ref]]) -> tuple[int, int | None]:
         """(ACE estimate, score) of the rule with these references."""
+        ace, result, _space = self._assess(info, refs)
+        return ace, (result.score if result is not None else None)
+
+    def map_edges(self, info: RuleInfo, refs: dict[str, list[Ref]]) -> list[dict[str, str]]:
+        """Map edges the rule would carry (none for deny, disabled or shadowed rules)."""
+        if info.score is not None and info.score.shadowed_by is not None:
+            return []
+        _ace, result, space = self._assess(info, refs)
+        if result is None or result.score is None:
+            return []
+        risk = rule_risk(str(x["code"]) for x in result.reasons)
+        return edges_for(self.estate.mapper, space.src_net, space.dst_net, risk)
+
+    def _assess(
+        self, info: RuleInfo, refs: dict[str, list[Ref]]
+    ) -> tuple[int, ScoreResult | None, MatchSpace]:
         leaves = self.leaves(refs)
         space = build_space(leaves)
         ace = ace_estimate(leaves)
         r = info.rule
         if r.action not in PERMIT_ACTIONS or not r.enabled:
-            return ace, None
+            return ace, None, space
         result = score_rule(
             RuleFacts(
                 action=r.action,
@@ -465,7 +483,25 @@ class Evaluator:
             ),
             self.estate.assets,
         )
-        return ace, result.score
+        return ace, result, space
+
+
+def map_preview(
+    evaluator: Evaluator,
+    before: list[tuple[RuleInfo, dict[str, list[Ref]]]],
+    after: list[tuple[RuleInfo, dict[str, list[Ref]]]],
+) -> dict[str, list[dict[str, str]]]:
+    """Node-level edges before and after a rule change (the map's before / after view)."""
+
+    def collect(pairs: list[tuple[RuleInfo, dict[str, list[Ref]]]]) -> list[dict[str, str]]:
+        merged: dict[tuple[str, str], str] = {}
+        for info, refs in pairs:
+            for e in evaluator.map_edges(info, refs):
+                key = (e["src"], e["dst"])
+                merged[key] = worst(merged.get(key, "green"), e["risk"])
+        return [{"src": s, "dst": d, "risk": r} for (s, d), r in sorted(merged.items())]
+
+    return {"before": collect(before), "after": collect(after)}
 
 
 def load_policy_rules(estate: Estate, policy_id: str) -> list[RuleInfo]:
@@ -531,7 +567,8 @@ def _policy_ref(policy: Policy) -> dict[str, str]:
 # ------------------------------------------------------------------ rule recommenders
 
 
-def recommend_removals(policy: Policy, rules: list[RuleInfo]) -> list[Draft]:
+def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) -> list[Draft]:
+    evaluator = Evaluator(estate)
     by_fmc = {i.rule.fmc_id: i for i in rules}
     drafts: list[Draft] = []
     for info in rules:
@@ -587,6 +624,7 @@ def recommend_removals(policy: Policy, rules: list[RuleInfo]) -> list[Draft]:
                             "hit_count": r.hit_count,
                             "last_hit": r.last_hit.isoformat() if r.last_hit else None,
                         },
+                        "map": map_preview(evaluator, [(info, info.refs)], []),
                     },
                     policy_fmc_id=policy.fmc_id,
                     ace_delta=-ace,
@@ -686,8 +724,10 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
         aces: list[int] = []
         scores: list[int] = []
         names_used: set[str] = set(taken)
+        after_pairs: list[tuple[RuleInfo, dict[str, list[Ref]]]] = []
         for n, tier in enumerate(ordered):
             refs = {**info.refs, "dst_net": parts[tier]}
+            after_pairs.append((info, refs))
             ace, score = evaluator.evaluate(info, refs)
             aces.append(ace)
             if score is not None:
@@ -714,7 +754,12 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
                 display="split",
                 deploy_cost=len(ordered),  # 1 update + (n-1) creates
                 targets=[_rule_target(info)],
-                preview={"policy": _policy_ref(policy), "before": [before], "after": after},
+                preview={
+                    "policy": _policy_ref(policy),
+                    "before": [before],
+                    "after": after,
+                    "map": map_preview(evaluator, [(info, info.refs)], after_pairs),
+                },
                 policy_fmc_id=policy.fmc_id,
                 ace_delta=sum(aces) - info.ace,
                 score_delta=(round(mean(scores)) - old) if scores and old is not None else None,
@@ -799,7 +844,12 @@ def _merge_draft(
         display="split",
         deploy_cost=len(run),  # 1 update + (k-1) deletes
         targets=[_rule_target(i) for i in run],
-        preview={"policy": _policy_ref(policy), "before": before, "after": after},
+        preview={
+            "policy": _policy_ref(policy),
+            "before": before,
+            "after": after,
+            "map": map_preview(evaluator, [(i, i.refs) for i in run], [(first, refs)]),
+        },
         policy_fmc_id=policy.fmc_id,
         ace_delta=ace - sum(i.ace for i in run),
         score_delta=(score - round(mean(olds))) if score is not None and olds else None,
@@ -925,6 +975,7 @@ def _tighten_source(
             "policy": _policy_ref(policy),
             "before": [before],
             "after": [with_status(rule_view(info, refs), "modified", before)],
+            "map": map_preview(evaluator, [(info, info.refs)], [(info, refs)]),
         },
         policy_fmc_id=policy.fmc_id,
         ace_delta=ace - info.ace,
@@ -1011,6 +1062,7 @@ def _tighten_ports(
             "policy": _policy_ref(policy),
             "before": [before],
             "after": [with_status(rule_view(info, refs), "modified", before)],
+            "map": map_preview(evaluator, [(info, info.refs)], [(info, refs)]),
         },
         policy_fmc_id=policy.fmc_id,
         ace_delta=ace - info.ace,
@@ -1484,7 +1536,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
         rules = load_policy_rules(estate, policy.fmc_id)
         if not rules:
             continue
-        drafts += recommend_removals(policy, rules)
+        drafts += recommend_removals(estate, policy, rules)
         if policy.kind == "access":
             drafts += recommend_split_rules(estate, policy, rules)
             drafts += recommend_merge_rules(estate, policy, rules)

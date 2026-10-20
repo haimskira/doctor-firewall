@@ -84,6 +84,9 @@ ok "rulebase readable (first rule: $first_rule); $findings findings"
 recs="$(call GET "/api/snapshots/$snap_id/recommendations?limit=1" | json_field "['total']")"
 [[ "$recs" -gt 0 ]] || die "analysis produced no recommendations"
 ok "$recs recommendations (local only; nothing written to the FMC)"
+edges="$(call GET "/api/snapshots/$snap_id/map" | json_field "['total_edges']")"
+[[ "$edges" -gt 0 ]] || die "connectivity map is empty"
+ok "connectivity map: $edges connections"
 call DELETE "/api/fmc/connections/$conn_id" >/dev/null
 
 log "Audit chain"

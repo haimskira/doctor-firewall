@@ -6,13 +6,14 @@ configuration from the FMC **read-only**, analyses them against the firewall doc
 recommends clean-ups and SSL/IPS placement, and pushes changes **only** after explicit
 approval, in batches that never exceed the deploy limit.
 
-> **Status: phase 3 — recommendations.** On top of the secure foundation (auth, RBAC,
+> **Status: phase 4 — connectivity map.** On top of the secure foundation (auth, RBAC,
 > tamper-evident audit, encrypted credentials, offline build/CI/bundle), the system pulls every
 > cluster's configuration read-only into versioned snapshots (phase 1), analyses it — match
-> spaces, shadowing, dead rules, ACE expansion, asset table, explained rule score (phase 2) — and
-> proposes doctrine-backed changes with an inline / before-after preview, deploy cost and ACE /
-> score impact, plus an admin-defined naming convention (phase 3). The UI follows the current FMC
-> look. Nothing is written to the FMC yet; the connectivity map (phase 4) is next. See
+> spaces, shadowing, dead rules, ACE expansion, asset table, explained rule score (phase 2) —
+> proposes doctrine-backed changes with preview, deploy cost and impact plus an admin naming
+> convention (phase 3), and draws who-talks-to-whom by tier, coloured by risk, with the before /
+> after of each recommendation (phase 4). The UI follows the current FMC look. Nothing is written
+> to the FMC yet; controlled enforcement (phase 5) is next. See
 > [docs/architecture.md](docs/architecture.md#roadmap).
 
 The system is designed for an **air-gapped production network**: nothing at runtime talks to

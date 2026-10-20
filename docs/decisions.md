@@ -3,6 +3,17 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-019 — Connectivity map from rules, not traffic
+The spec's map shows source → destination with port, hits and rule score. Without flow data
+(out of scope; the system talks only to the FMC) the map is built from the rules that can match:
+nodes are asset-table systems, edges the permit rules between them, coloured by the doctrine
+rules in [connectivity.md](connectivity.md). Hits are the rules' hit counts, not per-flow counts.
+
+### D-018 — Cytoscape.js for graphs
+The spec names Cytoscape.js or sigma.js. Cytoscape.js 3.34.3: MIT, no runtime dependencies, its
+own TypeScript types, compound nodes for tier columns. Its one inline `<style>` is suppressed with
+a placeholder element so the CSP stays `style-src 'self'`.
+
 ### D-017 — Naming convention: token semantics and a separate permission
 The spec says the administrator defines the convention and the system derives names from the
 asset table and the rule. The exact token set and its meaning are ours (see

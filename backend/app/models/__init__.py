@@ -18,6 +18,7 @@ from app.models.inventory import (
     Snapshot,
     SnapshotCheckpoint,
 )
+from app.models.map import MapEdge
 from app.models.recommendations import NamingConvention, Recommendation, RecommendationDecision
 from app.models.user import User
 
@@ -33,6 +34,7 @@ __all__ = [
     "FwObject",
     "GroupMember",
     "Interface",
+    "MapEdge",
     "NamingConvention",
     "Policy",
     "Recommendation",

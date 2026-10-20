@@ -1,0 +1,352 @@
+import { useMemo, useState } from 'react';
+import type { SyntheticEvent } from 'react';
+import { Link } from 'react-router-dom';
+
+import type { Cluster, ConnectivityMap, MapEdge, MapNode, MapRisk, MapView } from '../api/types';
+import { Alert, Ltr } from '../components/common';
+import { Graph } from '../components/Graph';
+import { SnapshotPicker } from '../components/inventory';
+import { RiskBadge, useNodeLabel, useReasonLabel } from '../components/mapParts';
+import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
+import { useI18n } from '../i18n/I18nProvider';
+
+const VIEWS: readonly MapView[] = ['assets', 'system', 'users'];
+const RISKS: readonly MapRisk[] = ['red', 'yellow', 'green'];
+const LIST_LIMIT = 200;
+
+/**
+ * Connectivity map: three views (assets / system-to-system / users-to-systems), filters by
+ * cluster, address (either direction) and risk; click a connection to see its rules.
+ */
+export function MapPage() {
+  const { t, tError, dir } = useI18n();
+  const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
+  const [viewParam, setView] = useQueryParam('view');
+  const [cluster, setCluster] = useQueryParam('cluster');
+  const [src] = useQueryParam('src');
+  const [dst] = useQueryParam('dst');
+  const [bothParam] = useQueryParam('both');
+  const setParams = useSetQueryParams();
+  const [riskParam, setRisk] = useQueryParam('risk');
+  const view: MapView = VIEWS.find((v) => v === viewParam) ?? 'assets';
+  const risks = (riskParam ?? '').split(',').filter((r): r is MapRisk => RISKS.some((x) => x === r));
+  const [form, setForm] = useState({ src: src ?? '', dst: dst ?? '', both: bothParam === '1' });
+  const [selected, setSelected] = useState<{ kind: 'edge' | 'node'; id: string } | null>(null);
+
+  const clusters = useApi<Cluster[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/clusters`);
+  const params = new URLSearchParams({ view });
+  if (cluster !== null) params.set('cluster', cluster);
+  if (src !== null) params.set('src', src);
+  if (dst !== null) params.set('dst', dst);
+  if (bothParam === '1') params.set('both', 'true');
+  for (const r of risks) params.append('risk', r);
+  const map = useApi<ConnectivityMap>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/map?${params.toString()}`);
+  const data = map.data;
+  const nodeLabel = useNodeLabel();
+
+  const graphNodes = useMemo(
+    () => (data?.nodes ?? []).map((n) => ({ id: n.id, tier: n.tier, label: nodeLabel(n.id, n.label) })),
+    [data, nodeLabel],
+  );
+  const graphEdges = useMemo(
+    () => (data?.edges ?? []).map((e) => ({ id: e.id, src: e.src, dst: e.dst, risk: e.risk, weight: e.rule_count })),
+    [data],
+  );
+
+  function apply(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setParams({
+      src: form.src.trim() === '' ? null : form.src.trim(),
+      dst: form.dst.trim() === '' ? null : form.dst.trim(),
+      both: form.both ? '1' : null,
+    });
+    setSelected(null);
+  }
+
+  function toggleRisk(r: MapRisk) {
+    // No risk parameter means all risks are shown (all boxes checked).
+    const shown = risks.length === 0 ? [...RISKS] : risks;
+    const next = shown.includes(r) ? shown.filter((x) => x !== r) : [...shown, r];
+    setRisk(next.length === 0 || next.length === RISKS.length ? null : next.join(','));
+    setSelected(null);
+  }
+
+  const edge = selected?.kind === 'edge' ? data?.edges.find((e) => e.id === selected.id) : undefined;
+  const node = selected?.kind === 'node' ? data?.nodes.find((n) => n.id === selected.id) : undefined;
+  const error = snapError ?? clusters.error ?? map.error;
+
+  return (
+    <div className="stack">
+      <div className="row spread">
+        <div>
+          <h1>{t('map.title')}</h1>
+          <p className="muted small">{t('map.help')}</p>
+        </div>
+        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+      </div>
+      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+      {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
+
+      <div className="pe-flow" role="tablist" aria-label={t('map.view')}>
+        {VIEWS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            className={view === v ? 'active' : ''}
+            onClick={() => {
+              setView(v === 'assets' ? null : v);
+              setSelected(null);
+            }}
+          >
+            {t(`map.view.${v}`)}
+          </button>
+        ))}
+      </div>
+
+      <form className="pe-toolbar card-toolbar map-filters" onSubmit={apply}>
+        <label className="inline-field">
+          {t('rules.cluster')}
+          <select
+            value={cluster ?? ''}
+            onChange={(e) => {
+              setCluster(e.target.value === '' ? null : e.target.value);
+              setSelected(null);
+            }}
+          >
+            <option value="">{t('map.allClusters')}</option>
+            {(clusters.data ?? []).map((c) => (
+              <option key={c.fmc_id} value={c.fmc_id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline-field">
+          {t('map.from')}
+          <input
+            dir="ltr"
+            className="ltr"
+            maxLength={96}
+            value={form.src}
+            onChange={(e) => {
+              setForm({ ...form, src: e.target.value });
+            }}
+          />
+        </label>
+        <label className="inline-field">
+          {t('map.to')}
+          <input
+            dir="ltr"
+            className="ltr"
+            maxLength={96}
+            value={form.dst}
+            onChange={(e) => {
+              setForm({ ...form, dst: e.target.value });
+            }}
+          />
+        </label>
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={form.both}
+            onChange={(e) => {
+              setForm({ ...form, both: e.target.checked });
+            }}
+          />
+          {t('map.both')}
+        </label>
+        <button type="submit">{t('map.apply')}</button>
+      </form>
+
+      {data !== null && (
+        <>
+          <div className="row map-legend" role="group" aria-label={t('map.col.risk')}>
+            {RISKS.map((r) => (
+              <label key={r} className={`inline risk-chip risk-${r}`}>
+                <input
+                  type="checkbox"
+                  checked={risks.length === 0 || risks.includes(r)}
+                  onChange={() => {
+                    toggleRisk(r);
+                  }}
+                />
+                <span className="swatch" aria-hidden="true" />
+                {t(`map.risk.${r}`)} ({new Map(Object.entries(data.risk_counts)).get(r) ?? 0})
+              </label>
+            ))}
+            <span className="muted small">{t('map.edges', { count: data.total_edges })}</span>
+          </div>
+          {data.truncated && (
+            <Alert kind="info">{t('map.truncated', { shown: data.edges.length, total: data.total_edges })}</Alert>
+          )}
+          {data.edges.length === 0 ? (
+            <p className="muted">{t('map.none')}</p>
+          ) : (
+            <div className="map-layout">
+              <section className="card map-canvas-card">
+                <Graph
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  rtl={dir === 'rtl'}
+                  label={t('map.graph')}
+                  onSelectEdge={(id) => {
+                    setSelected({ kind: 'edge', id });
+                  }}
+                  onSelectNode={(id) => {
+                    setSelected({ kind: 'node', id });
+                  }}
+                />
+              </section>
+              <section className="card map-side" aria-live="polite">
+                {edge !== undefined && snapshotId !== null ? (
+                  <EdgeDetail edge={edge} snapshotId={snapshotId} />
+                ) : node !== undefined ? (
+                  <NodeDetail node={node} />
+                ) : (
+                  <p className="muted">{t('map.select')}</p>
+                )}
+              </section>
+            </div>
+          )}
+          {data.edges.length > 0 && (
+            <section className="card">
+              <h2>{t('map.table')}</h2>
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('map.col.from')}</th>
+                    <th>{t('map.col.to')}</th>
+                    <th>{t('map.col.risk')}</th>
+                    <th>{t('map.services')}</th>
+                    <th>{t('map.col.rules')}</th>
+                    <th>{t('map.hits')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.edges.slice(0, LIST_LIMIT).map((e) => (
+                    <tr key={e.id} className={selected?.id === e.id ? 'selected' : ''}>
+                      <td>
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() => {
+                            setSelected({ kind: 'edge', id: e.id });
+                          }}
+                        >
+                          <Ltr>{nodeLabel(e.src)}</Ltr>
+                        </button>
+                      </td>
+                      <td>
+                        <Ltr>{nodeLabel(e.dst)}</Ltr>
+                      </td>
+                      <td>
+                        <RiskBadge risk={e.risk} />
+                      </td>
+                      <td className="small">
+                        <Ltr>{e.services.slice(0, 3).join(', ')}</Ltr>
+                        {e.services.length > 3 && '…'}
+                      </td>
+                      <td>{e.rule_count}</td>
+                      <td>{e.hits.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function EdgeDetail({ edge, snapshotId }: { edge: MapEdge; snapshotId: number }) {
+  const { t } = useI18n();
+  const nodeLabel = useNodeLabel();
+  const reason = useReasonLabel();
+  return (
+    <div className="stack">
+      <h2>
+        <Ltr>{nodeLabel(edge.src)}</Ltr> → <Ltr>{nodeLabel(edge.dst)}</Ltr>
+      </h2>
+      <div className="rec-facts small">
+        <RiskBadge risk={edge.risk} />
+        <span>
+          <span className="muted">{t('map.hits')}: </span>
+          {edge.hits.toLocaleString()}
+        </span>
+        {edge.min_score !== null && (
+          <span>
+            <span className="muted">{t('map.minScore')}: </span>
+            {edge.min_score}
+          </span>
+        )}
+      </div>
+      {edge.reasons.length > 0 && (
+        <div>
+          <h3>{t('map.why')}</h3>
+          <ul className="plain-list small">
+            {edge.reasons.map((code) => (
+              <li key={code}>{reason(code)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <h3>{t('map.services')}</h3>
+        <span className="chips-inline">
+          {edge.services.map((s) => (
+            <span key={s} className="chip">
+              <Ltr>{s}</Ltr>
+            </span>
+          ))}
+        </span>
+      </div>
+      <div>
+        <h3>{t('map.rules', { count: edge.rule_count })}</h3>
+        <ul className="plain-list">
+          {edge.rules.map((r) => (
+            <li key={`${r.policy_id}-${r.id}`}>
+              <span className={`swatch-dot risk-${r.risk}`} aria-hidden="true" />{' '}
+              <Link
+                to={`/rules?snapshot=${String(snapshotId)}&policy=${encodeURIComponent(r.policy_id)}&q=${encodeURIComponent(r.name)}`}
+              >
+                #{r.index} <Ltr>{r.name}</Ltr>
+              </Link>
+              {r.score !== null && <span className="muted small"> · {r.score}</span>}
+            </li>
+          ))}
+        </ul>
+        {edge.rule_count > edge.rules.length && <div className="muted small">…</div>}
+      </div>
+    </div>
+  );
+}
+
+function NodeDetail({ node }: { node: MapNode }) {
+  const { t } = useI18n();
+  const nodeLabel = useNodeLabel();
+  return (
+    <div className="stack">
+      <h2>
+        <Ltr>{nodeLabel(node.id, node.label)}</Ltr>
+      </h2>
+      {node.tier !== null && <span className={`tier tier-${node.tier.toLowerCase()}`}>{node.tier}</span>}
+      {node.user_type !== null && <span className="muted">{node.user_type}</span>}
+      {node.networks.length > 0 && (
+        <div>
+          <h3>{t('map.networks')}</h3>
+          <span className="chips-inline">
+            {node.networks.map((n) => (
+              <span key={n} className="chip">
+                <Ltr>{n}</Ltr>
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}

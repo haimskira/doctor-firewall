@@ -26,7 +26,7 @@ import {
 import { RefList, SnapshotPicker } from '../components/inventory';
 import { RecTag } from '../components/recommendations';
 import { ReasonList, ScoreBadge } from '../components/score';
-import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 
@@ -114,8 +114,9 @@ function buildEntries(total: number, groups: RuleGroup[], collapsed: Set<number>
 export function RulebasePage() {
   const { t, tError } = useI18n();
   const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
-  const [clusterParam, setClusterParam] = useQueryParam('cluster');
+  const [clusterParam] = useQueryParam('cluster');
   const [policyParam, setPolicyParam] = useQueryParam('policy');
+  const setParams = useSetQueryParams();
   const [qParam, setQParam] = useQueryParam('q');
   const [search, setSearch] = useState(qParam ?? '');
   const clusters = useApi<Cluster[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/clusters`);
@@ -260,8 +261,7 @@ export function RulebasePage() {
               <select
                 value={cluster?.fmc_id ?? ''}
                 onChange={(e) => {
-                  setClusterParam(e.target.value);
-                  setPolicyParam(null);
+                  setParams({ cluster: e.target.value, policy: null });
                 }}
               >
                 {withPolicy.map((c) => (

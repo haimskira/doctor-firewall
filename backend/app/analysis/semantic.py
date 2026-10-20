@@ -14,6 +14,7 @@ from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from app.analysis.basic import FindingRow
+from app.analysis.connectivity import MapBuilder
 from app.analysis.expand import Resolver, RuleSpace, rule_spaces
 from app.analysis.score import ACE_HEAVY, PERMIT_ACTIONS, AssetIndex, RuleFacts, score_rule
 from app.analysis.shadow import analyse_order
@@ -55,6 +56,7 @@ def analyze_semantics(
     session.execute(delete(RuleScore).where(RuleScore.snapshot_id == snapshot_id))
     resolver = Resolver.load(session, snapshot_id)
     assets = load_assets(session)
+    edges = MapBuilder(session, snapshot_id, assets)
     with_literals = set(
         session.scalars(
             select(RuleRef.rule_id)
@@ -109,6 +111,8 @@ def analyze_semantics(
                     },
                 )
             )
+        if policy.kind == "access":
+            edges.load_services(policy.fmc_id)
         if policy.kind in ACE_KINDS:
             ace_by_policy[policy.fmc_id] = sum(rs.ace_count for rs in spaces if rs.enabled)
         rules = {
@@ -182,6 +186,18 @@ def analyze_semantics(
                 if policy.kind == "access"
                 else None
             )
+            if result is not None and result.score is not None and rs.rule_id not in shadowed_by:
+                # Only rules that can match carry traffic on the map.
+                edges.add(
+                    policy_id=policy.fmc_id,
+                    rule={"id": rs.fmc_id, "name": rs.name, "index": rs.rule_index},
+                    rule_id=rs.rule_id,
+                    src=rs.space.src_net,
+                    dst=rs.space.dst_net,
+                    reasons=(str(r["code"]) for r in result.reasons),
+                    score=result.score,
+                    hits=rule.hit_count,
+                )
             scores.append(
                 {
                     "rule_id": rs.rule_id,
@@ -197,6 +213,7 @@ def analyze_semantics(
             )
 
     ace_totals = _cluster_aces(session, snapshot_id, settings, ace_by_policy, findings)
+    edge_count = edges.flush()
     if findings:
         session.execute(
             insert(Finding),
@@ -219,7 +236,14 @@ def analyze_semantics(
         session.execute(
             update(Snapshot)
             .where(Snapshot.id == snapshot_id)
-            .values(stats={**snap.stats, "ace_by_cluster": ace_totals, "assets_used": len(assets)})
+            .values(
+                stats={
+                    **snap.stats,
+                    "ace_by_cluster": ace_totals,
+                    "assets_used": len(assets),
+                    "map_edges": edge_count,
+                }
+            )
         )
     return dict(Counter(f.kind for f in findings))
 

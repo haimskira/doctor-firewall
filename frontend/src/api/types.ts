@@ -482,6 +482,7 @@ export interface RecommendationPreview {
   affected_groups?: string[];
   routes?: number;
   hits?: { hit_count: number | null; last_hit: string | null };
+  map?: { before: MapChangeEdge[]; after: MapChangeEdge[] };
 }
 
 export interface RecommendationDetail extends Recommendation {
@@ -526,4 +527,54 @@ export interface NamingConvention {
 export interface ConventionCatalog {
   kinds: Record<ConventionKind, string[]>;
   conventions: NamingConvention[];
+}
+
+// ---- phase 4: connectivity map (mirrors app/api/connectivity.py) ----
+
+export type MapView = 'assets' | 'system' | 'users';
+export type MapRisk = 'green' | 'yellow' | 'red';
+
+export interface MapNode {
+  id: string;
+  label: string;
+  tier: string | null;
+  user_type: string | null;
+  networks: string[];
+}
+
+export interface MapEdgeRule {
+  id: string;
+  name: string;
+  index: number;
+  risk: MapRisk;
+  score: number | null;
+  policy_id: string;
+}
+
+export interface MapEdge {
+  id: string;
+  src: string;
+  dst: string;
+  risk: MapRisk;
+  rule_count: number;
+  hits: number;
+  min_score: number | null;
+  reasons: string[];
+  services: string[];
+  rules: MapEdgeRule[];
+}
+
+export interface ConnectivityMap {
+  view: MapView;
+  nodes: MapNode[];
+  edges: MapEdge[];
+  total_edges: number;
+  truncated: boolean;
+  risk_counts: Record<MapRisk, number>;
+}
+
+export interface MapChangeEdge {
+  src: string;
+  dst: string;
+  risk: MapRisk;
 }

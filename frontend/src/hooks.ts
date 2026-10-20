@@ -75,6 +75,31 @@ export function useQueryParam(name: string): [string | null, (value: string | nu
   return [value, set];
 }
 
+/**
+ * Update several query parameters in one navigation. Separate ``useQueryParam`` setters
+ * called in the same event do not compose (each starts from the current URL), so the last
+ * one would win.
+ */
+export function useSetQueryParams(): (updates: Record<string, string | null>) => void {
+  const [, setParams] = useSearchParams();
+  return useCallback(
+    (updates: Record<string, string | null>) => {
+      setParams(
+        (prev) => {
+          const copy = new URLSearchParams(prev);
+          for (const [name, value] of Object.entries(updates)) {
+            if (value === null || value === '') copy.delete(name);
+            else copy.set(name, value);
+          }
+          return copy;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+}
+
 /** Completed snapshots, and the selected one (``?snapshot=``; defaults to the newest). */
 export function useSnapshotSelection(): {
   snapshots: Snapshot[];

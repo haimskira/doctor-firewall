@@ -13,6 +13,7 @@ import { FindingsPage } from './pages/FindingsPage';
 import { FmcPage } from './pages/FmcPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
+import { MapPage } from './pages/MapPage';
 import { NamingPage } from './pages/NamingPage';
 import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { ObjectsPage } from './pages/ObjectsPage';
@@ -63,6 +64,7 @@ export function App() {
             ['scores', <ScoresPage key="q" />],
             ['assets', <AssetsPage key="a" />],
             ['recommendations', <RecommendationsPage key="m" />],
+            ['map', <MapPage key="g" />],
             ['naming', <NamingPage key="n" />],
           ] as const
         ).map(([path, element]) => (

@@ -12,6 +12,7 @@ import type {
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 import { Ltr } from './common';
+import { MapChange } from './mapParts';
 
 type TagGroup = 'remove' | 'split' | 'merge' | 'tighten' | 'rename' | 'object';
 
@@ -267,6 +268,7 @@ export function RecommendationPreviewView({
             </div>
           </div>
         ))}
+      {preview.map !== undefined && <MapChange before={preview.map.before} after={preview.map.after} />}
       {preview.objects !== undefined && (
         <div className="split-view">
           <div>

@@ -14,6 +14,7 @@ are documented in docs/scoring.md; the doctrine principles behind them:
 from __future__ import annotations
 
 import ipaddress
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,6 +65,18 @@ class AssetIndex:
                     )
                 )
         self.entries = sorted(entries, key=lambda e: (e.version, e.lo))
+        # Per IP version: entries sorted by start, their starts, and the running maximum of
+        # their ends — an interval query bisects to the last entry starting before its end
+        # and walks back only while some earlier entry can still reach its start.
+        self._by_version: dict[int, tuple[list[AssetEntry], list[int], list[int]]] = {}
+        for version in (4, 6):
+            items = [e for e in self.entries if e.version == version]
+            reach: list[int] = []
+            top = -1
+            for e in items:
+                top = max(top, e.hi)
+                reach.append(top)
+            self._by_version[version] = (items, [e.lo for e in items], reach)
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -72,12 +85,17 @@ class AssetIndex:
         """Assets that intersect the address set (all assets for "any")."""
         if addresses.any:
             return list(self.entries)
-        found = []
-        for e in self.entries:
-            intervals = addresses.v4 if e.version == 4 else addresses.v6
-            if any(lo <= e.hi and e.lo <= hi for lo, hi in intervals):
-                found.append(e)
-        return found
+        found: dict[int, AssetEntry] = {}
+        for version, intervals in ((4, addresses.v4), (6, addresses.v6)):
+            items, starts, reach = self._by_version[version]
+            for lo, hi in intervals:
+                i = bisect_right(starts, hi) - 1
+                while i >= 0 and reach[i] >= lo:
+                    e = items[i]
+                    if e.hi >= lo:
+                        found[id(e)] = e
+                    i -= 1
+        return sorted(found.values(), key=lambda e: (e.version, e.lo))
 
     def unclassified(self, addresses: AddressSet) -> bool:
         """True if part of the (concrete) address set is covered by no asset."""

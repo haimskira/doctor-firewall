@@ -427,3 +427,25 @@ h3 { font-size: 0.95rem; margin-block: 0.5rem 0.35rem; }
   .rec-layout, .split-view { grid-template-columns: 1fr; }
   .rec-detail { position: static; max-height: none; }
 }
+
+/* ---- phase 4: connectivity map ---- */
+.graph-canvas { position: relative; width: 100%; background: var(--surface); }
+.map-layout { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(16rem, 1fr); gap: 1rem; align-items: start; }
+.map-canvas-card { padding: 0; overflow: hidden; }
+.map-side { position: sticky; top: calc(var(--top-h) + 1rem); max-height: calc(100vh - var(--top-h) - 2rem); overflow: auto; }
+.map-filters { flex-wrap: wrap; }
+.map-filters input.ltr { width: 12rem; }
+.map-legend { align-items: center; gap: 1rem; }
+.risk-chip { gap: 0.35rem; }
+.swatch, .swatch-dot { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px; background: var(--muted); }
+.swatch-dot { border-radius: 50%; width: 0.6rem; height: 0.6rem; }
+.risk-red .swatch, .swatch-dot.risk-red { background: var(--block); }
+.risk-yellow .swatch, .swatch-dot.risk-yellow { background: #d4a017; }
+.risk-green .swatch, .swatch-dot.risk-green { background: var(--allow); }
+.badge.risk-badge.risk-red { border-color: var(--block); color: var(--block); }
+.badge.risk-badge.risk-yellow { border-color: #b8860b; color: #b8860b; }
+.badge.risk-badge.risk-green { border-color: var(--allow); color: var(--allow); }
+@media (max-width: 1100px) {
+  .map-layout { grid-template-columns: 1fr; }
+  .map-side { position: static; max-height: none; }
+}

@@ -48,6 +48,7 @@ const NAV: NavGroup[] = [
     heading: 'shell.monitor',
     items: [
       { to: '/', label: 'nav.home', icon: InsightsIcon, permission: null, crumb: ['shell.monitor', 'nav.home'], end: true },
+      { to: '/map', label: 'nav.map', icon: LinkIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.map'] },
       { to: '/findings', label: 'nav.findings', icon: EventsIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.findings'] },
       { to: '/scores', label: 'nav.scores', icon: ScoreIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.scores'] },
       { to: '/recommendations', label: 'nav.recommendations', icon: WrenchIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.recommendations'] },

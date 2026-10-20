@@ -1,0 +1,187 @@
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
+import { act } from 'react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ConnectivityMap, Me, Snapshot } from '../api/types';
+import { AuthProvider } from '../auth/AuthProvider';
+import { elementsFor } from '../components/Graph';
+import { MapChange } from '../components/mapParts';
+import { I18nProvider } from '../i18n/I18nProvider';
+import { mockFetch } from '../test/fetchMock';
+import type { Recorded } from '../test/fetchMock';
+import { MapPage } from './MapPage';
+
+// jsdom has no canvas: a fake Cytoscape records what the page gives it.
+type TapHandler = (event: { target: { id: () => string } }) => void;
+const fake = vi.hoisted(() => ({
+  added: [] as unknown[],
+  handlers: new Map<string, (event: { target: { id: () => string } }) => void>(),
+  instances: 0,
+}));
+vi.mock('cytoscape', () => ({
+  default: vi.fn(() => {
+    fake.instances += 1;
+    const elements = { remove: vi.fn() };
+    return {
+      on: (_event: string, selector: string, handler: TapHandler) => {
+        fake.handlers.set(selector, handler);
+      },
+      elements: () => elements,
+      add: (items: unknown[]) => {
+        fake.added = items;
+      },
+      fit: vi.fn(),
+      destroy: vi.fn(),
+    };
+  }),
+}));
+
+const ME: Me = {
+  id: 1, username: 'v', display_name: 'V', roles: ['viewer'], permissions: ['policy:read'], language: 'en',
+  must_change_password: false, csrf_token: 'c',
+};
+const SNAP = {
+  id: 7, connection_id: 1, connection_name: 'FMC', status: 'complete', requested_by: 'x', created_at: '2026-10-20T10:00:00Z',
+  started_at: null, finished_at: null, analyzed_at: '2026-10-20T11:00:00Z', fmc_version: null, error: null, error_detail: null, stats: {},
+} satisfies Snapshot;
+const MAP: ConnectivityMap = {
+  view: 'assets',
+  nodes: [
+    { id: 'BRONZE|DEV', label: 'DEV', tier: 'BRONZE', user_type: null, networks: ['10.40.0.0/16'] },
+    { id: 'GOLD|SQL-FIN', label: 'SQL-FIN', tier: 'GOLD', user_type: null, networks: ['10.20.5.0/24'] },
+    { id: 'ANY', label: 'ANY', tier: null, user_type: null, networks: [] },
+  ],
+  edges: [
+    {
+      id: 'BRONZE|DEV->GOLD|SQL-FIN', src: 'BRONZE|DEV', dst: 'GOLD|SQL-FIN', risk: 'red', rule_count: 2, hits: 1500, min_score: 25,
+      reasons: ['tier_skip', 'gold_without_ips'], services: ['SVC_TCP1433'],
+      rules: [{ id: 'r9', name: 'TEMP_DEV_TO_DB', index: 9, risk: 'red', score: 25, policy_id: 'p1' }],
+    },
+    {
+      id: 'ANY->GOLD|SQL-FIN', src: 'ANY', dst: 'GOLD|SQL-FIN', risk: 'yellow', rule_count: 1, hits: 0, min_score: 60,
+      reasons: ['any_source'], services: ['HTTPS'], rules: [{ id: 'r3', name: 'WEB', index: 3, risk: 'yellow', score: 60, policy_id: 'p1' }],
+    },
+  ],
+  total_edges: 2,
+  truncated: false,
+  risk_counts: { red: 1, yellow: 1, green: 0 },
+};
+
+function setup(path: string, routes: ReactNode, handler: (req: Recorded) => { status: number; body?: unknown } | undefined): Recorded[] {
+  const calls = mockFetch((req) => {
+    if (req.url === '/api/auth/me') return { status: 200, body: ME };
+    if (req.url.startsWith('/api/snapshots?')) return { status: 200, body: [SNAP] };
+    if (req.url === '/api/snapshots/7/clusters') return { status: 200, body: [] };
+    return handler(req) ?? { status: 404, body: { detail: 'not_found' } };
+  });
+  render(
+    <I18nProvider>
+      <AuthProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>{routes}</Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    </I18nProvider>,
+  );
+  return calls;
+}
+
+beforeEach(() => {
+  fake.added = [];
+  fake.handlers.clear();
+  fake.instances = 0;
+});
+
+describe('Graph layout', () => {
+  it('places tiers in columns, mirrors for RTL and colours edges by risk', () => {
+    const nodes = MAP.nodes.map((n) => ({ id: n.id, label: n.label, tier: n.tier }));
+    const edges = MAP.edges.map((e) => ({ id: e.id, src: e.src, dst: e.dst, risk: e.risk, weight: e.rule_count }));
+    const ltr = elementsFor(nodes, edges, false);
+    const x = (els: typeof ltr, id: string) => els.find((e) => e.data.id === id)?.position?.x;
+    expect(ltr.filter((e) => e.classes === 'column').map((e) => e.data.id)).toEqual(['col:ANY', 'col:BRONZE', 'col:GOLD']);
+    const anyX = x(ltr, 'ANY') ?? 0;
+    const devX = x(ltr, 'BRONZE|DEV') ?? 0;
+    const goldX = x(ltr, 'GOLD|SQL-FIN') ?? 0;
+    expect(anyX < devX && devX < goldX).toBe(true);
+    const rtl = elementsFor(nodes, edges, true);
+    expect(x(rtl, 'GOLD|SQL-FIN')).toBe(-goldX);
+    const red = ltr.find((e) => e.data.id === 'BRONZE|DEV->GOLD|SQL-FIN');
+    expect(red?.data['colour']).toBe('#d64545');
+    expect(red?.data.source).toBe('BRONZE|DEV');
+    expect(ltr.find((e) => e.data.id === 'ANY')?.classes).toBe('special');
+  });
+});
+
+describe('MapPage', () => {
+  it('renders the graph and list, filters by address and risk, and explains a connection', async () => {
+    const calls = setup('/map', <Route path="/map" element={<MapPage />} />, (req) => {
+      if (req.url.startsWith('/api/snapshots/7/map?')) {
+        if (req.url.includes('src=bogus')) return { status: 422, body: { detail: 'invalid_src' } };
+        return { status: 200, body: MAP };
+      }
+      return undefined;
+    });
+    expect(await screen.findByText('Dangerous (1)')).toBeInTheDocument();
+    expect(screen.getByText('2 connections')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fake.added.length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole('img', { name: 'Connectivity graph' })).toBeInTheDocument();
+
+    // Click in the list.
+    const table = screen.getByRole('table');
+    await userEvent.click(within(table).getByRole('button', { name: 'DEV' }));
+    expect(screen.getByRole('heading', { name: 'DEV → SQL-FIN' })).toBeInTheDocument();
+    expect(screen.getByText('Skips tiers')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '#9 TEMP_DEV_TO_DB' })).toHaveAttribute(
+      'href',
+      '/rules?snapshot=7&policy=p1&q=TEMP_DEV_TO_DB',
+    );
+    // Tap in the graph.
+    act(() => {
+      fake.handlers.get('edge')?.({ target: { id: () => 'ANY->GOLD|SQL-FIN' } });
+    });
+    expect(screen.getByRole('heading', { name: 'Any → SQL-FIN' })).toBeInTheDocument();
+    act(() => {
+      fake.handlers.get('node.system, node.special')?.({ target: { id: () => 'GOLD|SQL-FIN' } });
+    });
+    expect(screen.getByText('10.20.5.0/24')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'System to system' }));
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('view=system'))).toBe(true);
+    });
+    await userEvent.type(screen.getByLabelText('From (IP / subnet / range)'), '10.40.0.0/16');
+    await userEvent.click(screen.getByLabelText('Both directions'));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('src=10.40.0.0%2F16') && c.url.includes('both=true'))).toBe(true);
+    });
+    await userEvent.click(screen.getByLabelText(/Compliant/));
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('risk=red&risk=yellow') || c.url.includes('risk=yellow&risk=red'))).toBe(true);
+    });
+
+    await userEvent.clear(screen.getByLabelText('From (IP / subnet / range)'));
+    await userEvent.type(screen.getByLabelText('From (IP / subnet / range)'), 'bogus');
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(await screen.findByText('The source is not a valid IP, subnet or range.')).toBeInTheDocument();
+  });
+});
+
+describe('Recommendation map before / after', () => {
+  it('shows both sides and an empty after for a removal', () => {
+    render(
+      <I18nProvider initial="en">
+        <MapChange before={[{ src: 'BRONZE|DEV', dst: 'GOLD|SQL-FIN', risk: 'red' }]} after={[]} />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole('heading', { name: 'Map before / after' })).toBeInTheDocument();
+    expect(screen.getByText('DEV')).toBeInTheDocument();
+    expect(screen.getByText('No connection (the rule is removed or never matches).')).toBeInTheDocument();
+    expect(fake.instances).toBe(1);
+  });
+});
