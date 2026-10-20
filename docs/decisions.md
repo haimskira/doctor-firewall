@@ -3,6 +3,16 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-014 — ACE count is an estimate (upper bound with Object Group Search)
+Per rule, ACEs = product of the leaf counts of zones, networks and ports on both sides. This is
+how the FMC flattens groups; with Object Group Search enabled on a device the real count is
+lower. Platform limits are per cluster and default to an explicitly *unverified* value.
+
+### D-013 — USERS classification in the asset table
+The doctrine keeps user space outside the server tiers. Instead of forcing user networks into a
+tier, the asset table has a `USERS` classification (with `user_type`: FIN / IT / General ...).
+Tier-skip scoring applies only between server tiers.
+
 ### D-012 — Policy links discovered from `*PolicySetting`, not guessed
 The access-policy field that references the decryption / identity policy is not documented for
 the FMC 10.1 REST API. Instead of guessing a name, the adapter records every `*PolicySetting`
