@@ -7,11 +7,11 @@ from typing import Any
 import pytest
 from fmc_mock.seed import generate
 
-from app.collector.service import CollectionError, build_clusters
+from app.collector.service import CollectionError, build_clusters, cluster_policy_links
 from app.fmc import normalize
 from app.fmc.adapters import UnsupportedFmcVersionError, select_adapter, v10_1
 from app.fmc.adapters.v10_1 import AdapterError
-from app.fmc.records import ObjectKind, Ref, RuleField
+from app.fmc.records import ObjectKind, PolicyKind, Ref, RuleField
 
 DATA = generate(clusters=2, rules_per_policy=120, seed=5)
 
@@ -144,7 +144,9 @@ def test_topology_and_network_payloads_map() -> None:
     devices = [v10_1.map_device(d) for d in DATA.devices]
     pairs = [v10_1.map_ha_pair(p) for p in DATA.ha_pairs]
     assignments = [a for a in (v10_1.map_assignment(x) for x in DATA.assignments) if a]
-    clusters = build_clusters(devices, pairs, assignments)
+    assert {a.policy_type for a in assignments} == {"AccessPolicy", "FTDNatPolicy"}
+    access = [a for a in assignments if a.policy_type == "AccessPolicy"]
+    clusters = build_clusters(devices, pairs, access)
     assert len(clusters) == 2
     assert all(c["kind"] == "ha_pair" and len(c["members"]) == 2 for c in clusters)
     assert {c["policy_fmc_id"] for c in clusters} == {p["id"] for p in DATA.policies}
@@ -165,11 +167,10 @@ def test_topology_and_network_payloads_map() -> None:
     assert v10_1.map_bgp([], []) is None
 
 
-def test_non_access_assignments_ignored_and_standalone_devices() -> None:
-    assert (
-        v10_1.map_assignment({"policy": {"id": "n1", "type": "FTDNatPolicy"}, "targets": []})
-        is None
-    )
+def test_assignment_types_and_standalone_devices() -> None:
+    nat = v10_1.map_assignment({"policy": {"id": "n1", "type": "FTDNatPolicy"}, "targets": []})
+    assert nat is not None
+    assert nat.policy_type == "FTDNatPolicy"
     dev = v10_1.map_device({"id": "d9", "name": "solo", "accessPolicy": {"id": "p9"}})
     clusters = build_clusters([dev], [], [])
     assert clusters[0]["kind"] == "standalone"
@@ -193,3 +194,151 @@ def test_interface_netmask_forms() -> None:
                 "ipv4": {"static": {"address": "10.0.0.1", "netmask": "33"}},
             },
         )
+
+
+# ------------------------------------------------------------------ policy dependencies
+
+
+def test_every_mock_policy_and_rule_maps() -> None:
+    for resource, policies in DATA.policy_lists.items():
+        kind = next(k for k, v in v10_1.POLICY_RESOURCES.items() if v == resource)
+        for item in policies:
+            assert v10_1.map_policy(item, kind).kind == kind
+    for (resource, _pid, sub), rules in DATA.policy_rules.items():
+        kind = next(k for k, v in v10_1.POLICY_RESOURCES.items() if v == resource)
+        rule_type = dict(v10_1.RULE_RESOURCES[kind])[sub]
+        mapped = [v10_1.map_any_rule(kind, rule_type, item, i + 1) for i, item in enumerate(rules)]
+        assert all(m.rule_index == i + 1 for i, m in enumerate(mapped))
+
+
+def test_policy_links_are_discovered_from_policy_settings() -> None:
+    policy = v10_1.map_policy(
+        {
+            "id": "acp1",
+            "name": "ACP",
+            "prefilterPolicySetting": {"id": "pf1", "name": "PF", "type": "PrefilterPolicy"},
+            "someNewPolicySetting": {"id": "x1", "name": "X", "type": "Whatever"},
+            "notAPolicySetting": "string value is ignored",
+            "securityIntelligence": {"id": "si1", "type": "SecurityIntelligencePolicy"},
+        },
+        PolicyKind.ACCESS,
+    )
+    assert [(rel, ref.object_id) for rel, ref in policy.links] == [
+        ("prefilterPolicySetting", "pf1"),
+        ("someNewPolicySetting", "x1"),
+    ]
+    with pytest.raises(AdapterError):
+        v10_1.map_policy({"id": "acp1", "name": "ACP", "prefilterPolicySetting": {"id": "bad id!"}})
+
+
+def test_prefilter_rule() -> None:
+    rule = v10_1.map_prefilter_rule(
+        {
+            "id": "p1",
+            "name": "FP",
+            "action": "FASTPATH",
+            "ruleType": "PREFILTER",
+            "sourceInterfaces": {
+                "objects": [{"id": "z1", "name": "outside", "type": "SecurityZone"}]
+            },
+            "destinationNetworks": {"literals": [{"type": "Network", "value": "10.0.0.0/8"}]},
+        },
+        3,
+    )
+    assert (rule.action, rule.rule_type, rule.rule_index) == ("FASTPATH", "PREFILTER", 3)
+    assert (RuleField.SRC_ZONE, "z1") in {(f, r.object_id) for f, r in rule.refs}
+    with pytest.raises(AdapterError):
+        v10_1.map_prefilter_rule({"id": "p1", "action": "ALLOW"}, 1)  # not a prefilter action
+
+
+def test_generic_rules_validate_action_token() -> None:
+    rule = v10_1.map_decryption_rule(
+        {
+            "id": "d1",
+            "action": "DECRYPT_KNOWN_KEY",
+            "destinationNetworks": {
+                "objects": [{"id": "g1", "name": "GOLD", "type": "NetworkGroup"}]
+            },
+        },
+        1,
+    )
+    assert rule.name == "rule-1"
+    assert (
+        v10_1.map_identity_rule({"id": "i1", "name": "x", "action": "NO_AUTH"}, 1).action
+        == "NO_AUTH"
+    )
+    for bad in ("decrypt; drop", "", "lowercase"):
+        with pytest.raises(AdapterError):
+            v10_1.map_decryption_rule({"id": "d1", "action": bad}, 1)
+
+
+def test_nat_rules() -> None:
+    auto = v10_1.map_nat_rule(
+        {
+            "id": "a1",
+            "natType": "STATIC",
+            "originalNetwork": {"id": "h1", "name": "WEB", "type": "Host"},
+            "translatedNetwork": {"id": "h2", "name": "WEB_PUB", "type": "Host"},
+            "serviceProtocol": "TCP",
+            "originalPort": 8443,
+            "translatedPort": "443",
+        },
+        1,
+        "AUTO",
+    )
+    refs = {(f, r.object_id or r.literal) for f, r in auto.refs}
+    assert {
+        (RuleField.NAT_ORIG_SRC, "h1"),
+        (RuleField.NAT_TRANS_SRC, "h2"),
+        (RuleField.NAT_ORIG_SPORT, "TCP/8443"),
+        (RuleField.NAT_TRANS_SPORT, "TCP/443"),
+    } <= refs
+    assert (auto.section, auto.rule_type, auto.action, auto.name) == (
+        "AUTO",
+        "AUTO",
+        "STATIC",
+        "AUTO NAT 1",
+    )
+    manual = v10_1.map_nat_rule(
+        {
+            "id": "m1",
+            "natType": "DYNAMIC",
+            "section": "AFTER_AUTO",
+            "enabled": False,
+            "description": "Users PAT",
+            "originalSource": {"id": "n1", "name": "U", "type": "Network"},
+        },
+        2,
+        "MANUAL",
+    )
+    assert (manual.section, manual.enabled, manual.name) == ("AFTER_AUTO", False, "Users PAT")
+    for bad in (
+        {"id": "m1", "natType": "NOPE"},
+        {"id": "m1", "natType": "STATIC", "section": "MIDDLE"},
+    ):
+        with pytest.raises(AdapterError):
+            v10_1.map_nat_rule(bad, 1, "MANUAL")
+    with pytest.raises(AdapterError):
+        v10_1.map_nat_rule(
+            {"id": "a1", "natType": "STATIC", "originalPort": 99999, "serviceProtocol": "TCP"},
+            1,
+            "AUTO",
+        )
+    with pytest.raises(AdapterError):
+        v10_1.map_any_rule(PolicyKind.INTRUSION, None, {}, 1)
+
+
+def test_cluster_policy_links() -> None:
+    devices = [v10_1.map_device(d) for d in DATA.devices]
+    pairs = [v10_1.map_ha_pair(p) for p in DATA.ha_pairs]
+    assignments = [a for a in (v10_1.map_assignment(x) for x in DATA.assignments) if a]
+    clusters = build_clusters(
+        devices, pairs, [a for a in assignments if a.policy_type == "AccessPolicy"]
+    )
+    access = [v10_1.map_policy(p) for p in DATA.policies]
+    rows = cluster_policy_links(clusters, assignments, access)
+    by_cluster: dict[str, set[str]] = {}
+    for row in rows:
+        by_cluster.setdefault(row["cluster_fmc_id"], set()).add(row["via"])
+    assert all(vias == {"assignment", "prefilterPolicySetting"} for vias in by_cluster.values())
+    assert len(rows) == 3 * len(clusters)  # access + NAT (assigned) + prefilter (linked)

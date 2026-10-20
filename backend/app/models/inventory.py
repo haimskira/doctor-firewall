@@ -96,16 +96,47 @@ class Cluster(Base):
 
 
 class Policy(Base):
+    """Any collected policy: access, prefilter, decryption, identity, NAT (with rules)
+    and intrusion, file, DNS (inventory only)."""
+
     __tablename__ = "policies"
-    __table_args__ = (UniqueConstraint("snapshot_id", "fmc_id", name="uq_policies_snapshot_fmc"),)
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "fmc_id", name="uq_policies_snapshot_fmc"),
+        CheckConstraint(
+            "kind IN ('access','prefilter','decryption','identity','nat','intrusion','file','dns')",
+            name="kind_known",
+        ),
+        Index("ix_policies_kind", "snapshot_id", "kind"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     snapshot_id: Mapped[int] = _snapshot_fk()
     fmc_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="access")
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     default_action: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     categories: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     rule_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Linked policies: relation (e.g. prefilterPolicySetting) plus id, name and type.
+    links: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False, default=list)
+    attrs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ClusterPolicy(Base):
+    """Which policies govern a cluster, and how (assignment or link from its access policy)."""
+
+    __tablename__ = "cluster_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "cluster_fmc_id", "policy_fmc_id", name="uq_cluster_policies_identity"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    snapshot_id: Mapped[int] = _snapshot_fk()
+    cluster_fmc_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_fmc_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    via: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class Rule(Base):
@@ -119,6 +150,8 @@ class Rule(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     snapshot_id: Mapped[int] = _snapshot_fk()
     policy_fmc_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="access")
+    rule_type: Mapped[str | None] = mapped_column(String(16))
     fmc_id: Mapped[str] = mapped_column(String(64), nullable=False)
     rule_index: Mapped[int] = mapped_column(Integer, nullable=False)
     section: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -127,7 +160,9 @@ class Rule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     ips_policy: Mapped[str | None] = mapped_column(String(256))
+    ips_policy_id: Mapped[str | None] = mapped_column(String(64))
     file_policy: Mapped[str | None] = mapped_column(String(256))
+    file_policy_id: Mapped[str | None] = mapped_column(String(64))
     variable_set: Mapped[str | None] = mapped_column(String(256))
     log_begin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     log_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

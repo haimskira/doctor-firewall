@@ -12,6 +12,7 @@ must be re-validated against sanitised production payloads before go-live
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -29,6 +30,7 @@ from app.fmc.records import (
     InterfaceRecord,
     ObjectKind,
     ObjectRecord,
+    PolicyKind,
     PolicyRecord,
     Ref,
     RuleField,
@@ -177,6 +179,9 @@ class PolicyModel(_M):
     id: FmcId
     name: Name
     defaultAction: DefaultActionModel | None = None  # noqa: N815
+    description: ShortText | None = None
+    inspectionMode: Annotated[str, Field(max_length=32)] | None = None  # noqa: N815
+    basePolicy: RefModel | None = None  # noqa: N815
 
 
 class CategoryModel(_M):
@@ -352,6 +357,28 @@ def _refs(
     return refs
 
 
+# Policy collections per kind: (list resource, rule sub-resources with their rule type).
+POLICY_RESOURCES: dict[PolicyKind, str] = {
+    PolicyKind.ACCESS: "accesspolicies",
+    PolicyKind.PREFILTER: "prefilterpolicies",
+    PolicyKind.DECRYPTION: "decryptionpolicies",
+    PolicyKind.IDENTITY: "identitypolicies",
+    PolicyKind.NAT: "ftdnatpolicies",
+    PolicyKind.INTRUSION: "intrusionpolicies",
+    PolicyKind.FILE: "filepolicies",
+    PolicyKind.DNS: "dnspolicies",
+}
+RULE_RESOURCES: dict[PolicyKind, tuple[tuple[str, str | None], ...]] = {
+    PolicyKind.ACCESS: (("accessrules", None),),
+    PolicyKind.PREFILTER: (("prefilterrules", None),),
+    PolicyKind.DECRYPTION: (("decryptionpolicyrules", None),),
+    PolicyKind.IDENTITY: (("identityrules", None),),
+    PolicyKind.NAT: (("manualnatrules", "MANUAL"), ("autonatrules", "AUTO")),
+}
+# NAT evaluation order: manual (before auto) -> auto NAT -> manual (after auto).
+NAT_SECTION_RANK = {"BEFORE_AUTO": 0, "AUTO": 1, "AFTER_AUTO": 2}
+
+
 # --------------------------------------------------------------------------- mappers
 
 
@@ -465,6 +492,8 @@ def map_rule(item: Any, position: int) -> RuleRecord:
         send_events=m.sendEventsToFMC,
         attrs=attrs,
         refs=tuple(refs),
+        ips_policy_id=m.ipsPolicy.id if m.ipsPolicy else None,
+        file_policy_id=m.filePolicy.id if m.filePolicy else None,
     )
 
 
@@ -488,15 +517,44 @@ def map_ha_pair(item: Any) -> HaPairRecord:
 
 def map_assignment(item: Any) -> AssignmentRecord | None:
     m = _validate(AssignmentModel, item, "policyassignment")
-    if m.policy.type and m.policy.type != "AccessPolicy":
-        return None  # NAT / platform / other policy types are not part of the rulebase
-    return AssignmentRecord(policy_id=m.policy.id, target_ids=tuple(t.id for t in m.targets))
+    return AssignmentRecord(
+        policy_id=m.policy.id,
+        target_ids=tuple(t.id for t in m.targets),
+        policy_type=m.policy.type or "AccessPolicy",
+    )
 
 
-def map_policy(item: Any) -> PolicyRecord:
-    m = _validate(PolicyModel, item, "accesspolicy")
+_POLICY_LINK_KEY = re.compile(r"^[a-z][A-Za-z]{0,48}PolicySetting$")
+
+
+def map_policy(item: Any, kind: PolicyKind = PolicyKind.ACCESS) -> PolicyRecord:
+    """Any policy (access, prefilter, decryption, identity, NAT, intrusion, file, DNS).
+
+    Links to dependent policies are discovered from every ``*PolicySetting`` reference
+    the FMC returns (e.g. ``prefilterPolicySetting`` on an access policy), instead of
+    hard-coding names that are not documented for every policy type.
+    """
+    m = _validate(PolicyModel, item, f"{kind.value}policy")
+    links: list[tuple[str, Ref]] = []
+    if isinstance(item, dict):
+        for key in sorted(item):
+            value = item[key]
+            if _POLICY_LINK_KEY.fullmatch(key) and isinstance(value, dict) and "id" in value:
+                links.append((key, _ref(_validate(RefModel, value, f"{m.id}.{key}"))))
+    attrs: dict[str, Any] = {}
+    if m.description and m.description.strip():
+        attrs["description"] = normalize.text(m.description)
+    if m.inspectionMode:
+        attrs["inspection_mode"] = m.inspectionMode
+    if m.basePolicy is not None:
+        attrs["base_policy"] = m.basePolicy.name
     return PolicyRecord(
-        fmc_id=m.id, name=m.name, default_action=m.defaultAction.action if m.defaultAction else ""
+        fmc_id=m.id,
+        name=m.name,
+        default_action=m.defaultAction.action if m.defaultAction else "",
+        kind=kind,
+        links=tuple(links),
+        attrs=attrs,
     )
 
 
@@ -578,3 +636,239 @@ def map_bgp(general: list[Any], bgp: list[Any]) -> BgpRecord | None:
         router_id=g.routerId if g else None,
         neighbors=tuple(neighbors),
     )
+
+
+# --------------------------------------------------------------------------- other rule types
+
+UpperToken = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]{0,39}$")]
+
+
+class GenericRuleModel(_M):
+    """Decryption / identity rules. Field names follow the access-rule conventions; the
+    action is validated as an FMC enum token (the full value list is version-specific)."""
+
+    id: FmcId
+    name: Name = ""
+    enabled: bool = True
+    action: UpperToken
+    metadata: RuleMetadata = Field(default_factory=RuleMetadata)
+    sourceZones: ObjList | None = None  # noqa: N815
+    destinationZones: ObjList | None = None  # noqa: N815
+    sourceInterfaces: ObjList | None = None  # noqa: N815
+    destinationInterfaces: ObjList | None = None  # noqa: N815
+    sourceNetworks: ObjList | None = None  # noqa: N815
+    destinationNetworks: ObjList | None = None  # noqa: N815
+    sourcePorts: ObjList | None = None  # noqa: N815
+    destinationPorts: ObjList | None = None  # noqa: N815
+    applications: AppList | None = None
+    urls: UrlList | None = None
+    users: ObjList | None = None
+    vlanTags: ObjList | None = None  # noqa: N815
+    sourceSecurityGroupTags: ObjList | None = None  # noqa: N815
+    destinationSecurityGroupTags: ObjList | None = None  # noqa: N815
+    logBegin: bool = False  # noqa: N815
+    logEnd: bool = False  # noqa: N815
+    sendEventsToFMC: bool = False  # noqa: N815
+    description: ShortText | None = None
+
+
+class PrefilterRuleModel(GenericRuleModel):
+    action: Literal["ANALYZE", "BLOCK", "FASTPATH"]
+    ruleType: Literal["PREFILTER", "TUNNEL"] = "PREFILTER"  # noqa: N815
+
+
+def _generic_refs(m: GenericRuleModel) -> list[tuple[RuleField, Ref]]:
+    refs: list[tuple[RuleField, Ref]] = []
+
+    def add(field: RuleField, items: list[Ref]) -> None:
+        refs.extend((field, r) for r in items)
+
+    add(RuleField.SRC_ZONE, _refs(m.sourceZones, None) + _refs(m.sourceInterfaces, None))
+    add(RuleField.DST_ZONE, _refs(m.destinationZones, None) + _refs(m.destinationInterfaces, None))
+    add(RuleField.SRC_NET, _refs(m.sourceNetworks, _network_literal))
+    add(RuleField.DST_NET, _refs(m.destinationNetworks, _network_literal))
+    add(RuleField.SRC_PORT, _refs(m.sourcePorts, _port_literal))
+    add(RuleField.DST_PORT, _refs(m.destinationPorts, _port_literal))
+    add(RuleField.URL, _refs(m.urls, _url_literal))
+    add(RuleField.USER, _refs(m.users, None))
+    add(RuleField.VLAN, _refs(m.vlanTags, None))
+    add(RuleField.SRC_SGT, _refs(m.sourceSecurityGroupTags, None))
+    add(RuleField.DST_SGT, _refs(m.destinationSecurityGroupTags, None))
+    if m.applications is not None:
+        add(RuleField.APP, [_ref(a) for a in m.applications.applications])
+        add(RuleField.APP, [_ref(a) for a in m.applications.applicationFilters])
+    return refs
+
+
+def _generic_rule(model: type[GenericRuleModel], what: str, item: Any, position: int) -> RuleRecord:
+    m = _validate(model, item, what)
+    try:
+        refs = _generic_refs(m)
+    except ValueError as exc:
+        raise AdapterError(f"{what} {m.id}: invalid literal") from exc
+    attrs: dict[str, Any] = {}
+    if m.description and m.description.strip():
+        attrs["description"] = normalize.text(m.description)
+    return RuleRecord(
+        fmc_id=m.id,
+        rule_index=m.metadata.ruleIndex or position,
+        section=m.metadata.section,
+        category=m.metadata.category,
+        name=m.name or f"rule-{position}",
+        enabled=m.enabled,
+        action=m.action,
+        ips_policy=None,
+        file_policy=None,
+        variable_set=None,
+        log_begin=m.logBegin,
+        log_end=m.logEnd,
+        send_events=m.sendEventsToFMC,
+        attrs=attrs,
+        refs=tuple(refs),
+        rule_type=m.ruleType if isinstance(m, PrefilterRuleModel) else None,
+    )
+
+
+def map_prefilter_rule(item: Any, position: int) -> RuleRecord:
+    return _generic_rule(PrefilterRuleModel, "prefilterrule", item, position)
+
+
+def map_decryption_rule(item: Any, position: int) -> RuleRecord:
+    return _generic_rule(GenericRuleModel, "decryptionpolicyrule", item, position)
+
+
+def map_identity_rule(item: Any, position: int) -> RuleRecord:
+    return _generic_rule(GenericRuleModel, "identityrule", item, position)
+
+
+NatType = Annotated[str, Field(pattern=r"^(STATIC|DYNAMIC)$")]
+
+
+class AutoNatModel(_M):
+    id: FmcId
+    natType: NatType  # noqa: N815
+    originalNetwork: RefModel | None = None  # noqa: N815
+    translatedNetwork: RefModel | None = None  # noqa: N815
+    interfaceInTranslatedNetwork: bool = False  # noqa: N815
+    sourceInterface: RefModel | None = None  # noqa: N815
+    destinationInterface: RefModel | None = None  # noqa: N815
+    originalPort: int | str | None = None  # noqa: N815
+    translatedPort: int | str | None = None  # noqa: N815
+    serviceProtocol: Annotated[str, Field(max_length=16)] | None = None  # noqa: N815
+    description: ShortText | None = None
+
+
+class ManualNatModel(_M):
+    id: FmcId
+    natType: NatType  # noqa: N815
+    section: Annotated[str, Field(pattern=r"^(BEFORE_AUTO|AFTER_AUTO)$")] = "BEFORE_AUTO"
+    enabled: bool = True
+    originalSource: RefModel | None = None  # noqa: N815
+    translatedSource: RefModel | None = None  # noqa: N815
+    originalDestination: RefModel | None = None  # noqa: N815
+    translatedDestination: RefModel | None = None  # noqa: N815
+    originalSourcePort: RefModel | None = None  # noqa: N815
+    translatedSourcePort: RefModel | None = None  # noqa: N815
+    originalDestinationPort: RefModel | None = None  # noqa: N815
+    translatedDestinationPort: RefModel | None = None  # noqa: N815
+    sourceInterface: RefModel | None = None  # noqa: N815
+    destinationInterface: RefModel | None = None  # noqa: N815
+    interfaceInTranslatedSource: bool = False  # noqa: N815
+    description: ShortText | None = None
+
+
+def _opt(field: RuleField, ref: RefModel | None) -> list[tuple[RuleField, Ref]]:
+    return [(field, _ref(ref))] if ref is not None else []
+
+
+def map_nat_rule(item: Any, position: int, rule_type: str) -> RuleRecord:
+    """Manual (``MANUAL``) or auto (``AUTO``) NAT rule; NAT has no names, so the
+    description (or a positional label) is used."""
+    refs: list[tuple[RuleField, Ref]] = []
+    attrs: dict[str, Any] = {}
+    if rule_type == "AUTO":
+        a = _validate(AutoNatModel, item, "autonatrule")
+        refs += _opt(RuleField.SRC_ZONE, a.sourceInterface)
+        refs += _opt(RuleField.DST_ZONE, a.destinationInterface)
+        refs += _opt(RuleField.NAT_ORIG_SRC, a.originalNetwork)
+        refs += _opt(RuleField.NAT_TRANS_SRC, a.translatedNetwork)
+        try:
+            if a.originalPort not in (None, ""):
+                refs.append(
+                    (
+                        RuleField.NAT_ORIG_SPORT,
+                        Ref(
+                            literal=normalize.port_spec(a.serviceProtocol, str(a.originalPort)),
+                            literal_kind="port",
+                        ),
+                    )
+                )
+            if a.translatedPort not in (None, ""):
+                refs.append(
+                    (
+                        RuleField.NAT_TRANS_SPORT,
+                        Ref(
+                            literal=normalize.port_spec(a.serviceProtocol, str(a.translatedPort)),
+                            literal_kind="port",
+                        ),
+                    )
+                )
+        except ValueError as exc:
+            raise AdapterError(f"autonatrule {a.id}: invalid port") from exc
+        if a.interfaceInTranslatedNetwork:
+            attrs["translate_to_interface"] = True
+        fmc_id, nat_type, section, enabled, desc = a.id, a.natType, "AUTO", True, a.description
+    else:
+        m = _validate(ManualNatModel, item, "manualnatrule")
+        refs += _opt(RuleField.SRC_ZONE, m.sourceInterface)
+        refs += _opt(RuleField.DST_ZONE, m.destinationInterface)
+        refs += _opt(RuleField.NAT_ORIG_SRC, m.originalSource)
+        refs += _opt(RuleField.NAT_TRANS_SRC, m.translatedSource)
+        refs += _opt(RuleField.NAT_ORIG_DST, m.originalDestination)
+        refs += _opt(RuleField.NAT_TRANS_DST, m.translatedDestination)
+        refs += _opt(RuleField.NAT_ORIG_SPORT, m.originalSourcePort)
+        refs += _opt(RuleField.NAT_TRANS_SPORT, m.translatedSourcePort)
+        refs += _opt(RuleField.NAT_ORIG_DPORT, m.originalDestinationPort)
+        refs += _opt(RuleField.NAT_TRANS_DPORT, m.translatedDestinationPort)
+        if m.interfaceInTranslatedSource:
+            attrs["translate_to_interface"] = True
+        fmc_id, nat_type, section, enabled, desc = (
+            m.id,
+            m.natType,
+            m.section,
+            m.enabled,
+            m.description,
+        )
+    label = normalize.text(desc, 256) if desc and desc.strip() else f"{rule_type} NAT {position}"
+    return RuleRecord(
+        fmc_id=fmc_id,
+        rule_index=position,
+        section=section,
+        category="",
+        name=label,
+        enabled=enabled,
+        action=nat_type,
+        ips_policy=None,
+        file_policy=None,
+        variable_set=None,
+        log_begin=False,
+        log_end=False,
+        send_events=False,
+        attrs=attrs,
+        refs=tuple(refs),
+        rule_type=rule_type,
+    )
+
+
+def map_any_rule(kind: PolicyKind, rule_type: str | None, item: Any, position: int) -> RuleRecord:
+    if kind is PolicyKind.ACCESS:
+        return map_rule(item, position)
+    if kind is PolicyKind.PREFILTER:
+        return map_prefilter_rule(item, position)
+    if kind is PolicyKind.DECRYPTION:
+        return map_decryption_rule(item, position)
+    if kind is PolicyKind.IDENTITY:
+        return map_identity_rule(item, position)
+    if kind is PolicyKind.NAT:
+        return map_nat_rule(item, position, rule_type or "MANUAL")
+    raise AdapterError(f"{kind.value} policies have no rules")

@@ -5,6 +5,7 @@ from app.models.fmc import FmcConnection
 from app.models.inventory import (
     Bgp,
     Cluster,
+    ClusterPolicy,
     Finding,
     FwObject,
     GroupMember,
@@ -22,6 +23,7 @@ __all__ = [
     "AuditRecord",
     "Bgp",
     "Cluster",
+    "ClusterPolicy",
     "Finding",
     "FmcConnection",
     "FwObject",

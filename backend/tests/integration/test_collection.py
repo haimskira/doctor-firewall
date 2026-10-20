@@ -81,8 +81,21 @@ def _snapshot(snapshot_id: int) -> Snapshot:
         return snap
 
 
+def _expected_by_kind() -> dict[str, int]:
+    kinds = {
+        "prefilterpolicies": "prefilter",
+        "decryptionpolicies": "decryption",
+        "identitypolicies": "identity",
+        "ftdnatpolicies": "nat",
+    }
+    counts = {"access": sum(len(r) for r in DATA.rules.values())}
+    for (resource, _pid, _sub), rules in DATA.policy_rules.items():
+        counts[kinds[resource]] = counts.get(kinds[resource], 0) + len(rules)
+    return counts
+
+
 def _expected_rules() -> int:
-    return sum(len(r) for r in DATA.rules.values())
+    return sum(_expected_by_kind().values())
 
 
 def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str]) -> None:
@@ -96,6 +109,7 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     assert snap.status == "complete"
     assert snap.fmc_version == "10.1.0 (build 117)"
     assert snap.stats["rules"] == _expected_rules()
+    assert snap.stats["rules_by_kind"] == _expected_by_kind()
     assert snap.stats["clusters"] == len(DATA.ha_pairs)
     assert snap.stats["objects"] == sum(len(v) for v in DATA.objects.values())
     assert snap.stats["stub_objects"] > 0  # applications etc. known only by reference
@@ -174,6 +188,57 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     assert any("GRP_UNUSED" in t for t in titles)
     dup = client.get(f"/api/snapshots/{sid}/findings?kind=duplicate_membership").json()
     assert any(f["details"].get("group", {}).get("name") == "GRP_DC_ALL" for f in dup["rows"])
+
+    # ---- policy dependencies ----
+    governing = {(p["kind"], p["via"]) for p in first["policies"]}
+    assert governing == {
+        ("access", "assignment"),
+        ("nat", "assignment"),
+        ("prefilter", "prefilterPolicySetting"),
+    }
+    inventory = client.get(f"/api/snapshots/{sid}/policies").json()
+    kinds = {p["kind"] for p in inventory}
+    assert kinds == {
+        "access",
+        "prefilter",
+        "decryption",
+        "identity",
+        "nat",
+        "intrusion",
+        "file",
+        "dns",
+    }
+    decrypt = next(p for p in inventory if p["kind"] == "decryption")
+    assert decrypt["rule_count"] == 3
+    assert decrypt["clusters"] == []  # association to an ACP is not documented; shown unlinked
+    ips = [p for p in inventory if p["kind"] == "intrusion"]
+    assert {p["attrs"].get("inspection_mode") for p in ips} == {"PREVENTION"}
+    prefilter = next(p for p in first["policies"] if p["kind"] == "prefilter")
+    pf_rules = client.get(f"/api/snapshots/{sid}/policies/{prefilter['id']}/rules").json()
+    assert pf_rules["policy_kind"] == "prefilter"
+    assert [(r["action"], r["rule_type"]) for r in pf_rules["rows"]] == [
+        ("BLOCK", "PREFILTER"),
+        ("FASTPATH", "PREFILTER"),
+        ("ANALYZE", "TUNNEL"),
+    ]
+    nat = next(p for p in first["policies"] if p["kind"] == "nat")
+    nat_rules = client.get(f"/api/snapshots/{sid}/policies/{nat['id']}/rules").json()
+    assert [r["section"] for r in nat_rules["rows"]] == ["BEFORE_AUTO", "AUTO", "AFTER_AUTO"]
+    auto = nat_rules["rows"][1]
+    assert {x["name"] for x in auto["refs"]["nat_orig_src"]} == {"H_DMZ_WEB"}
+    assert [x["literal"] for x in auto["refs"]["nat_trans_sport"]] == ["TCP/443"]
+    dmz = client.get(f"/api/snapshots/{sid}/objects?q=H_DMZ_WEB_PUBLIC").json()["rows"][0]
+    dmz_detail = client.get(f"/api/snapshots/{sid}/objects/{dmz['id']}").json()
+    assert {(u["policy_kind"], u["field"]) for u in dmz_detail["used_by"]} == {
+        ("nat", "nat_trans_src")
+    }
+    unused_titles = [
+        f["title"]
+        for f in client.get(f"/api/snapshots/{sid}/findings?kind=unused_object&limit=500").json()[
+            "rows"
+        ]
+    ]
+    assert not any("H_DMZ_WEB" in t for t in unused_titles)  # used by NAT only, still "used"
 
     # ---- network ----
     net = client.get(f"/api/snapshots/{sid}/clusters/{first['fmc_id']}/network").json()

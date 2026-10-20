@@ -20,6 +20,7 @@ from app.fmc.records import (
     InterfaceRecord,
     ObjectKind,
     ObjectRecord,
+    PolicyKind,
     Ref,
     RuleRecord,
     StaticRouteRecord,
@@ -27,6 +28,7 @@ from app.fmc.records import (
 from app.models.inventory import (
     Bgp,
     Cluster,
+    ClusterPolicy,
     FwObject,
     GroupMember,
     Interface,
@@ -63,10 +65,12 @@ def advance(
     )
 
 
-def reset_checkpoint(session: Session, snapshot_id: int, resource: str) -> None:
+def reset_checkpoints(session: Session, snapshot_id: int, prefix: str) -> None:
+    """Forget every checkpoint whose key starts with ``prefix``."""
     session.execute(
         delete(SnapshotCheckpoint).where(
-            SnapshotCheckpoint.snapshot_id == snapshot_id, SnapshotCheckpoint.resource == resource
+            SnapshotCheckpoint.snapshot_id == snapshot_id,
+            SnapshotCheckpoint.resource.startswith(prefix, autoescape=True),
         )
     )
 
@@ -163,7 +167,11 @@ def add_stub_objects(
 
 
 def store_rules(
-    session: Session, snapshot_id: int, policy_id: str, records: Sequence[RuleRecord]
+    session: Session,
+    snapshot_id: int,
+    policy_id: str,
+    records: Sequence[RuleRecord],
+    kind: PolicyKind = PolicyKind.ACCESS,
 ) -> int:
     if not records:
         return 0
@@ -171,6 +179,8 @@ def store_rules(
         {
             "snapshot_id": snapshot_id,
             "policy_fmc_id": policy_id,
+            "policy_kind": kind.value,
+            "rule_type": r.rule_type,
             "fmc_id": r.fmc_id,
             "rule_index": r.rule_index,
             "section": r.section,
@@ -179,7 +189,9 @@ def store_rules(
             "enabled": r.enabled,
             "action": r.action,
             "ips_policy": r.ips_policy,
+            "ips_policy_id": r.ips_policy_id,
             "file_policy": r.file_policy,
+            "file_policy_id": r.file_policy_id,
             "variable_set": r.variable_set,
             "log_begin": r.log_begin,
             "log_end": r.log_end,
@@ -213,15 +225,16 @@ def store_rules(
     return len(rows)
 
 
-def count_rules(session: Session, snapshot_id: int, policy_id: str) -> int:
-    return (
-        session.scalar(
-            select(func.count(Rule.id)).where(
-                Rule.snapshot_id == snapshot_id, Rule.policy_fmc_id == policy_id
-            )
-        )
-        or 0
+def count_rules(
+    session: Session, snapshot_id: int, policy_id: str, rule_type: str | None = None
+) -> int:
+    """Rules stored for a policy (optionally only one rule type, e.g. AUTO NAT)."""
+    query = select(func.count(Rule.id)).where(
+        Rule.snapshot_id == snapshot_id, Rule.policy_fmc_id == policy_id
     )
+    if rule_type is not None:
+        query = query.where(Rule.rule_type == rule_type)
+    return session.scalar(query) or 0
 
 
 def delete_policy_rules(session: Session, snapshot_id: int, policy_id: str) -> None:
@@ -265,12 +278,23 @@ def upsert_policy(session: Session, snapshot_id: int, row: dict[str, Any]) -> No
         stmt.on_conflict_do_update(
             constraint="uq_policies_snapshot_fmc",
             set_={
+                "kind": stmt.excluded.kind,
                 "name": stmt.excluded.name,
                 "default_action": stmt.excluded.default_action,
                 "categories": stmt.excluded.categories,
+                "links": stmt.excluded.links,
+                "attrs": stmt.excluded.attrs,
             },
         )
     )
+
+
+def replace_cluster_policies(
+    session: Session, snapshot_id: int, rows: list[dict[str, str]]
+) -> None:
+    session.execute(delete(ClusterPolicy).where(ClusterPolicy.snapshot_id == snapshot_id))
+    if rows:
+        session.execute(insert(ClusterPolicy), [{"snapshot_id": snapshot_id, **r} for r in rows])
 
 
 def replace_interfaces(

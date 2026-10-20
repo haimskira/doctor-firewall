@@ -33,6 +33,30 @@ class ObjectKind(StrEnum):
 GROUP_KINDS = frozenset({ObjectKind.NETWORK_GROUP, ObjectKind.PORT_GROUP, ObjectKind.URL_GROUP})
 
 
+class PolicyKind(StrEnum):
+    """Policies collected per snapshot. The first five carry rules."""
+
+    ACCESS = "access"
+    PREFILTER = "prefilter"
+    DECRYPTION = "decryption"
+    IDENTITY = "identity"
+    NAT = "nat"
+    INTRUSION = "intrusion"
+    FILE = "file"
+    DNS = "dns"
+
+
+RULE_POLICY_KINDS = frozenset(
+    {
+        PolicyKind.ACCESS,
+        PolicyKind.PREFILTER,
+        PolicyKind.DECRYPTION,
+        PolicyKind.IDENTITY,
+        PolicyKind.NAT,
+    }
+)
+
+
 class RuleField(StrEnum):
     SRC_ZONE = "src_zone"
     DST_ZONE = "dst_zone"
@@ -48,6 +72,15 @@ class RuleField(StrEnum):
     DST_DYN = "dst_dyn"
     USER = "user"
     VLAN = "vlan"
+    # NAT: original (pre-translation) and translated values.
+    NAT_ORIG_SRC = "nat_orig_src"
+    NAT_TRANS_SRC = "nat_trans_src"
+    NAT_ORIG_DST = "nat_orig_dst"
+    NAT_TRANS_DST = "nat_trans_dst"
+    NAT_ORIG_SPORT = "nat_orig_sport"
+    NAT_TRANS_SPORT = "nat_trans_sport"
+    NAT_ORIG_DPORT = "nat_orig_dport"
+    NAT_TRANS_DPORT = "nat_trans_dport"
 
 
 @dataclass(frozen=True)
@@ -89,6 +122,11 @@ class RuleRecord:
     send_events: bool
     attrs: dict[str, Any]
     refs: tuple[tuple[RuleField, Ref], ...]
+    # PREFILTER / TUNNEL (prefilter), AUTO / MANUAL (NAT); None for other kinds.
+    rule_type: str | None = None
+    # Referenced intrusion / file policy ids (links into the policy inventory).
+    ips_policy_id: str | None = None
+    file_policy_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +150,7 @@ class HaPairRecord:
 class AssignmentRecord:
     policy_id: str
     target_ids: tuple[str, ...]
+    policy_type: str = "AccessPolicy"
 
 
 @dataclass(frozen=True)
@@ -119,6 +158,10 @@ class PolicyRecord:
     fmc_id: str
     name: str
     default_action: str
+    kind: PolicyKind = PolicyKind.ACCESS
+    # Policies this one references, e.g. ("prefilterPolicySetting", Ref(...)).
+    links: tuple[tuple[str, Ref], ...] = ()
+    attrs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

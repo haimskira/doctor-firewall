@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from pydantic import BaseModel
-from sqlalchemy import Select, func, literal, select
+from sqlalchemy import Select, case, func, literal, select
 from sqlalchemy.orm import Session
 
 from app.audit.chain import AuditEvent, AuditLog
@@ -26,6 +26,7 @@ from app.models.fmc import FmcConnection
 from app.models.inventory import (
     Bgp,
     Cluster,
+    ClusterPolicy,
     Finding,
     FwObject,
     GroupMember,
@@ -71,6 +72,14 @@ class SnapshotOut(BaseModel):
     stats: dict[str, Any]
 
 
+class GoverningPolicy(BaseModel):
+    id: str
+    name: str
+    kind: str
+    via: str
+    rule_count: int
+
+
 class ClusterOut(BaseModel):
     fmc_id: str
     name: str
@@ -81,6 +90,18 @@ class ClusterOut(BaseModel):
     policy_fmc_id: str | None
     policy_name: str | None
     rule_count: int
+    policies: list[GoverningPolicy]
+
+
+class PolicyOut(BaseModel):
+    id: str
+    kind: str
+    name: str
+    default_action: str
+    rule_count: int
+    links: list[dict[str, str]]
+    attrs: dict[str, Any]
+    clusters: list[str]
 
 
 class RefOut(BaseModel):
@@ -92,6 +113,7 @@ class RefOut(BaseModel):
 
 class RuleOut(BaseModel):
     id: str
+    rule_type: str | None
     index: int
     section: str
     category: str
@@ -109,6 +131,7 @@ class RuleOut(BaseModel):
 
 class RulesPage(BaseModel):
     policy_fmc_id: str
+    policy_kind: str
     policy_name: str
     categories: list[str]
     total: int
@@ -142,6 +165,8 @@ class EdgeOut(BaseModel):
 
 class UsageOut(BaseModel):
     policy_fmc_id: str
+    policy_kind: str
+    policy_name: str
     rule_id: str
     rule_index: int
     rule_name: str
@@ -322,28 +347,81 @@ def get_snapshot(snapshot_id: int, db: DbDep, _: ReaderDep) -> SnapshotOut:
 @router.get("/snapshots/{snapshot_id}/clusters", response_model=list[ClusterOut])
 def list_clusters(snapshot_id: int, db: DbDep, _: ReaderDep) -> list[ClusterOut]:
     _snapshot(db, snapshot_id)
-    rows = db.execute(
-        select(Cluster, Policy.name, Policy.rule_count)
-        .outerjoin(
-            Policy,
-            (Policy.snapshot_id == Cluster.snapshot_id) & (Policy.fmc_id == Cluster.policy_fmc_id),
+    policies = {
+        p.fmc_id: p for p in db.scalars(select(Policy).where(Policy.snapshot_id == snapshot_id))
+    }
+    governing: dict[str, list[GoverningPolicy]] = defaultdict(list)
+    for link in db.scalars(
+        select(ClusterPolicy)
+        .where(ClusterPolicy.snapshot_id == snapshot_id)
+        .order_by(ClusterPolicy.id)
+    ):
+        p = policies.get(link.policy_fmc_id)
+        governing[link.cluster_fmc_id].append(
+            GoverningPolicy(
+                id=link.policy_fmc_id,
+                name=p.name if p else link.policy_fmc_id,
+                kind=p.kind if p else "unknown",
+                via=link.via,
+                rule_count=p.rule_count if p else 0,
+            )
         )
-        .where(Cluster.snapshot_id == snapshot_id)
-        .order_by(Cluster.name)
+    result = []
+    for c in db.scalars(
+        select(Cluster).where(Cluster.snapshot_id == snapshot_id).order_by(Cluster.name)
+    ):
+        access = policies.get(c.policy_fmc_id or "")
+        result.append(
+            ClusterOut(
+                fmc_id=c.fmc_id,
+                name=c.name,
+                kind=c.kind,
+                sw_version=c.sw_version,
+                model=c.model,
+                members=c.members,
+                policy_fmc_id=c.policy_fmc_id,
+                policy_name=access.name if access else None,
+                rule_count=access.rule_count if access else 0,
+                policies=sorted(
+                    governing[c.fmc_id], key=lambda g: (g.kind != "access", g.kind, g.name)
+                ),
+            )
+        )
+    return result
+
+
+@router.get("/snapshots/{snapshot_id}/policies", response_model=list[PolicyOut])
+def list_policies(
+    snapshot_id: int,
+    db: DbDep,
+    _: ReaderDep,
+    kind: Annotated[str | None, Query(pattern=r"^[a-z]{1,16}$")] = None,
+) -> list[PolicyOut]:
+    """Inventory of every collected policy and the clusters it governs."""
+    _snapshot(db, snapshot_id)
+    names = dict(
+        db.execute(
+            select(Cluster.fmc_id, Cluster.name).where(Cluster.snapshot_id == snapshot_id)
+        ).all()
     )
+    governs: dict[str, list[str]] = defaultdict(list)
+    for link in db.scalars(select(ClusterPolicy).where(ClusterPolicy.snapshot_id == snapshot_id)):
+        governs[link.policy_fmc_id].append(names.get(link.cluster_fmc_id, link.cluster_fmc_id))
+    query = select(Policy).where(Policy.snapshot_id == snapshot_id)
+    if kind:
+        query = query.where(Policy.kind == kind)
     return [
-        ClusterOut(
-            fmc_id=c.fmc_id,
-            name=c.name,
-            kind=c.kind,
-            sw_version=c.sw_version,
-            model=c.model,
-            members=c.members,
-            policy_fmc_id=c.policy_fmc_id,
-            policy_name=pname,
-            rule_count=count or 0,
+        PolicyOut(
+            id=p.fmc_id,
+            kind=p.kind,
+            name=p.name,
+            default_action=p.default_action,
+            rule_count=p.rule_count,
+            links=p.links,
+            attrs=p.attrs,
+            clusters=sorted(governs[p.fmc_id]),
         )
-        for c, pname, count in rows
+        for p in db.scalars(query.order_by(Policy.kind, Policy.name))
     ]
 
 
@@ -376,7 +454,16 @@ def list_rules(
         )
         base = base.where(_search(Rule.name, q) | Rule.id.in_(by_ref))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rules = list(db.scalars(base.order_by(Rule.rule_index).offset(offset).limit(limit)))
+    # NAT is evaluated manual (before auto) -> auto -> manual (after auto).
+    section_rank = case(
+        (Rule.section == "BEFORE_AUTO", 0),
+        (Rule.section == "AUTO", 1),
+        (Rule.section == "AFTER_AUTO", 2),
+        else_=0,
+    )
+    rules = list(
+        db.scalars(base.order_by(section_rank, Rule.rule_index).offset(offset).limit(limit))
+    )
     refs: dict[int, dict[str, list[RefOut]]] = defaultdict(lambda: defaultdict(list))
     if rules:
         for rule_id, field, oid, oname, okind, lit in db.execute(
@@ -399,6 +486,7 @@ def list_rules(
             refs[rule_id][field].append(RefOut(id=oid, name=oname, kind=okind, literal=lit))
     return RulesPage(
         policy_fmc_id=policy.fmc_id,
+        policy_kind=policy.kind,
         policy_name=policy.name,
         categories=policy.categories,
         total=total,
@@ -406,6 +494,7 @@ def list_rules(
         rows=[
             RuleOut(
                 id=r.fmc_id,
+                rule_type=r.rule_type,
                 index=r.rule_index,
                 section=r.section,
                 category=r.category,
@@ -553,6 +642,8 @@ def object_detail(
     usage_query = (
         select(
             Rule.policy_fmc_id,
+            Rule.policy_kind,
+            Policy.name,
             Rule.fmc_id,
             Rule.rule_index,
             Rule.name,
@@ -560,12 +651,17 @@ def object_detail(
             RuleRef.object_fmc_id,
         )
         .join(RuleRef, RuleRef.rule_id == Rule.id)
+        .join(
+            Policy, (Policy.snapshot_id == Rule.snapshot_id) & (Policy.fmc_id == Rule.policy_fmc_id)
+        )
         .where(RuleRef.snapshot_id == snapshot_id, RuleRef.object_fmc_id.in_(via_ids))
     )
     total = db.scalar(select(func.count()).select_from(usage_query.subquery())) or 0
     used_by = [
         UsageOut(
             policy_fmc_id=p,
+            policy_kind=pkind,
+            policy_name=pname,
             rule_id=rid,
             rule_index=idx,
             rule_name=rname,
@@ -573,7 +669,7 @@ def object_detail(
             via_id=via or "",
             via_name=names.get(via or "", ""),
         )
-        for p, rid, idx, rname, fld, via in db.execute(
+        for p, pkind, pname, rid, idx, rname, fld, via in db.execute(
             usage_query.order_by(Rule.policy_fmc_id, Rule.rule_index).limit(limit)
         )
     ]
