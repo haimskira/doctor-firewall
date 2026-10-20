@@ -125,3 +125,28 @@ def test_map_rbac(client: TestClient, admin: dict[str, str]) -> None:
         assert viewer.get(f"/api/snapshots/{sid}/map").status_code == 200
     with TestClient(client.app, base_url="https://testserver") as anon:
         assert anon.get(f"/api/snapshots/{sid}/map").status_code == 401
+
+
+def test_summary_dashboard(client: TestClient, admin: dict[str, str]) -> None:
+    sid = _analysed(client, admin)
+    resp = client.get(f"/api/snapshots/{sid}/dashboard")
+    assert resp.status_code == 200, resp.text
+    d = resp.json()
+    assert d["snapshot"]["id"] == sid
+    totals = d["totals"]
+    assert totals["rules"] > 0
+    assert totals["clusters"] == len(d["clusters"])
+    assert totals["findings"] == sum(d["findings_by_severity"].values())
+    assert totals["findings"] == sum(k["count"] for k in d["findings_by_kind"])
+    assert totals["recommendations"] == sum(k["count"] for k in d["recommendations_by_kind"])
+    assert [b["key"] for b in d["score_buckets"]] == ["0-19", "20-39", "40-59", "60-79", "80-100"]
+    assert sum(b["count"] for b in d["score_buckets"]) > 0
+    counts = [k["count"] for k in d["findings_by_kind"]]
+    assert counts == sorted(counts, reverse=True)
+    assert all(c["rule_count"] > 0 and c["ace_total"] for c in d["clusters"])
+    full = _map(client, sid)
+    assert d["map_risk"] == full["risk_counts"]
+    assert len(d["riskiest_connections"]) <= 10
+    scores = [w["score"] for w in d["worst_rules"]]
+    assert scores == sorted(scores)
+    assert client.get("/api/snapshots/999999/dashboard").status_code == 404

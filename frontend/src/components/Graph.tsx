@@ -51,10 +51,15 @@ function column(node: GraphNode): string {
 }
 
 /** Deterministic layout: one column per tier, systems stacked inside it (RTL mirrors). */
-export function elementsFor(nodes: GraphNode[], edges: GraphEdge[], rtl: boolean): ElementDefinition[] {
+export function elementsFor(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  rtl: boolean,
+  columnLabel: (column: string) => string = (c) => c,
+): ElementDefinition[] {
   const rows = new Map<string, number>();
   const used = COLUMNS.filter((c) => nodes.some((n) => column(n) === c));
-  const out: ElementDefinition[] = used.map((c) => ({ data: { id: `col:${c}`, label: c }, classes: 'column' }));
+  const out: ElementDefinition[] = used.map((c) => ({ data: { id: `col:${c}`, label: columnLabel(c) }, classes: 'column' }));
   for (const node of [...nodes].sort((a, b) => a.label.localeCompare(b.label))) {
     const col = column(node);
     const x = used.indexOf(col as (typeof COLUMNS)[number]) * COLUMN_GAP * (rtl ? -1 : 1);
@@ -138,6 +143,7 @@ export function Graph({
   rtl,
   height = 560,
   label,
+  columnLabel,
   onSelectEdge,
   onSelectNode,
 }: {
@@ -146,6 +152,7 @@ export function Graph({
   rtl: boolean;
   height?: number;
   label: string;
+  columnLabel?: (column: string) => string;
   onSelectEdge?: (id: string) => void;
   onSelectNode?: (id: string) => void;
 }) {
@@ -190,9 +197,9 @@ export function Graph({
     const instance = cy.current;
     if (instance === null) return;
     instance.elements().remove();
-    instance.add(elementsFor(nodes, edges, rtl));
+    instance.add(elementsFor(nodes, edges, rtl, columnLabel));
     instance.fit(undefined, 24);
-  }, [nodes, edges, rtl]);
+  }, [nodes, edges, rtl, columnLabel]);
 
   return <div ref={container} className="graph-canvas" style={{ height }} role="img" aria-label={label} />;
 }

@@ -5,13 +5,14 @@ import { act } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ConnectivityMap, Me, Snapshot } from '../api/types';
+import type { ConnectivityMap, DashboardData, Me, Snapshot } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
 import { elementsFor } from '../components/Graph';
 import { MapChange } from '../components/mapParts';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
 import type { Recorded } from '../test/fetchMock';
+import { HomePage } from './HomePage';
 import { MapPage } from './MapPage';
 
 // jsdom has no canvas: a fake Cytoscape records what the page gives it.
@@ -183,5 +184,46 @@ describe('Recommendation map before / after', () => {
     expect(screen.getByText('DEV')).toBeInTheDocument();
     expect(screen.getByText('No connection (the rule is removed or never matches).')).toBeInTheDocument();
     expect(fake.instances).toBe(1);
+  });
+});
+
+describe('Summary dashboard', () => {
+  const DASH: DashboardData = {
+    snapshot: { id: 7, connection_name: 'FMC-HA', fmc_version: '10.1.0', created_at: '2026-10-20T10:00:00Z', finished_at: '2026-10-20T10:05:00Z', analyzed_at: '2026-10-20T10:06:00Z' },
+    totals: { rules: 6220, policies: 30, objects: 110, clusters: 3, findings: 12, recommendations: 9, dead_rules: 4, shadowed_rules: 2 },
+    findings_by_severity: { high: 3, medium: 5, low: 4, info: 0 },
+    findings_by_kind: [{ key: 'shadowed_rule', count: 7, extra: {} }, { key: 'dead_rule', count: 5, extra: {} }],
+    recommendations_by_kind: [{ key: 'split_rule', count: 9, extra: { deploy_cost: 18, ace_delta: 0 } }],
+    score_buckets: [{ key: '0-19', count: 1, extra: {} }, { key: '20-39', count: 2, extra: {} }, { key: '40-59', count: 3, extra: {} }, { key: '60-79', count: 4, extra: {} }, { key: '80-100', count: 5, extra: {} }],
+    rules_by_action: [{ key: 'ALLOW', count: 6000, extra: {} }, { key: 'BLOCK', count: 220, extra: {} }],
+    clusters: [{ id: 'c1', name: 'FTD-CL01', rule_count: 2000, ace_total: 900_000, ace_limit: 1_000_000, ace_limit_verified: false }],
+    map_risk: { red: 2, yellow: 3, green: 1 },
+    riskiest_connections: [{ src: 'BRONZE|DEV', dst: 'GOLD|SQL-FIN', risk: 'red', rule_count: 2, hits: 10 }],
+    worst_rules: [{ id: 'r9', name: 'ANY_ANY_TEMP', index: 9, policy_id: 'p1', policy_name: 'ACP', score: 5 }],
+  };
+
+  it('shows widgets per tab, and widgets can be closed and added back', async () => {
+    setup('/', <Route path="/" element={<HomePage />} />, (req) =>
+      req.url === '/api/snapshots/7/dashboard' ? { status: 200, body: DASH } : undefined,
+    );
+    expect(await screen.findByRole('heading', { name: 'Summary Dashboard' })).toBeInTheDocument();
+    const findings = await screen.findByRole('region', { name: 'Top Findings' });
+    expect(within(findings).getByRole('link', { name: 'Shadowed rules' })).toHaveAttribute('href', '/findings?snapshot=7&kind=shadowed_rule');
+    expect(within(screen.getByRole('region', { name: 'ACE Usage by Cluster' })).getByText('90% *')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Estate at a Glance' })).getByText('6,220')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close Top Findings' }));
+    expect(screen.queryByRole('region', { name: 'Top Findings' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Add Widgets' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Top Findings' }));
+    expect(screen.getByRole('region', { name: 'Top Findings' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Minimise Estate at a Glance' }));
+    expect(within(screen.getByRole('region', { name: 'Estate at a Glance' })).queryByText('6,220')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Risk' }));
+    const conn = screen.getByRole('region', { name: 'Riskiest Connections' });
+    expect(within(conn).getByText('DEV')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Lowest-Scored Rules' })).getByText('5')).toBeInTheDocument();
   });
 });

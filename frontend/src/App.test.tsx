@@ -60,7 +60,7 @@ describe('App', () => {
     await user.type(await screen.findByLabelText('שם משתמש'), 'alice');
     await user.type(screen.getByLabelText('סיסמה'), 'Secret-Pass-123');
     await user.click(screen.getByRole('button', { name: 'כניסה' }));
-    expect(await screen.findByText('Welcome, Alice')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Summary Dashboard' })).toBeInTheDocument();
     const login = calls.find((c) => c.url === '/api/auth/login');
     expect(login?.body).toEqual({ username: 'alice', password: 'Secret-Pass-123' });
     // The stored per-user language (en) is applied after login.
@@ -85,15 +85,19 @@ describe('App', () => {
   it('hides admin navigation from a viewer', async () => {
     mockFetch((req) => NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) });
     renderApp();
-    expect(await screen.findByRole('link', { name: 'Overview' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Audit log' })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Administration' }));
+    expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Users' })).not.toBeInTheDocument();
+    // Without the audit log, Events & Logs has a single entry: a direct link, no flyout.
+    expect(screen.getByRole('link', { name: 'Events & Logs' })).toHaveAttribute('href', '/findings');
+    expect(screen.queryByRole('menuitem', { name: 'Audit log' })).not.toBeInTheDocument();
   });
 
   it('redirects a viewer away from admin pages', async () => {
     mockFetch((req) => NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) });
     renderApp('/users');
-    expect(await screen.findByText('Welcome, Alice')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Summary Dashboard' })).toBeInTheDocument();
   });
 
   it('shows admin navigation to an administrator', async () => {
@@ -102,9 +106,13 @@ describe('App', () => {
         NO_SNAPSHOTS(req.url) ??
         (req.url === '/api/fmc/connections' ? { status: 200, body: [] } : { status: 200, body: me(['admin'], ADMIN_PERMS) }),
     );
-    renderApp();
-    expect(await screen.findByRole('link', { name: 'Users' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'FMC connection' })).toBeInTheDocument();
+    renderApp('/?tab=status');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Administration' }));
+    expect(screen.getByRole('menuitem', { name: 'Users' })).toHaveAttribute('href', '/users');
+    await user.click(screen.getByRole('button', { name: 'Integrations' }));
+    expect(screen.getByRole('menuitem', { name: 'FMC connection' })).toHaveAttribute('href', '/fmc');
+    expect(screen.queryByRole('menuitem', { name: 'Users' })).not.toBeInTheDocument(); // one flyout at a time
     expect(await screen.findByText('No FMC connection is configured yet.')).toBeInTheDocument();
   });
 
@@ -124,7 +132,7 @@ describe('App', () => {
     expect(
       await screen.findByText('You must set a new password before continuing.'),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Administration' })).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Current password'), 'Old-Password-1');
     await user.type(screen.getByLabelText('New password'), 'short');
@@ -139,7 +147,7 @@ describe('App', () => {
     await user.type(screen.getByLabelText('Confirm new password'), 'Brand-New-Pass-77');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Administration' })).toBeInTheDocument();
     });
     const change = calls.find((c) => c.url === '/api/auth/change-password');
     expect(change?.headers['X-CSRF-Token']).toBe('csrf-abc');
@@ -161,7 +169,7 @@ describe('App', () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole('searchbox', { name: 'Search objects' }), 'H_GOLD{Enter}');
     // The search opens the object explorer filtered by the query.
-    expect(await screen.findByText('Objects', { selector: '[aria-current="page"]' })).toBeInTheDocument();
+    expect(await screen.findByText('Object Management', { selector: '[aria-current="page"]' })).toBeInTheDocument();
     expect(calls.some((c) => c.url === '/api/snapshots/4/findings?severity=high&limit=1')).toBe(true);
   });
 

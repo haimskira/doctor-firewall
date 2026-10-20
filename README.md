@@ -16,8 +16,9 @@ approval, in batches that never exceed the deploy limit.
 > to the FMC yet; controlled enforcement (phase 5) is next. See
 > [docs/architecture.md](docs/architecture.md#roadmap).
 
-The system is designed for an **air-gapped production network**: nothing at runtime talks to
-anything except the FMC, and production installs from an offline bundle without internet.
+Production pulls the images from Docker Hub ([docs/operations.md](docs/operations.md)); an
+air-gapped install from an offline bundle is also supported. At runtime nothing talks to
+anything except the FMC.
 
 ---
 

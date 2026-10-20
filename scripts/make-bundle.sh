@@ -36,28 +36,12 @@ if [[ -z "$SKIP_CI" ]]; then
 fi
 
 log "Building runtime images $VERSION"
-docker build -q -f "$INFRA_HOST/docker/backend.Dockerfile" --target runtime \
-    --label "org.opencontainers.image.version=$VERSION" --label "org.opencontainers.image.revision=$SHA" \
-    -t "doctor-firewall/api:$VERSION" "$ROOT_HOST" >/dev/null
-docker build -q -f "$INFRA_HOST/docker/web.Dockerfile" --target runtime \
-    --label "org.opencontainers.image.version=$VERSION" --label "org.opencontainers.image.revision=$SHA" \
-    -t "doctor-firewall/web:$VERSION" "$ROOT_HOST" >/dev/null
-docker build -q -f "$INFRA_HOST/docker/postgres.Dockerfile"     --label "org.opencontainers.image.version=$VERSION" --label "org.opencontainers.image.revision=$SHA"     -t "doctor-firewall/postgres:$VERSION" "$ROOT_HOST" >/dev/null
-docker tag "$REDIS_IMAGE" "doctor-firewall/redis:$VERSION"
+build_runtime_images "doctor-firewall/" "$VERSION" "$SHA"
 docker tag "$TRIVY_IMAGE" "$TRIVY_LOCAL"
 ok "images built"
 
 log "Scanning runtime images offline (Trivy, fixable HIGH/CRITICAL fail the bundle)"
-for image in "doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-firewall/postgres:$VERSION" "doctor-firewall/redis:$VERSION"; do
-    # Writable tmpfs cache with the vulnerability DB mounted read-only inside it.
-    docker save "$image" | docker run --rm -i --tmpfs /cache \
-        -v "$(host_path "$VENDOR/trivy-cache/db"):/cache/db:ro" \
-        --entrypoint sh "$TRIVY_IMAGE" -c 'cat > /tmp/i.tar && trivy image --input /tmp/i.tar \
-            --cache-dir /cache --skip-db-update --skip-java-db-update --offline-scan --quiet \
-            --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1' \
-        || die "scan failed or fixable HIGH/CRITICAL vulnerabilities in $image (see output above)"
-    ok "$image"
-done
+scan_runtime_images "doctor-firewall/" "$VERSION"
 
 log "Writing bundle to dist/$NAME"
 rm -rf "$OUT"; mkdir -p "$OUT/vendor"

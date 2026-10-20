@@ -89,3 +89,45 @@ require_vendor() {
     [[ -d "$VENDOR/npm-cache" ]] \
         || die "vendor/npm-cache is missing — run scripts/vendor.sh first"
 }
+
+# Runtime image names: <prefix><component>:<version>. The default prefix keeps the local
+# names (doctor-firewall/api ...); for Docker Hub use e.g. "myuser/doctor-firewall-"
+# (-> myuser/doctor-firewall-api). See docs/operations.md.
+RUNTIME_COMPONENTS=(api web postgres redis)
+
+valid_image_prefix() {
+    [[ "$1" =~ ^([a-z0-9]+([._-][a-z0-9]+)*/)?[a-z0-9]+([._-][a-z0-9]+)*[/_.-]$ ]]
+}
+
+# build_runtime_images <prefix> <version> <git sha>
+build_runtime_images() {
+    local prefix="$1" version="$2" sha="$3"
+    local labels=(--label "org.opencontainers.image.version=$version" --label "org.opencontainers.image.revision=$sha"
+                  --label "org.opencontainers.image.source=https://github.com/haimskira/doctor-firewall")
+    docker build -q -f "$INFRA_HOST/docker/backend.Dockerfile" --target runtime "${labels[@]}" \
+        -t "${prefix}api:$version" "$ROOT_HOST" >/dev/null
+    docker build -q -f "$INFRA_HOST/docker/web.Dockerfile" --target runtime "${labels[@]}" \
+        -t "${prefix}web:$version" "$ROOT_HOST" >/dev/null
+    docker build -q -f "$INFRA_HOST/docker/postgres.Dockerfile" "${labels[@]}" \
+        -t "${prefix}postgres:$version" "$ROOT_HOST" >/dev/null
+    docker tag "$REDIS_IMAGE" "${prefix}redis:$version"
+}
+
+# scan_runtime_images <prefix> <version> — Trivy with the vendored DB; fixable
+# HIGH/CRITICAL findings fail.
+scan_runtime_images() {
+    local prefix="$1" version="$2" component image
+    [[ -d "$VENDOR/trivy-cache/db" ]] || die "vendor/trivy-cache missing — run scripts/vendor.sh"
+    docker tag "$TRIVY_IMAGE" "$TRIVY_LOCAL"
+    for component in "${RUNTIME_COMPONENTS[@]}"; do
+        image="${prefix}${component}:$version"
+        # Writable tmpfs cache with the vulnerability DB mounted read-only inside it.
+        docker save "$image" | docker run --rm -i --tmpfs /cache \
+            -v "$(host_path "$VENDOR/trivy-cache/db"):/cache/db:ro" \
+            --entrypoint sh "$TRIVY_IMAGE" -c 'cat > /tmp/i.tar && trivy image --input /tmp/i.tar \
+                --cache-dir /cache --skip-db-update --skip-java-db-update --offline-scan --quiet \
+                --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1' \
+            || die "scan failed or fixable HIGH/CRITICAL vulnerabilities in $image (see output above)"
+        ok "$image"
+    done
+}

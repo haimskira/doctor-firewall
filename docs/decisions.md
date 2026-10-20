@@ -3,6 +3,22 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-021 — FMC look with open assets only
+The product owner wants the UI to look exactly like the current FMC. It is rebuilt with open
+assets bundled into the web image: the Inter font (OFL-1.1), Phosphor icons (MIT) and our own
+CSS reproducing the layout, spacing and colours (dark top bar, Monitor / Manage / Administration
+sidebar with flyouts, summary dashboard with closable widgets and bar tables, policy editor).
+Cisco's proprietary assets — logo, product name, stylesheets, fonts — are **not** copied: the
+repository is public and the tool must not present itself as a Cisco product. The brand area shows
+our own mark and name in the same position.
+
+### D-020 — Production pulls images from Docker Hub (supersedes the air-gapped assumption)
+Stated by the product owner on 2026-10-20: production is a Linux server with internet access in
+another environment; images are published to Docker Hub and pulled there, code comes from Git.
+`scripts/publish-images.*` (CI gate + Trivy scan + push) and `scripts/install-online.sh` (pull,
+commit check, migrations, start) are the primary path; the offline bundle remains available.
+The runtime still talks only to the FMC. Image names are configurable (`DF_IMAGE_PREFIX`).
+
 ### D-019 — Connectivity map from rules, not traffic
 The spec's map shows source → destination with port, hits and rule score. Without flow data
 (out of scope; the system talks only to the FMC) the map is built from the rules that can match:

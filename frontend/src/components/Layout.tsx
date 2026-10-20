@@ -1,91 +1,146 @@
-import { useState } from 'react';
-import type { ComponentType, SyntheticEvent } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import {
+  BellIcon,
+  CaretDownIcon,
+  CaretRightIcon,
+  ChartLineIcon,
+  CubeIcon,
+  HardDrivesIcon,
+  ListIcon,
+  MagnifyingGlassIcon,
+  PlugsIcon,
+  PulseIcon,
+  ShieldCheckIcon,
+  ShieldIcon,
+  UserGearIcon,
+} from '@phosphor-icons/react';
+import type { Icon } from '@phosphor-icons/react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { RefObject, SyntheticEvent } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import type { FindingsPage, Permission, Snapshot } from '../api/types';
 import { useAuth, useMe } from '../auth/AuthProvider';
 import { useApi } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
-import {
-  AdminIcon,
-  AssetsIcon,
-  BellIcon,
-  ChevronRight,
-  DevicesIcon,
-  EventsIcon,
-  FileIcon,
-  InsightsIcon,
-  LinkIcon,
-  LogIcon,
-  MenuIcon,
-  ObjectsIcon,
-  PlugIcon,
-  ScoreIcon,
-  SearchIcon,
-  ShieldIcon,
-  UserIcon,
-  WrenchIcon,
-} from './icons';
 
-interface NavItem {
+interface NavLeaf {
   to: string;
   label: MessageKey;
-  icon: ComponentType<{ size?: number }>;
   permission: Permission | null;
-  crumb: MessageKey[];
   end?: boolean;
 }
 
+interface NavItem {
+  id: string;
+  label: MessageKey;
+  icon: Icon;
+  children: NavLeaf[];
+}
+
 interface NavGroup {
-  heading: MessageKey;
+  heading: MessageKey | null;
   items: NavItem[];
 }
 
-/** Sidebar modelled on the current FMC: Monitor / Manage / Administration. */
+/** The current FMC navigation: Monitor / Manage, then Administration below a divider. */
 const NAV: NavGroup[] = [
   {
     heading: 'shell.monitor',
     items: [
-      { to: '/', label: 'nav.home', icon: InsightsIcon, permission: null, crumb: ['shell.monitor', 'nav.home'], end: true },
-      { to: '/map', label: 'nav.map', icon: LinkIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.map'] },
-      { to: '/findings', label: 'nav.findings', icon: EventsIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.findings'] },
-      { to: '/scores', label: 'nav.scores', icon: ScoreIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.scores'] },
-      { to: '/recommendations', label: 'nav.recommendations', icon: WrenchIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.recommendations'] },
+      {
+        id: 'insights',
+        label: 'shell.insights',
+        icon: ChartLineIcon,
+        children: [
+          { to: '/', label: 'nav.dashboard', permission: null, end: true },
+          { to: '/map', label: 'nav.map', permission: 'policy:read' },
+          { to: '/scores', label: 'nav.scores', permission: 'policy:read' },
+        ],
+      },
+      {
+        id: 'events',
+        label: 'shell.events',
+        icon: PulseIcon,
+        children: [
+          { to: '/findings', label: 'nav.findings', permission: 'policy:read' },
+          { to: '/audit', label: 'nav.audit', permission: 'audit:read' },
+        ],
+      },
     ],
   },
   {
     heading: 'shell.manage',
     items: [
-      { to: '/policies', label: 'nav.policies', icon: ShieldIcon, permission: 'policy:read', crumb: ['nav.policies', 'shell.securityPolicies'] },
-      { to: '/rules', label: 'nav.rules', icon: LogIcon, permission: 'policy:read', crumb: ['nav.policies', 'shell.securityPolicies', 'shell.policyEditor'] },
-      { to: '/objects', label: 'nav.objects', icon: ObjectsIcon, permission: 'policy:read', crumb: ['nav.objects'] },
-      { to: '/clusters', label: 'nav.clusters', icon: DevicesIcon, permission: 'policy:read', crumb: ['nav.clusters'] },
-      { to: '/assets', label: 'nav.assets', icon: AssetsIcon, permission: 'policy:read', crumb: ['nav.assets'] },
-      { to: '/snapshots', label: 'nav.snapshots', icon: PlugIcon, permission: 'policy:read', crumb: ['shell.integrations', 'nav.snapshots'] },
-      { to: '/fmc', label: 'nav.fmc', icon: LinkIcon, permission: 'fmc:manage', crumb: ['shell.integrations', 'nav.fmc'] },
+      {
+        id: 'policies',
+        label: 'nav.policies',
+        icon: ShieldIcon,
+        children: [
+          { to: '/rules', label: 'shell.policyEditor', permission: 'policy:read' },
+          { to: '/policies', label: 'shell.securityPolicies', permission: 'policy:read' },
+          { to: '/recommendations', label: 'nav.recommendations', permission: 'policy:read' },
+          { to: '/naming', label: 'nav.naming', permission: 'policy:read' },
+        ],
+      },
+      {
+        id: 'objects',
+        label: 'nav.objects',
+        icon: CubeIcon,
+        children: [
+          { to: '/objects', label: 'shell.objectManagement', permission: 'policy:read' },
+          { to: '/assets', label: 'nav.assets', permission: 'policy:read' },
+        ],
+      },
+      {
+        id: 'devices',
+        label: 'shell.devices',
+        icon: HardDrivesIcon,
+        children: [{ to: '/clusters', label: 'nav.clusters', permission: 'policy:read' }],
+      },
+      {
+        id: 'integrations',
+        label: 'shell.integrations',
+        icon: PlugsIcon,
+        children: [
+          { to: '/fmc', label: 'nav.fmc', permission: 'fmc:manage' },
+          { to: '/snapshots', label: 'nav.snapshots', permission: 'policy:read' },
+        ],
+      },
     ],
   },
   {
-    heading: 'shell.administration',
+    heading: null,
     items: [
-      { to: '/users', label: 'nav.users', icon: UserIcon, permission: 'users:manage', crumb: ['shell.administration', 'nav.users'] },
-      { to: '/naming', label: 'nav.naming', icon: FileIcon, permission: 'policy:read', crumb: ['shell.administration', 'nav.naming'] },
-      { to: '/audit', label: 'nav.audit', icon: EventsIcon, permission: 'audit:read', crumb: ['shell.administration', 'nav.audit'] },
-      { to: '/settings', label: 'nav.settings', icon: AdminIcon, permission: null, crumb: ['shell.administration', 'nav.settings'] },
+      {
+        id: 'administration',
+        label: 'shell.administration',
+        icon: UserGearIcon,
+        children: [
+          { to: '/users', label: 'nav.users', permission: 'users:manage' },
+          { to: '/settings', label: 'nav.settings', permission: null },
+          { to: '/password', label: 'password.title', permission: null },
+        ],
+      },
     ],
   },
 ];
+
+function matches(leaf: NavLeaf, pathname: string): boolean {
+  if (leaf.end === true) return pathname === leaf.to;
+  return pathname === leaf.to || pathname.startsWith(`${leaf.to}/`);
+}
 
 function useBreadcrumb(): MessageKey[] {
   const { pathname } = useLocation();
   if (pathname.startsWith('/objects/')) return ['nav.objects', 'shell.objectDetail'];
   for (const group of NAV) {
     for (const item of group.items) {
-      if (item.end === true ? pathname === item.to : pathname.startsWith(item.to)) return item.crumb;
+      const leaf = item.children.find((c) => matches(c, pathname));
+      if (leaf !== undefined) return item.children.length > 1 ? [item.label, leaf.label] : [item.label];
     }
   }
-  return ['nav.home'];
+  return ['nav.dashboard'];
 }
 
 /** High-severity findings in the newest analysed snapshot (the bell badge). */
@@ -98,17 +153,50 @@ function useHighFindings(enabled: boolean): { count: number; snapshotId: number 
   return { count: page.data?.total ?? 0, snapshotId: latest?.id ?? null };
 }
 
+/** Close a popup on an outside click or Escape. */
+function useDismiss(open: boolean, close: () => void, ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointer(event: MouseEvent) {
+      if (ref.current !== null && event.target instanceof Node && !ref.current.contains(event.target)) close();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') close();
+    }
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, close, ref]);
+}
+
 export function Layout() {
   const { t } = useI18n();
   const { can, logout } = useAuth();
   const me = useMe();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const crumb = useBreadcrumb();
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [flyout, setFlyout] = useState<{ id: string; path: string } | null>(null);
   const [search, setSearch] = useState('');
   const readable = can('policy:read');
   const high = useHighFindings(readable);
+  const sideRef = useRef<HTMLElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
+  const closeFlyout = useCallback(() => {
+    setFlyout(null);
+  }, []);
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+  }, []);
+  // A flyout belongs to the page it was opened on: navigating closes it.
+  const openFlyout = flyout !== null && flyout.path === pathname ? flyout.id : null;
+  useDismiss(openFlyout !== null, closeFlyout, sideRef);
+  useDismiss(menuOpen, closeMenu, userRef);
 
   function onSearch(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -122,36 +210,28 @@ export function Layout() {
   return (
     <div className={`fmc-shell${collapsed ? ' collapsed' : ''}`}>
       <header className="fmc-top">
-        <button
-          type="button"
-          className="fmc-icon-btn fmc-hamburger"
-          aria-label={t('shell.toggleMenu')}
-          aria-expanded={!collapsed}
-          onClick={() => {
-            setCollapsed(!collapsed);
-          }}
-        >
-          <MenuIcon />
-        </button>
-        <div className="fmc-brand">
-          <div className="fmc-product">{t('app.title')}</div>
-          <nav className="fmc-crumb" aria-label={t('shell.breadcrumb')}>
-            {crumb.map((key, i) => (
-              <span key={key} aria-current={i === crumb.length - 1 ? 'page' : undefined}>
-                {t(key)}
-              </span>
-            ))}
-          </nav>
-        </div>
+        <Link to="/" className="fmc-brand" aria-label={t('app.title')}>
+          <ShieldCheckIcon size={26} weight="duotone" aria-hidden="true" className="fmc-logo" />
+          <span className="fmc-brand-text">
+            <span className="fmc-product">{t('app.title')}</span>
+            <span className="fmc-crumb">
+              {crumb.map((key, i) => (
+                <span key={key} aria-current={i === crumb.length - 1 ? 'page' : undefined}>
+                  {t(key)}
+                </span>
+              ))}
+            </span>
+          </span>
+        </Link>
         <div className="fmc-top-actions">
           {readable && (
             <form className="fmc-search" role="search" onSubmit={onSearch}>
-              <SearchIcon size={16} />
+              <MagnifyingGlassIcon size={16} aria-hidden="true" />
               <input
                 type="search"
                 dir="auto"
                 maxLength={128}
-                placeholder={t('shell.search')}
+                placeholder={t('common.search')}
                 aria-label={t('shell.search')}
                 value={search}
                 onChange={(e) => {
@@ -167,11 +247,16 @@ export function Layout() {
               aria-label={t('shell.alerts', { count: high.count })}
               onClick={() => void navigate(alertsTarget)}
             >
-              <BellIcon />
-              {high.count > 0 && <span className="fmc-badge">{high.count > 99 ? '99+' : high.count}</span>}
+              <BellIcon size={19} aria-hidden="true" />
+              {high.count > 0 && (
+                <bdi dir="ltr" className="fmc-badge">
+                  {high.count > 99 ? '99+' : high.count}
+                </bdi>
+              )}
             </button>
           )}
-          <div className="fmc-user">
+          <span className="fmc-top-divider" aria-hidden="true" />
+          <div className="fmc-user" ref={userRef}>
             <button
               type="button"
               className="fmc-user-btn"
@@ -181,27 +266,15 @@ export function Layout() {
                 setMenuOpen(!menuOpen);
               }}
             >
-              <UserIcon size={16} />
               <bdi>{me.display_name || me.username}</bdi>
+              <CaretDownIcon size={14} aria-hidden="true" />
             </button>
             {menuOpen && (
               <div className="fmc-menu" role="menu">
-                <NavLink
-                  role="menuitem"
-                  to="/settings"
-                  onClick={() => {
-                    setMenuOpen(false);
-                  }}
-                >
+                <NavLink role="menuitem" to="/settings" onClick={closeMenu}>
                   {t('nav.settings')}
                 </NavLink>
-                <NavLink
-                  role="menuitem"
-                  to="/password"
-                  onClick={() => {
-                    setMenuOpen(false);
-                  }}
-                >
+                <NavLink role="menuitem" to="/password" onClick={closeMenu}>
                   {t('password.title')}
                 </NavLink>
                 <button type="button" role="menuitem" onClick={() => void logout()}>
@@ -213,21 +286,66 @@ export function Layout() {
         </div>
       </header>
 
-      <nav className="fmc-side" aria-label={t('shell.mainMenu')}>
-        {NAV.map((group) => {
-          const items = group.items.filter((i) => i.permission === null || can(i.permission));
+      <nav className="fmc-side" aria-label={t('shell.mainMenu')} ref={sideRef}>
+        <button
+          type="button"
+          className="fmc-hamburger"
+          aria-label={t('shell.toggleMenu')}
+          aria-expanded={!collapsed}
+          onClick={() => {
+            setCollapsed(!collapsed);
+          }}
+        >
+          <ListIcon size={20} aria-hidden="true" />
+        </button>
+        {NAV.map((group, gi) => {
+          const items = group.items
+            .map((item) => ({ ...item, children: item.children.filter((c) => c.permission === null || can(c.permission)) }))
+            .filter((item) => item.children.length > 0);
           if (items.length === 0) return null;
           return (
-            <div key={group.heading} className="fmc-side-group">
-              <div className="fmc-side-heading">{t(group.heading)}</div>
+            <div key={group.heading ?? `g${String(gi)}`} className="fmc-side-group">
+              {group.heading !== null && <div className="fmc-side-heading">{t(group.heading)}</div>}
               {items.map((item) => {
-                const Icon = item.icon;
+                const ItemIcon = item.icon;
+                const active = item.children.some((c) => matches(c, pathname));
+                const only = item.children.length === 1 ? item.children[0] : undefined;
+                if (only !== undefined) {
+                  return (
+                    <NavLink key={item.id} to={only.to} end={only.end === true} className="fmc-side-item" title={t(item.label)}>
+                      <ItemIcon size={20} aria-hidden="true" />
+                      <span className="label">{t(item.label)}</span>
+                    </NavLink>
+                  );
+                }
+                const open = openFlyout === item.id;
                 return (
-                  <NavLink key={item.to} to={item.to} end={item.end === true} title={t(item.label)}>
-                    <Icon />
-                    <span className="label">{t(item.label)}</span>
-                    <ChevronRight size={14} className="chev" />
-                  </NavLink>
+                  <div key={item.id} className="fmc-side-entry">
+                    <button
+                      type="button"
+                      className={`fmc-side-item${active ? ' active' : ''}${open ? ' open' : ''}`}
+                      aria-haspopup="true"
+                      aria-expanded={open}
+                      title={t(item.label)}
+                      onClick={() => {
+                        setFlyout(open ? null : { id: item.id, path: pathname });
+                      }}
+                    >
+                      <ItemIcon size={20} aria-hidden="true" />
+                      <span className="label">{t(item.label)}</span>
+                      <CaretRightIcon size={14} className="chev" aria-hidden="true" />
+                    </button>
+                    {open && (
+                      <div className="fmc-flyout" role="menu" aria-label={t(item.label)}>
+                        <div className="fmc-flyout-title">{t(item.label)}</div>
+                        {item.children.map((leaf) => (
+                          <NavLink key={leaf.to} to={leaf.to} end={leaf.end === true} role="menuitem">
+                            {t(leaf.label)}
+                          </NavLink>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>

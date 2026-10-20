@@ -578,3 +578,32 @@ export interface MapChangeEdge {
   dst: string;
   risk: MapRisk;
 }
+
+// ---- summary dashboard (mirrors app/api/dashboard.py) ----
+
+export interface Counted {
+  key: string;
+  count: number;
+  extra: Record<string, number>;
+}
+
+export interface DashboardData {
+  snapshot: {
+    id: number;
+    connection_name: string;
+    fmc_version: string | null;
+    created_at: string;
+    finished_at: string | null;
+    analyzed_at: string | null;
+  };
+  totals: Record<'rules' | 'policies' | 'objects' | 'clusters' | 'findings' | 'recommendations' | 'dead_rules' | 'shadowed_rules', number>;
+  findings_by_severity: Record<Severity, number>;
+  findings_by_kind: Counted[];
+  recommendations_by_kind: Counted[];
+  score_buckets: Counted[];
+  rules_by_action: Counted[];
+  clusters: { id: string; name: string; rule_count: number; ace_total: number | null; ace_limit: number; ace_limit_verified: boolean }[];
+  map_risk: Record<MapRisk, number>;
+  riskiest_connections: { src: string; dst: string; risk: MapRisk; rule_count: number; hits: number }[];
+  worst_rules: { id: string; name: string; index: number; policy_id: string; policy_name: string; score: number }[];
+}

@@ -53,15 +53,23 @@ follows these conventions; new screens must be designed against them.
 Fonts: system UI fonts only (offline; no web-font downloads). Hebrew uses the same layout mirrored
 (RTL): the sidebar moves to the right; IPs, object names and ACL values stay LTR.
 
+## Assets
+
+Open assets only, bundled (no CDN): **Inter** (OFL-1.1) as the UI font — Hebrew falls back to the
+system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or fonts (D-021).
+
 ## Status
 
-* **Done:** the shell (top bar with breadcrumb, object search, high-findings bell and user menu;
-  collapsible grouped sidebar with icons) and the Policy Editor (flow tabs per cluster, "Targeted:
-  N devices", toolbar with "Total N rules", two-level Source / Destination header, action icons,
-  IPS / file / logging indicators, "+N more" cells, collapsible section bands from the API's
-  `groups`, Default Action footer). The colour tokens apply to every screen (tables, cards,
-  buttons, alerts).
-* **Deliberately absent until the feature exists:** Add Rule / Add Category / Save / Deploy, row
-  checkboxes, edit pencils and kebab menus — the editor is read-only (a snapshot). They arrive with
-  changesets (phase 3) and enforcement (phase 5); no button is shown that does nothing.
-* Icons are inline SVG (`frontend/src/components/icons.tsx`); no icon fonts or CDNs.
+* **Shell:** dark top bar (brand + breadcrumb, dark search field, bell with red count pill, user
+  menu); sidebar exactly as the FMC — *Monitor* (Insights & Reports, Events & Logs), *Manage*
+  (Policies, Objects, Firewall Devices, Integrations), divider, *Administration* — items with
+  several pages open a flyout, single-page items are direct links; collapsible to icons.
+* **Summary Dashboard** (home): title with the snapshot switcher, subtitle, tabs (Overview /
+  Risk / Recommendations / Status), widgets with collapse / minimise / close and *Add Widgets*,
+  "Top …" bar tables with coloured bars, "Last analysed …" footers.
+* **Policy Editor:** flow tabs, Targeted devices, two-level header, action icons, section bands,
+  Default Action footer, recommendation tags.
+* Recommendations, connectivity map, naming convention and the inventory screens use the same
+  cards, tables, inputs and buttons.
+* Deliberately absent until the feature exists: Deploy, Add Rule, Save — no button that does
+  nothing. *Deploy* arrives with phase 5.

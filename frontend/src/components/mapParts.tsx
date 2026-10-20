@@ -18,6 +18,12 @@ export function useNodeLabel(): (id: string, fallback?: string) => string {
   );
 }
 
+/** Column header on the graph: tier names as is, the special columns translated. */
+export function useColumnLabel(): (column: string) => string {
+  const nodeLabel = useNodeLabel();
+  return useCallback((column: string) => (column === 'ANY' || column === 'UNCLASSIFIED' ? nodeLabel(column) : column), [nodeLabel]);
+}
+
 /** A doctrine reason code as short text (placeholders of the score texts dropped). */
 export function useReasonLabel(): (code: string) => string {
   const { t } = useI18n();
@@ -45,6 +51,7 @@ function tierOf(id: string): string | null {
 function ChangeSide({ title, edges }: { title: string; edges: MapChangeEdge[] }) {
   const { t, dir } = useI18n();
   const nodeLabel = useNodeLabel();
+  const columnLabel = useColumnLabel();
   const nodes = useMemo(() => {
     const ids = [...new Set(edges.flatMap((e) => [e.src, e.dst]))];
     return ids.map((id) => ({ id, label: nodeLabel(id), tier: tierOf(id) }));
@@ -60,7 +67,14 @@ function ChangeSide({ title, edges }: { title: string; edges: MapChangeEdge[] })
         <p className="muted small">{t('map.noTraffic')}</p>
       ) : (
         <>
-          <Graph nodes={nodes} edges={graphEdges} rtl={dir === 'rtl'} height={220} label={`${t('map.change')}: ${title}`} />
+          <Graph
+            nodes={nodes}
+            edges={graphEdges}
+            rtl={dir === 'rtl'}
+            height={220}
+            label={`${t('map.change')}: ${title}`}
+            columnLabel={columnLabel}
+          />
           <ul className="plain-list small">
             {edges.map((e) => (
               <li key={`${e.src}->${e.dst}`}>

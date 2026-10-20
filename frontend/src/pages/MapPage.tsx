@@ -6,7 +6,7 @@ import type { Cluster, ConnectivityMap, MapEdge, MapNode, MapRisk, MapView } fro
 import { Alert, Ltr } from '../components/common';
 import { Graph } from '../components/Graph';
 import { SnapshotPicker } from '../components/inventory';
-import { RiskBadge, useNodeLabel, useReasonLabel } from '../components/mapParts';
+import { RiskBadge, useColumnLabel, useNodeLabel, useReasonLabel } from '../components/mapParts';
 import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -43,6 +43,7 @@ export function MapPage() {
   const map = useApi<ConnectivityMap>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/map?${params.toString()}`);
   const data = map.data;
   const nodeLabel = useNodeLabel();
+  const columnLabel = useColumnLabel();
 
   const graphNodes = useMemo(
     () => (data?.nodes ?? []).map((n) => ({ id: n.id, tier: n.tier, label: nodeLabel(n.id, n.label) })),
@@ -191,6 +192,7 @@ export function MapPage() {
                   edges={graphEdges}
                   rtl={dir === 'rtl'}
                   label={t('map.graph')}
+                  columnLabel={columnLabel}
                   onSelectEdge={(id) => {
                     setSelected({ kind: 'edge', id });
                   }}

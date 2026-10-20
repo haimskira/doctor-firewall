@@ -34,7 +34,7 @@ x-hardening: &hardening
 
 x-backend: &backend
   <<: *hardening
-  image: doctor-firewall/api:${DF_VERSION:?set DF_VERSION in .env}
+  image: ${DF_IMAGE_PREFIX:-doctor-firewall/}api:${DF_VERSION:?set DF_VERSION in .env}
   environment: *backend-env
   secrets: [db_app_password, redis_password, master_keyring]
   volumes:
@@ -43,7 +43,7 @@ x-backend: &backend
 services:
   postgres:
     # Derived image (infra/docker/postgres.Dockerfile): starts as "postgres", no gosu.
-    image: doctor-firewall/postgres:${DF_VERSION:?set DF_VERSION in .env}
+    image: ${DF_IMAGE_PREFIX:-doctor-firewall/}postgres:${DF_VERSION:?set DF_VERSION in .env}
     restart: unless-stopped
     read_only: true
     tmpfs: ["/var/run/postgresql:uid=999,gid=999,mode=2775", "/tmp:size=64m,mode=1777"]
@@ -72,7 +72,7 @@ services:
     <<: *hardening
     # Tagged locally from redis:7.4.11-bookworm@sha256:4fa24486b8bc... (see scripts/lib.sh):
     # plain tags survive `docker load` on the offline server.
-    image: doctor-firewall/redis:${DF_VERSION:?set DF_VERSION in .env}
+    image: ${DF_IMAGE_PREFIX:-doctor-firewall/}redis:${DF_VERSION:?set DF_VERSION in .env}
     user: "999:999"
     entrypoint: ["sh", "/usr/local/bin/df-redis-start.sh"]
     secrets: [redis_password]
@@ -137,7 +137,7 @@ services:
 
   web:
     <<: *hardening
-    image: doctor-firewall/web:${DF_VERSION:?set DF_VERSION in .env}
+    image: ${DF_IMAGE_PREFIX:-doctor-firewall/}web:${DF_VERSION:?set DF_VERSION in .env}
     ports:
       - "${DF_HTTPS_BIND:-0.0.0.0}:${DF_HTTPS_PORT:-443}:8443"
     volumes:

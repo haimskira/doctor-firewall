@@ -9,6 +9,7 @@ from app.api import (
     audit,
     auth,
     connectivity,
+    dashboard,
     fmc,
     health,
     inventory,
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
         assets,
         recommendations,
         connectivity,
+        dashboard,
         audit,
     ):
         app.include_router(module.router)
