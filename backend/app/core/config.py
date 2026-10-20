@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     collect_stale_minutes: int = Field(default=15, ge=5, le=240)
     collect_job_timeout_seconds: int = Field(default=6 * 3600, ge=600, le=48 * 3600)
 
+    # Analysis. Platform limits are per cluster (cluster_settings); these are the
+    # defaults used until an operator sets and verifies them.
+    default_ace_limit: int = Field(default=1_000_000, ge=1000)
+    default_deploy_change_limit: int = Field(default=100, ge=1, le=100_000)
+    dead_rule_days: int = Field(default=90, ge=7, le=3650)
+
     # Sessions.
     session_idle_minutes: int = Field(default=30, ge=5, le=240)
     session_absolute_hours: int = Field(default=8, ge=1, le=24)

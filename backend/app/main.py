@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.api import audit, auth, fmc, health, inventory, users
+from app.api import assets, audit, auth, fmc, health, inventory, users
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
@@ -23,7 +23,7 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if settings.is_dev else None,
     )
     register_error_handlers(app)
-    for module in (health, auth, users, fmc, inventory, audit):
+    for module in (health, auth, users, fmc, inventory, assets, audit):
         app.include_router(module.router)
     app.add_middleware(SecurityMiddleware, max_body_bytes=settings.max_request_bytes)
     return app

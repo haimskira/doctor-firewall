@@ -32,6 +32,7 @@ class Role(StrEnum):
 class Permission(StrEnum):
     POLICY_READ = "policy:read"
     COLLECT_RUN = "collect:run"  # trigger a read-only pull from the FMC
+    ASSETS_WRITE = "assets:write"  # maintain the asset classification table
     CHANGESET_WRITE = "changeset:write"
     DEPLOY_APPROVE = "deploy:approve"
     AUDIT_READ = "audit:read"
@@ -42,7 +43,12 @@ class Permission(StrEnum):
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.VIEWER: frozenset({Permission.POLICY_READ}),
     Role.OPTIMIZER: frozenset(
-        {Permission.POLICY_READ, Permission.CHANGESET_WRITE, Permission.COLLECT_RUN}
+        {
+            Permission.POLICY_READ,
+            Permission.CHANGESET_WRITE,
+            Permission.COLLECT_RUN,
+            Permission.ASSETS_WRITE,
+        }
     ),
     Role.APPROVER: frozenset(
         {Permission.POLICY_READ, Permission.DEPLOY_APPROVE, Permission.AUDIT_READ}
@@ -54,6 +60,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.USERS_MANAGE,
             Permission.FMC_MANAGE,
             Permission.COLLECT_RUN,
+            Permission.ASSETS_WRITE,
         }
     ),
 }

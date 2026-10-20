@@ -180,12 +180,16 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     # ---- findings ----
     findings = client.get(f"/api/snapshots/{sid}/findings?limit=500").json()
     assert findings["summary"]["group_cycle"] == {"high": 1}
-    titles = [f["title"] for f in findings["rows"]]
     assert findings["rows"][0]["severity"] == "high"  # most severe first
-    assert any("10.0.0.53/32" in t for t in titles)  # H_DNS1 vs dns-primary
-    assert any("GRP_NEST_1" in t for t in titles)
-    assert any("203.0.113.254" in t for t in titles)  # literal route gateway
-    assert any("GRP_UNUSED" in t for t in titles)
+
+    def titles(kind: str) -> list[str]:
+        page = client.get(f"/api/snapshots/{sid}/findings?kind={kind}&limit=500").json()
+        return [f["title"] for f in page["rows"]]
+
+    assert any("10.0.0.53/32" in t for t in titles("duplicate_object"))  # H_DNS1 / dns-primary
+    assert any("GRP_NEST_1" in t for t in titles("deep_nesting"))
+    assert any("203.0.113.254" in t for t in titles("inline_literal"))  # literal gateway
+    assert any("GRP_UNUSED" in t for t in titles("unused_object"))
     dup = client.get(f"/api/snapshots/{sid}/findings?kind=duplicate_membership").json()
     assert any(f["details"].get("group", {}).get("name") == "GRP_DC_ALL" for f in dup["rows"])
 

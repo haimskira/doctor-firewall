@@ -1,5 +1,6 @@
 """ORM models. Importing this package registers every table on ``Base.metadata``."""
 
+from app.models.assets import Asset, ClusterSetting, RuleScore
 from app.models.audit import AuditRecord
 from app.models.fmc import FmcConnection
 from app.models.inventory import (
@@ -20,10 +21,12 @@ from app.models.inventory import (
 from app.models.user import User
 
 __all__ = [
+    "Asset",
     "AuditRecord",
     "Bgp",
     "Cluster",
     "ClusterPolicy",
+    "ClusterSetting",
     "Finding",
     "FmcConnection",
     "FwObject",
@@ -33,6 +36,7 @@ __all__ = [
     "Route",
     "Rule",
     "RuleRef",
+    "RuleScore",
     "Snapshot",
     "SnapshotCheckpoint",
     "User",

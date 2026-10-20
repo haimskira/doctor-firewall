@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.analysis.basic import analyze
+from app.analysis.semantic import analyze_semantics
 from app.collector.runner import SnapshotBusyError, request_collection, run_collection
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
@@ -74,6 +75,8 @@ def analyze_snapshot(snapshot_id: int) -> dict[str, int]:
         if snapshot is None or snapshot.status != "complete":
             return {}
         summary = analyze(session, snapshot_id)
+        for kind, count in analyze_semantics(session, snapshot_id, get_settings()).items():
+            summary[kind] = summary.get(kind, 0) + count
     log.info("snapshot analysed", extra={"snapshot": snapshot_id, "findings": summary})
     return summary
 

@@ -82,7 +82,11 @@ def owner_engine() -> Iterator[Engine]:
 def clean(owner_engine: Engine) -> None:
     _clear_caches()
     with owner_engine.begin() as conn:
-        conn.execute(text("TRUNCATE users, fmc_connections RESTART IDENTITY CASCADE"))
+        conn.execute(
+            text(
+                "TRUNCATE users, fmc_connections, assets, cluster_settings RESTART IDENTITY CASCADE"
+            )
+        )
     redis = get_redis()
     for key in redis.scan_iter("df:*"):
         redis.delete(key)

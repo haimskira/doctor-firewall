@@ -22,6 +22,7 @@ from app.collector.runner import (
 )
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.assets import ClusterSetting, RuleScore
 from app.models.fmc import FmcConnection
 from app.models.inventory import (
     Bgp,
@@ -91,6 +92,22 @@ class ClusterOut(BaseModel):
     policy_name: str | None
     rule_count: int
     policies: list[GoverningPolicy]
+    ace_total: int | None
+    ace_limit: int
+    ace_limit_verified: bool
+
+
+class ScoredRule(BaseModel):
+    policy_fmc_id: str
+    policy_name: str
+    rule_id: str
+    rule_index: int
+    rule_name: str
+    action: str
+    score: int
+    ace_count: int
+    reasons: list[dict[str, Any]]
+    dst_tiers: list[str]
 
 
 class PolicyOut(BaseModel):
@@ -127,6 +144,13 @@ class RuleOut(BaseModel):
     log_begin: bool
     log_end: bool
     refs: dict[str, list[RefOut]]
+    score: int | None = None
+    ace_count: int | None = None
+    reasons: list[dict[str, Any]] = []
+    src_tiers: list[str] = []
+    dst_tiers: list[str] = []
+    shadowed_by: str | None = None
+    dead: bool = False
 
 
 class RulesPage(BaseModel):
@@ -366,6 +390,10 @@ def list_clusters(snapshot_id: int, db: DbDep, _: ReaderDep) -> list[ClusterOut]
                 rule_count=p.rule_count if p else 0,
             )
         )
+    snapshot = db.get(Snapshot, snapshot_id)
+    ace_totals = (snapshot.stats.get("ace_by_cluster") if snapshot else None) or {}
+    limits = {x.cluster_fmc_id: x for x in db.scalars(select(ClusterSetting))}
+    default_limit = get_settings().default_ace_limit
     result = []
     for c in db.scalars(
         select(Cluster).where(Cluster.snapshot_id == snapshot_id).order_by(Cluster.name)
@@ -385,9 +413,50 @@ def list_clusters(snapshot_id: int, db: DbDep, _: ReaderDep) -> list[ClusterOut]
                 policies=sorted(
                     governing[c.fmc_id], key=lambda g: (g.kind != "access", g.kind, g.name)
                 ),
+                ace_total=ace_totals.get(c.fmc_id),
+                ace_limit=limits[c.fmc_id].ace_limit if c.fmc_id in limits else default_limit,
+                ace_limit_verified=bool(c.fmc_id in limits and limits[c.fmc_id].ace_limit_verified),
             )
         )
     return result
+
+
+@router.get("/snapshots/{snapshot_id}/scores", response_model=list[ScoredRule])
+def worst_rules(
+    snapshot_id: int,
+    db: DbDep,
+    _: ReaderDep,
+    policy_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> list[ScoredRule]:
+    """The optimisation queue: lowest-scoring permit rules first, with their reasons."""
+    _snapshot(db, snapshot_id)
+    query = (
+        select(RuleScore, Rule, Policy.name)
+        .join(Rule, Rule.id == RuleScore.rule_id)
+        .join(
+            Policy, (Policy.snapshot_id == Rule.snapshot_id) & (Policy.fmc_id == Rule.policy_fmc_id)
+        )
+        .where(RuleScore.snapshot_id == snapshot_id, RuleScore.score.is_not(None))
+    )
+    if policy_id:
+        query = query.where(Rule.policy_fmc_id == policy_id)
+    rows = db.execute(query.order_by(RuleScore.score, Rule.rule_index).limit(limit)).all()
+    return [
+        ScoredRule(
+            policy_fmc_id=rule.policy_fmc_id,
+            policy_name=pname,
+            rule_id=rule.fmc_id,
+            rule_index=rule.rule_index,
+            rule_name=rule.name,
+            action=rule.action,
+            score=sc.score or 0,
+            ace_count=sc.ace_count,
+            reasons=sc.reasons,
+            dst_tiers=sc.dst_tiers,
+        )
+        for sc, rule, pname in rows
+    ]
 
 
 @router.get("/snapshots/{snapshot_id}/policies", response_model=list[PolicyOut])
@@ -465,6 +534,16 @@ def list_rules(
         db.scalars(base.order_by(section_rank, Rule.rule_index).offset(offset).limit(limit))
     )
     refs: dict[int, dict[str, list[RefOut]]] = defaultdict(lambda: defaultdict(list))
+    scores = (
+        {
+            sc.rule_id: sc
+            for sc in db.scalars(
+                select(RuleScore).where(RuleScore.rule_id.in_([r.id for r in rules]))
+            )
+        }
+        if rules
+        else {}
+    )
     if rules:
         for rule_id, field, oid, oname, okind, lit in db.execute(
             select(
@@ -508,10 +587,25 @@ def list_rules(
                 log_begin=r.log_begin,
                 log_end=r.log_end,
                 refs=dict(refs[r.id]),
+                **_score_fields(scores.get(r.id)),
             )
             for r in rules
         ],
     )
+
+
+def _score_fields(sc: RuleScore | None) -> dict[str, Any]:
+    if sc is None:
+        return {}
+    return {
+        "score": sc.score,
+        "ace_count": sc.ace_count,
+        "reasons": sc.reasons,
+        "src_tiers": sc.src_tiers,
+        "dst_tiers": sc.dst_tiers,
+        "shadowed_by": sc.shadowed_by,
+        "dead": sc.dead,
+    }
 
 
 # ------------------------------------------------------------------ objects
