@@ -6,6 +6,7 @@ import { RULE_POLICY_KINDS } from '../api/types';
 import type { Cluster, PolicyKind, RefItem, RuleFieldName, RuleRow, RulesPage } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import { RefList, SnapshotPicker } from '../components/inventory';
+import { ReasonList, ScoreBadge } from '../components/score';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -204,6 +205,7 @@ export function RulebasePage() {
               <span>{t('rules.col.service')}</span>
               <span>{t('rules.col.action')}</span>
               <span>{t('rules.col.hits')}</span>
+              <span>{t('score.col')}</span>
             </div>
           ) : (
             <div className="rule-grid generic rule-head" role="row">
@@ -261,6 +263,7 @@ export function RulebasePage() {
 
 function RuleLine({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const service = [...(rule.refs.dst_port ?? []), ...(rule.refs.app ?? []), ...(rule.refs.url ?? [])];
   return (
     <div className={`rule-grid rule-row${rule.enabled ? '' : ' disabled'}`} role="row">
@@ -289,6 +292,31 @@ function RuleLine({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) {
       </span>
       <span className={`action action-${rule.action.toLowerCase()}`}>{rule.action}</span>
       <span className={rule.hit_count === 0 ? 'bad' : ''}>{rule.hit_count ?? '—'}</span>
+      <span>
+        <button
+          type="button"
+          className="link"
+          aria-expanded={open}
+          aria-label={`${t('score.reasons')}: ${rule.score === null || rule.score === undefined ? t('score.none') : String(rule.score)}`}
+          onClick={() => {
+            setOpen(!open);
+          }}
+        >
+          <ScoreBadge score={rule.score} />
+        </button>
+        {(rule.shadowed_by ?? null) !== null && <span className="badge sev-high">{t('score.shadowed')}</span>}
+        {rule.dead === true && <span className="badge sev-medium">{t('score.dead')}</span>}
+        {rule.ace_count !== undefined && rule.ace_count !== null && rule.ace_count > 1 && (
+          <div className="muted small">
+            {rule.ace_count.toLocaleString()} {t('score.aces')}
+          </div>
+        )}
+      </span>
+      {open && (
+        <div className="rule-reasons">
+          <ReasonList reasons={rule.reasons ?? []} />
+        </div>
+      )}
     </div>
   );
 }

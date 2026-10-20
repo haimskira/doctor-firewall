@@ -27,6 +27,8 @@ export function Layout() {
               <NavLink to="/rules">{t('nav.rules')}</NavLink>
               <NavLink to="/objects">{t('nav.objects')}</NavLink>
               <NavLink to="/findings">{t('nav.findings')}</NavLink>
+              <NavLink to="/scores">{t('nav.scores')}</NavLink>
+              <NavLink to="/assets">{t('nav.assets')}</NavLink>
             </>
           )}
           {can('users:manage') && <NavLink to="/users">{t('nav.users')}</NavLink>}

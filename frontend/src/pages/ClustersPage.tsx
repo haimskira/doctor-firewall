@@ -1,6 +1,10 @@
+import { useState } from 'react';
+import type { SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
 
-import type { Cluster, ClusterNetwork } from '../api/types';
+import { api, errorCode } from '../api/client';
+import type { Cluster, ClusterLimits, ClusterNetwork } from '../api/types';
+import { useAuth } from '../auth/AuthProvider';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
@@ -37,6 +41,7 @@ export function ClustersPage() {
                 <th>{t('clusters.model')}</th>
                 <th>{t('clusters.policy')}</th>
                 <th>{t('clusters.rules')}</th>
+                <th>{t('limits.ace')}</th>
                 <th>{t('common.actions')}</th>
               </tr>
             </thead>
@@ -71,6 +76,9 @@ export function ClustersPage() {
                   </td>
                   <td>{c.rule_count}</td>
                   <td>
+                    <AceGauge cluster={c} />
+                  </td>
+                  <td>
                     <button
                       type="button"
                       className="secondary"
@@ -87,6 +95,8 @@ export function ClustersPage() {
           </table>
         </section>
       )}
+
+      {clusterId !== null && <LimitsEditor clusterId={clusterId} />}
 
       {network.data !== null && (
         <>
@@ -173,5 +183,109 @@ export function ClustersPage() {
         </>
       )}
     </div>
+  );
+}
+
+function AceGauge({ cluster }: { cluster: Cluster }) {
+  const { t } = useI18n();
+  if (cluster.ace_total === null) return <span className="muted">—</span>;
+  const pct = Math.round((cluster.ace_total * 100) / cluster.ace_limit);
+  const band = pct > 100 ? 'bad' : pct > 80 ? 'warn' : 'good';
+  return (
+    <div>
+      <span className={`score score-${band}`}>{pct}%</span>{' '}
+      <span className="small">
+        {cluster.ace_total.toLocaleString()} / {cluster.ace_limit.toLocaleString()}
+      </span>
+      <div className="muted small">{cluster.ace_limit_verified ? t('limits.verified') : t('limits.unverified')}</div>
+    </div>
+  );
+}
+
+function LimitsEditor({ clusterId }: { clusterId: string }) {
+  const { t, tError } = useI18n();
+  const { can } = useAuth();
+  const limits = useApi<ClusterLimits>(`/api/clusters/${encodeURIComponent(clusterId)}/limits`);
+  const [draft, setDraft] = useState<ClusterLimits | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const current = draft ?? limits.data;
+  if (current === null) return null;
+  const editable = can('fmc:manage');
+
+  async function save(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (current === null) return;
+    try {
+      await api(`/api/clusters/${encodeURIComponent(clusterId)}/limits`, 'PUT', {
+        ace_limit: current.ace_limit,
+        ace_limit_verified: current.ace_limit_verified,
+        deploy_change_limit: current.deploy_change_limit,
+        deploy_limit_verified: current.deploy_limit_verified,
+      });
+      setMessage(t('settings.saved'));
+      setDraft(null);
+      limits.reload();
+    } catch (err: unknown) {
+      setMessage(tError(errorCode(err)));
+    }
+  }
+
+  const update = (patch: Partial<ClusterLimits>) => {
+    setDraft({ ...current, ...patch });
+  };
+  return (
+    <section className="card">
+      <h2>{t('limits.title')}</h2>
+      {message !== null && <Alert kind="info">{message}</Alert>}
+      <form className="grid" onSubmit={(e) => void save(e)} noValidate>
+        <label>
+          {t('limits.aceLimit')}
+          <input
+            dir="ltr"
+            inputMode="numeric"
+            disabled={!editable}
+            value={String(current.ace_limit)}
+            onChange={(e) => {
+              update({ ace_limit: Number(e.target.value.replace(/\D/g, '')) });
+            }}
+          />
+        </label>
+        <label className="inline">
+          <input
+            type="checkbox"
+            disabled={!editable}
+            checked={current.ace_limit_verified}
+            onChange={(e) => {
+              update({ ace_limit_verified: e.target.checked });
+            }}
+          />
+          {t('limits.verified')}
+        </label>
+        <label>
+          {t('limits.deployLimit')}
+          <input
+            dir="ltr"
+            inputMode="numeric"
+            disabled={!editable}
+            value={String(current.deploy_change_limit)}
+            onChange={(e) => {
+              update({ deploy_change_limit: Number(e.target.value.replace(/\D/g, '')) });
+            }}
+          />
+        </label>
+        <label className="inline">
+          <input
+            type="checkbox"
+            disabled={!editable}
+            checked={current.deploy_limit_verified}
+            onChange={(e) => {
+              update({ deploy_limit_verified: e.target.checked });
+            }}
+          />
+          {t('limits.verified')}
+        </label>
+        {editable && <button type="submit">{t('limits.save')}</button>}
+      </form>
+    </section>
   );
 }

@@ -17,16 +17,19 @@ export function setCsrfToken(token: string | null): void {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Parsed error body (e.g. per-line CSV errors); never contains submitted values. */
+  readonly body: unknown;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, body: unknown = null) {
     super(`API error ${String(status)}: ${code}`);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
-type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -65,7 +68,7 @@ export async function api<T>(path: string, method: Method = 'GET', body?: unknow
   }
   if (!response.ok) {
     const code = isRecord(data) && typeof data['detail'] === 'string' ? data['detail'] : 'http_error';
-    throw new ApiError(response.status, code);
+    throw new ApiError(response.status, code, data);
   }
   return data as T;
 }

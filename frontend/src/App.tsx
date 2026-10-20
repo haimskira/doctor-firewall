@@ -5,6 +5,7 @@ import type { Permission } from './api/types';
 import { useAuth } from './auth/AuthProvider';
 import { Layout } from './components/Layout';
 import { useI18n } from './i18n/I18nProvider';
+import { AssetsPage } from './pages/AssetsPage';
 import { AuditPage } from './pages/AuditPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClustersPage } from './pages/ClustersPage';
@@ -16,6 +17,7 @@ import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { ObjectsPage } from './pages/ObjectsPage';
 import { PoliciesPage } from './pages/PoliciesPage';
 import { RulebasePage } from './pages/RulebasePage';
+import { ScoresPage } from './pages/ScoresPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SnapshotsPage } from './pages/SnapshotsPage';
 import { UsersPage } from './pages/UsersPage';
@@ -56,6 +58,8 @@ export function App() {
             ['objects', <ObjectsPage key="o" />],
             ['objects/:objectId', <ObjectDetailPage key="d" />],
             ['findings', <FindingsPage key="f" />],
+            ['scores', <ScoresPage key="q" />],
+            ['assets', <AssetsPage key="a" />],
           ] as const
         ).map(([path, element]) => (
           <Route key={path} path={path} element={<RequirePermission permission="policy:read">{element}</RequirePermission>} />

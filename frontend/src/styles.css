@@ -170,3 +170,28 @@ pre.details {
 .match-field { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
 .action-fastpath, .action-do_not_decrypt { color: var(--warn); }
 .action-decrypt_known_key, .action-decrypt_resign, .action-analyze { color: var(--primary); }
+
+/* ---- phase 2: scores, tiers, assets ---- */
+.rule-grid {
+  grid-template-columns: 3.5rem minmax(9rem, 1.4fr) minmax(5rem, 0.8fr) minmax(8rem, 1.5fr)
+    minmax(5rem, 0.8fr) minmax(8rem, 1.5fr) minmax(8rem, 1.3fr) 5.5rem 5.5rem 6.5rem;
+}
+.rule-reasons { grid-column: 1 / -1; padding-inline-start: 4rem; }
+.score { display: inline-block; min-width: 2.2rem; text-align: center; border-radius: 999px; font-weight: 600; padding-inline: 0.4rem; }
+.score-good { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.score-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.score-bad { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+ul.reasons { list-style: none; padding: 0; margin: 0; font-size: 0.85rem; }
+ul.reasons .points { display: inline-block; min-width: 2.4rem; color: var(--danger); font-weight: 600; }
+.tier { display: inline-block; border-radius: 4px; padding-inline: 0.35rem; font-size: 0.75rem; font-weight: 600; margin-inline-end: 0.25rem; border: 1px solid var(--border); }
+.tier-gold { border-color: #b8860b; color: #b8860b; }
+.tier-silver { border-color: #708090; color: #708090; }
+.tier-bronze { border-color: #a0522d; color: #a0522d; }
+.tier-core { border-color: var(--primary); color: var(--primary); }
+.tier-users { border-color: var(--muted); color: var(--muted); }
+label.button {
+  display: inline-flex; align-items: center; cursor: pointer; border: 1px solid var(--primary);
+  color: var(--primary); padding-block: 0.45rem; padding-inline: 0.9rem; border-radius: var(--radius);
+  margin: 0; font-weight: 400;
+}
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

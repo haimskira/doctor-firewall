@@ -8,7 +8,8 @@ import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 
 const KINDS = [
-  'group_cycle', 'identical_rules', 'deep_nesting', 'duplicate_object', 'duplicate_membership',
+  'ace_cluster_limit', 'shadowed_rule', 'group_cycle', 'identical_rules', 'dead_rule',
+  'overlap_conflict', 'deep_nesting', 'ace_heavy_rule', 'duplicate_object', 'duplicate_membership',
   'inline_literal', 'unused_object',
 ] as const;
 const SEVERITIES: Severity[] = ['high', 'medium', 'low', 'info'];

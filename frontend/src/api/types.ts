@@ -6,6 +6,7 @@ export const ALL_ROLES: readonly Role[] = ['viewer', 'optimizer', 'approver', 'a
 export type Permission =
   | 'policy:read'
   | 'collect:run'
+  | 'assets:write'
   | 'changeset:write'
   | 'deploy:approve'
   | 'audit:read'
@@ -137,6 +138,9 @@ export interface Cluster {
   policy_name: string | null;
   rule_count: number;
   policies: GoverningPolicy[];
+  ace_total: number | null;
+  ace_limit: number;
+  ace_limit_verified: boolean;
 }
 
 export interface RefItem {
@@ -186,6 +190,58 @@ export interface RuleRow {
   log_begin: boolean;
   log_end: boolean;
   refs: Partial<Record<RuleFieldName, RefItem[]>>;
+  score?: number | null;
+  ace_count?: number | null;
+  reasons?: ScoreReason[];
+  src_tiers?: string[];
+  dst_tiers?: string[];
+  shadowed_by?: string | null;
+  dead?: boolean;
+}
+
+export interface ScoreReason {
+  code: string;
+  points: number;
+  [detail: string]: unknown;
+}
+
+export interface ScoredRule {
+  policy_fmc_id: string;
+  policy_name: string;
+  rule_id: string;
+  rule_index: number;
+  rule_name: string;
+  action: string;
+  score: number;
+  ace_count: number;
+  reasons: ScoreReason[];
+  dst_tiers: string[];
+}
+
+export type Tier = 'CORE' | 'GOLD' | 'SILVER' | 'BRONZE' | 'USERS';
+export const TIERS: readonly Tier[] = ['CORE', 'GOLD', 'SILVER', 'BRONZE', 'USERS'];
+
+export interface Asset {
+  id: number;
+  network: string;
+  system: string;
+  tier: Tier;
+  system_type: string;
+  user_type: string | null;
+  ports: string;
+  notes: string;
+  source: 'manual' | 'csv' | 'bootstrap';
+  confirmed: boolean;
+  updated_by: string;
+}
+
+export interface ClusterLimits {
+  cluster_fmc_id: string;
+  ace_limit: number;
+  ace_limit_verified: boolean;
+  deploy_change_limit: number;
+  deploy_limit_verified: boolean;
+  is_default: boolean;
 }
 
 export interface RulesPage {
