@@ -24,6 +24,7 @@ import {
   ShieldIcon,
 } from '../components/icons';
 import { RefList, SnapshotPicker } from '../components/inventory';
+import { RecTag } from '../components/recommendations';
 import { ReasonList, ScoreBadge } from '../components/score';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
@@ -502,6 +503,19 @@ function GenericHeader() {
   );
 }
 
+/** The change tags a rule carries (type + deploy cost), linking to the recommendation. */
+function RecTags({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) {
+  const tags = rule.recommendations ?? [];
+  if (tags.length === 0) return null;
+  return (
+    <span className="rec-tags">
+      {tags.map((tag) => (
+        <RecTag key={tag.id} tag={tag} snapshotId={snapshotId} />
+      ))}
+    </span>
+  );
+}
+
 /** IPS / file policy / logging indicators (coloured when on, grey when off). */
 function Inspection({ rule }: { rule: RuleRow }) {
   const { t } = useI18n();
@@ -535,6 +549,7 @@ function AccessRow({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) 
       <span className="c-name">
         <Ltr>{rule.name}</Ltr>
         {!rule.enabled && <span className="badge">{t('rules.disabled')}</span>}
+        <RecTags rule={rule} snapshotId={snapshotId} />
       </span>
       <span className="c-action">
         <ActionLabel action={rule.action} />
@@ -592,6 +607,7 @@ function GenericRow({ rule, snapshotId }: { rule: RuleRow; snapshotId: number })
       <span>
         <Ltr>{rule.name}</Ltr>
         {!rule.enabled && <span className="badge">{t('rules.disabled')}</span>}
+        <RecTags rule={rule} snapshotId={snapshotId} />
       </span>
       <span>
         <Ltr>{rule.rule_type ?? rule.section}</Ltr>

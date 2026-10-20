@@ -43,7 +43,7 @@ class Overlap:
     with_rule: RuleSpace
 
 
-def _verdict(action: str) -> str:
+def verdict(action: str) -> str:
     return "deny" if action in DENY_ACTIONS else "permit"
 
 
@@ -176,7 +176,7 @@ def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:
                 found = Shadow(
                     rule=rule,
                     by=earlier,
-                    conflict=_verdict(earlier.action) != _verdict(rule.action),
+                    conflict=verdict(earlier.action) != verdict(rule.action),
                 )
                 break
         if found is not None:
@@ -188,7 +188,7 @@ def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:
                 break
             earlier = by_pos[pos]
             if (
-                _verdict(earlier.action) != _verdict(rule.action)
+                verdict(earlier.action) != verdict(rule.action)
                 and _nests(src_keys[pos], b_src)
                 and earlier.space.intersects(b)
             ):
@@ -215,7 +215,7 @@ def analyse_order_naive(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Over
                 found = Shadow(
                     rule=rule,
                     by=earlier,
-                    conflict=_verdict(earlier.action) != _verdict(rule.action),
+                    conflict=verdict(earlier.action) != verdict(rule.action),
                 )
                 break
         if found is not None:
@@ -225,7 +225,7 @@ def analyse_order_naive(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Over
         for earlier in terminating:
             if conflicts >= MAX_CONFLICTS_PER_RULE:
                 break
-            if _verdict(earlier.action) != _verdict(rule.action) and earlier.space.intersects(
+            if verdict(earlier.action) != verdict(rule.action) and earlier.space.intersects(
                 rule.space
             ):
                 overlaps.append(Overlap(rule=rule, with_rule=earlier))

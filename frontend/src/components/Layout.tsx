@@ -14,6 +14,7 @@ import {
   ChevronRight,
   DevicesIcon,
   EventsIcon,
+  FileIcon,
   InsightsIcon,
   LinkIcon,
   LogIcon,
@@ -24,6 +25,7 @@ import {
   SearchIcon,
   ShieldIcon,
   UserIcon,
+  WrenchIcon,
 } from './icons';
 
 interface NavItem {
@@ -48,6 +50,7 @@ const NAV: NavGroup[] = [
       { to: '/', label: 'nav.home', icon: InsightsIcon, permission: null, crumb: ['shell.monitor', 'nav.home'], end: true },
       { to: '/findings', label: 'nav.findings', icon: EventsIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.findings'] },
       { to: '/scores', label: 'nav.scores', icon: ScoreIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.scores'] },
+      { to: '/recommendations', label: 'nav.recommendations', icon: WrenchIcon, permission: 'policy:read', crumb: ['shell.monitor', 'nav.recommendations'] },
     ],
   },
   {
@@ -66,6 +69,7 @@ const NAV: NavGroup[] = [
     heading: 'shell.administration',
     items: [
       { to: '/users', label: 'nav.users', icon: UserIcon, permission: 'users:manage', crumb: ['shell.administration', 'nav.users'] },
+      { to: '/naming', label: 'nav.naming', icon: FileIcon, permission: 'policy:read', crumb: ['shell.administration', 'nav.naming'] },
       { to: '/audit', label: 'nav.audit', icon: EventsIcon, permission: 'audit:read', crumb: ['shell.administration', 'nav.audit'] },
       { to: '/settings', label: 'nav.settings', icon: AdminIcon, permission: null, crumb: ['shell.administration', 'nav.settings'] },
     ],

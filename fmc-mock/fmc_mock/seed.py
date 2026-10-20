@@ -174,6 +174,9 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
     loop_b = b.group("GRP_LOOP_B", [loop_a, extra_hosts[11]])
     loop_a["objects"].append(_ref(loop_b))
     b.group("GRP_UNUSED", [extra_hosts[20]])  # never referenced
+    # Named by address instead of role, and a second group with the same members.
+    grp_ip_named = b.group("GRP_10.30.0.0", [silver_net])
+    b.group("GRP_WEB_SERVERS", [silver_net])
 
     tcp443 = b.port("HTTPS", "TCP", "443")
     tcp443_dup = b.port("tcp-443", "TCP", "443")
@@ -546,6 +549,36 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             if rng.random() < 0.03:  # identical duplicate under another name
                 dup = {k: v for k, v in fields.items() if k != "name"}
                 rule(section, category, name=f"{fields['name']}-copy", **dup)
+        # Phase-3 scenarios: adjacent rules differing only by source (merge), one rule
+        # spanning two tiers (split), and "any" source behind a zone (tighten).
+        for src_group, rule_name in (
+            (grp_users_fin, "WEB_FIN_USERS"),
+            (grp_users_it, "WEB_IT_USERS"),
+        ):
+            rule(
+                "Default",
+                "--Undefined--",
+                name=rule_name,
+                sourceNetworks=objs(src_group),
+                destinationNetworks=objs(grp_ip_named),
+                destinationPorts=objs(pg_web),
+            )
+        rule(
+            "Default",
+            "--Undefined--",
+            name="MIXED_TIERS_SQL",
+            sourceNetworks=objs(users_fin),
+            destinationNetworks=objs(gold_net, silver_net),
+            destinationPorts=objs(tcp1433),
+        )
+        rule(
+            "Default",
+            "--Undefined--",
+            name="USERS_ZONE_TO_GOLD",
+            sourceZones=objs(zones["users"]),
+            destinationNetworks=objs(gold_db[1]),
+            destinationPorts=objs(tcp1433),
+        )
         # Bronze -> gold and any-any: classic violations.
         rule(
             "Default",

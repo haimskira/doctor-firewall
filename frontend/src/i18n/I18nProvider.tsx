@@ -28,7 +28,7 @@ export function interpolate(template: string, vars: Record<string, string | numb
   });
 }
 
-function isMessageKey(key: string): key is MessageKey {
+export function isMessageKey(key: string): key is MessageKey {
   return Object.prototype.hasOwnProperty.call(en, key);
 }
 

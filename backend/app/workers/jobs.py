@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.analysis.basic import analyze
+from app.analysis.recommend import recommend
 from app.analysis.semantic import analyze_semantics
 from app.collector.runner import SnapshotBusyError, request_collection, run_collection
 from app.core.config import get_settings
@@ -63,10 +64,14 @@ def collect_snapshot(snapshot_id: int) -> dict[str, Any]:
         )
     )
     if result.get("ok"):
-        get_queue(QueueName.ANALYSIS, get_redis()).enqueue(
-            analyze_snapshot, snapshot_id, job_timeout=2 * 3600
-        )
+        enqueue_analysis(snapshot_id)
     return result
+
+
+def enqueue_analysis(snapshot_id: int) -> None:
+    get_queue(QueueName.ANALYSIS, get_redis()).enqueue(
+        analyze_snapshot, snapshot_id, job_timeout=2 * 3600
+    )
 
 
 def analyze_snapshot(snapshot_id: int) -> dict[str, int]:
@@ -77,7 +82,11 @@ def analyze_snapshot(snapshot_id: int) -> dict[str, int]:
         summary = analyze(session, snapshot_id)
         for kind, count in analyze_semantics(session, snapshot_id, get_settings()).items():
             summary[kind] = summary.get(kind, 0) + count
-    log.info("snapshot analysed", extra={"snapshot": snapshot_id, "findings": summary})
+        recommendations = recommend(session, snapshot_id)
+    log.info(
+        "snapshot analysed",
+        extra={"snapshot": snapshot_id, "findings": summary, "recommendations": recommendations},
+    )
     return summary
 
 

@@ -3,6 +3,26 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-017 — Naming convention: token semantics and a separate permission
+The spec says the administrator defines the convention and the system derives names from the
+asset table and the rule. The exact token set and its meaning are ours (see
+[recommendations.md](recommendations.md#naming-convention)); unresolvable tokens produce no
+proposal instead of a guess. Defining the convention is a new permission,
+`conventions:manage`, held by `admin` only (admin still has no changeset or deploy rights).
+Names longer than 64 characters are not proposed — the FMC limit per object type is *to verify*.
+
+### D-016 — Decisions are kept per fingerprint, across snapshots
+Recommendations are recomputed by every analysis. An operator's accept / dismiss is stored by a
+fingerprint of the proposal (kind, targets, before / after content, without rule positions), so it
+survives the next pull and lapses automatically when the rule, the object or the proposal changes.
+Admin has no `changeset:write` and cannot decide (separation of duties).
+
+### D-015 — Deploy cost = FMC write operations
+The spec asks for the deploy cost of each recommendation without defining the unit. We count
+FMC write operations (object / rule create, update or delete = 1 each); a rename is 1 because
+references are by id. Phase 5 batches against the per-cluster deploy limit in the same unit —
+*to verify* on the real FMC whether its change limit counts objects, rules or deploy items.
+
 ### D-014 — ACE count is an estimate (upper bound with Object Group Search)
 Per rule, ACEs = product of the leaf counts of zones, networks and ports on both sides. This is
 how the FMC flattens groups; with Object Group Search enabled on a device the real count is

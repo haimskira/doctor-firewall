@@ -11,7 +11,8 @@ export type Permission =
   | 'deploy:approve'
   | 'audit:read'
   | 'users:manage'
-  | 'fmc:manage';
+  | 'fmc:manage'
+  | 'conventions:manage';
 
 export type Language = 'he' | 'en';
 
@@ -96,7 +97,15 @@ export interface Snapshot {
   fmc_version: string | null;
   error: string | null;
   error_detail: string | null;
-  stats: Partial<Record<'objects' | 'rules' | 'policies' | 'clusters' | 'interfaces' | 'routes' | 'stub_objects', number>>;
+  stats: Partial<Record<'objects' | 'rules' | 'policies' | 'clusters' | 'interfaces' | 'routes' | 'stub_objects', number>> & {
+    naming?: Partial<Record<string, NamingStats>>;
+  };
+}
+
+export interface NamingStats {
+  compliant: number;
+  noncompliant: number;
+  proposed: number;
 }
 
 export interface ClusterMember {
@@ -197,6 +206,14 @@ export interface RuleRow {
   dst_tiers?: string[];
   shadowed_by?: string | null;
   dead?: boolean;
+  recommendations?: RuleRecTag[];
+}
+
+export interface RuleRecTag {
+  id: number;
+  kind: RecommendationKind;
+  deploy_cost: number;
+  status: 'open' | 'accepted';
 }
 
 export interface ScoreReason {
@@ -351,4 +368,162 @@ export interface ClusterNetwork {
     metric: number;
   }[];
   bgp: { as_number: string | null; router_id: string | null; neighbors: { address: string; remote_as: string }[] }[];
+}
+
+// ---- phase 3: recommendations and naming convention (mirrors app/api/recommendations.py) ----
+
+export type RecommendationKind =
+  | 'remove_shadowed_rule'
+  | 'remove_dead_rule'
+  | 'remove_unused_object'
+  | 'merge_duplicate_objects'
+  | 'merge_groups'
+  | 'split_group'
+  | 'split_rule'
+  | 'merge_rules'
+  | 'tighten_source'
+  | 'tighten_ports'
+  | 'rename_role'
+  | 'rename_convention'
+  | 'literal_to_object';
+
+export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
+  'remove_shadowed_rule',
+  'remove_dead_rule',
+  'split_rule',
+  'merge_rules',
+  'tighten_source',
+  'tighten_ports',
+  'split_group',
+  'merge_groups',
+  'merge_duplicate_objects',
+  'literal_to_object',
+  'rename_role',
+  'rename_convention',
+  'remove_unused_object',
+];
+
+export type DecisionStatus = 'accepted' | 'dismissed';
+
+export interface RecommendationDecision {
+  status: DecisionStatus;
+  note: string;
+  decided_by: string;
+  decided_at: string;
+}
+
+export interface RecTarget {
+  type: 'rule' | 'object' | 'literal';
+  id: string;
+  name: string;
+  index?: number;
+  kind?: string;
+}
+
+export interface Recommendation {
+  id: number;
+  kind: RecommendationKind;
+  policy_fmc_id: string | null;
+  title: string;
+  principle: string;
+  priority: number;
+  targets: RecTarget[];
+  display: 'inline' | 'split';
+  deploy_cost: number;
+  ace_delta: number;
+  score_delta: number | null;
+  warnings: string[];
+  fingerprint: string;
+  decision: RecommendationDecision | null;
+}
+
+export type RowStatus = 'unchanged' | 'modified' | 'new' | 'removed';
+
+export interface PreviewRule {
+  id: string | null;
+  index: number | null;
+  name: string;
+  action: string;
+  enabled: boolean;
+  section: string;
+  category: string;
+  fields: Partial<Record<RuleFieldName, string[]>>;
+  status?: RowStatus;
+  changes?: Partial<Record<RuleFieldName | 'name', { added: string[]; removed: string[] }>>;
+}
+
+export interface PreviewObject {
+  id: string | null;
+  name: string;
+  kind: string;
+  value?: string | null;
+  tier?: string;
+  members?: string[];
+  references?: number;
+  status: 'unchanged' | 'kept' | 'removed' | 'new';
+}
+
+export interface AffectedRule {
+  id: string;
+  index: number;
+  name: string;
+  policy_id: string;
+  policy_name: string;
+}
+
+export interface RecommendationPreview {
+  policy?: { id: string; name: string; kind: PolicyKind };
+  before?: PreviewRule[];
+  after?: PreviewRule[];
+  objects?: { before: PreviewObject[]; after: PreviewObject[] };
+  rename?: { from: string; to: string; kind: string };
+  literal?: { value: string; kind: string; object: string; object_id: string | null; create: boolean };
+  affected_rules?: { total: number; sample: AffectedRule[] };
+  affected_groups?: string[];
+  routes?: number;
+  hits?: { hit_count: number | null; last_hit: string | null };
+}
+
+export interface RecommendationDetail extends Recommendation {
+  preview: RecommendationPreview;
+}
+
+export interface KindSummary {
+  count: number;
+  deploy_cost: number;
+  ace_delta: number;
+}
+
+export interface RecommendationsPage {
+  total: number;
+  offset: number;
+  summary: Partial<Record<RecommendationKind, KindSummary>>;
+  accepted: KindSummary;
+  rows: Recommendation[];
+}
+
+export type ConventionKind = 'host' | 'network' | 'range' | 'fqdn' | 'network_group' | 'port' | 'port_group' | 'rule';
+export const CONVENTION_KINDS: readonly ConventionKind[] = [
+  'host',
+  'network',
+  'range',
+  'fqdn',
+  'network_group',
+  'port',
+  'port_group',
+  'rule',
+];
+
+export interface NamingConvention {
+  kind: ConventionKind;
+  template: string;
+  letter_case: 'upper' | 'lower' | 'keep';
+  enabled: boolean;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface ConventionCatalog {
+  kinds: Record<ConventionKind, string[]>;
+  conventions: NamingConvention[];
 }

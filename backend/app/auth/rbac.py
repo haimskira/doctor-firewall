@@ -38,6 +38,7 @@ class Permission(StrEnum):
     AUDIT_READ = "audit:read"
     USERS_MANAGE = "users:manage"
     FMC_MANAGE = "fmc:manage"
+    CONVENTIONS_MANAGE = "conventions:manage"  # define the naming convention
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
@@ -61,6 +62,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.FMC_MANAGE,
             Permission.COLLECT_RUN,
             Permission.ASSETS_WRITE,
+            Permission.CONVENTIONS_MANAGE,
         }
     ),
 }

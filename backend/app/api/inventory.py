@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from pydantic import BaseModel
-from sqlalchemy import Select, case, func, literal, select
+from sqlalchemy import Select, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.audit.chain import AuditEvent, AuditLog
@@ -38,6 +38,7 @@ from app.models.inventory import (
     RuleRef,
     Snapshot,
 )
+from app.models.recommendations import Recommendation, RecommendationDecision
 from app.runtime import get_audit
 from app.workers import jobs
 
@@ -151,6 +152,15 @@ class RuleOut(BaseModel):
     dst_tiers: list[str] = []
     shadowed_by: str | None = None
     dead: bool = False
+    # Open (undecided or accepted) recommendations touching this rule: the editor's tags.
+    recommendations: list[RuleRecTag] = []
+
+
+class RuleRecTag(BaseModel):
+    id: int
+    kind: str
+    deploy_cost: int
+    status: str  # open | accepted
 
 
 class RuleGroup(BaseModel):
@@ -578,6 +588,7 @@ def list_rules(
             .order_by(RuleRef.id)
         ):
             refs[rule_id][field].append(RefOut(id=oid, name=oname, kind=okind, literal=lit))
+    tags = _recommendation_tags(db, snapshot_id, policy.fmc_id, {r.fmc_id for r in rules})
     return RulesPage(
         policy_fmc_id=policy.fmc_id,
         policy_kind=policy.kind,
@@ -604,11 +615,50 @@ def list_rules(
                 log_begin=r.log_begin,
                 log_end=r.log_end,
                 refs=dict(refs[r.id]),
+                recommendations=tags.get(r.fmc_id, []),
                 **_score_fields(scores.get(r.id)),
             )
             for r in rules
         ],
     )
+
+
+def _recommendation_tags(
+    db: Session, snapshot_id: int, policy_id: str, rule_ids: set[str]
+) -> dict[str, list[RuleRecTag]]:
+    """Recommendations (not dismissed) per rule of this page."""
+    if not rule_ids:
+        return {}
+    tags: dict[str, list[RuleRecTag]] = defaultdict(list)
+    for rec_id, kind, cost, targets, decision in db.execute(
+        select(
+            Recommendation.id,
+            Recommendation.kind,
+            Recommendation.deploy_cost,
+            Recommendation.targets,
+            RecommendationDecision.status,
+        )
+        .outerjoin(
+            RecommendationDecision,
+            RecommendationDecision.fingerprint == Recommendation.fingerprint,
+        )
+        .where(
+            Recommendation.snapshot_id == snapshot_id,
+            Recommendation.policy_fmc_id == policy_id,
+            or_(
+                RecommendationDecision.status.is_(None),
+                RecommendationDecision.status != "dismissed",
+            ),
+        )
+        .order_by(Recommendation.priority.desc(), Recommendation.id)
+    ).all():
+        for target in targets:
+            rid = target.get("id")
+            if target.get("type") == "rule" and rid in rule_ids:
+                tags[rid].append(
+                    RuleRecTag(id=rec_id, kind=kind, deploy_cost=cost, status=decision or "open")
+                )
+    return tags
 
 
 def _rule_groups(db: Session, base: Select[Any]) -> list[RuleGroup]:

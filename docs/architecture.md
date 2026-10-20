@@ -78,8 +78,8 @@ All containers run as non-root from the first process, `read_only` root FS,
 | 0 | Secure foundation: auth, RBAC, audit, secrets, FMC client core + connection test, mock, offline build/CI/bundle, UI shell (he/en) | **done** |
 | 1 | Collection & mapping (MVP): version adapter 10.1, paged/checkpointed pull of policies, rules (order + category), objects, groups, zones, interfaces, static routes, BGP, hit counts; snapshots with retention and auto-sync; object graph; faithful rulebase view; where-used / membership; basic duplicates, nesting, cycles, literals, unused | **done** |
 | 2 | Analysis & score: ACE expansion, shadowing / overlaps, dead rules, asset table (manual, CSV, bootstrap + confirm), per-cluster limits, explained rule score — see [scoring.md](scoring.md) | **done** |
-| 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview & deploy cost | next |
-| 4 | Connectivity map: three views, filtering, risk colouring, before/after | |
+| 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview (inline / split) & deploy cost, local accept / dismiss — see [recommendations.md](recommendations.md); UI in the current FMC look ([ui-design.md](ui-design.md)) | **done** |
+| 4 | Connectivity map: three views, filtering, risk colouring, before/after | next |
 | 5 | Controlled enforcement: changesets, batching under the per-cluster deploy limit, approval, deploy, verification, rollback | |
 | 6 | SSL/IPS recommendations; TACACS+ (ISE) and LDAP providers | |
 

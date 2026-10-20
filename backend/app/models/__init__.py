@@ -18,6 +18,7 @@ from app.models.inventory import (
     Snapshot,
     SnapshotCheckpoint,
 )
+from app.models.recommendations import NamingConvention, Recommendation, RecommendationDecision
 from app.models.user import User
 
 __all__ = [
@@ -32,7 +33,10 @@ __all__ = [
     "FwObject",
     "GroupMember",
     "Interface",
+    "NamingConvention",
     "Policy",
+    "Recommendation",
+    "RecommendationDecision",
     "Route",
     "Rule",
     "RuleRef",

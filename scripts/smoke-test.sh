@@ -81,6 +81,9 @@ first_rule="$(call GET "/api/snapshots/$snap_id/policies/$policy/rules?limit=1" 
 findings="$(call GET "/api/snapshots/$snap_id/findings?limit=1" | json_field "['total']")"
 [[ "$findings" -gt 0 ]] || die "analysis produced no findings"
 ok "rulebase readable (first rule: $first_rule); $findings findings"
+recs="$(call GET "/api/snapshots/$snap_id/recommendations?limit=1" | json_field "['total']")"
+[[ "$recs" -gt 0 ]] || die "analysis produced no recommendations"
+ok "$recs recommendations (local only; nothing written to the FMC)"
 call DELETE "/api/fmc/connections/$conn_id" >/dev/null
 
 log "Audit chain"

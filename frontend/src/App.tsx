@@ -13,9 +13,11 @@ import { FindingsPage } from './pages/FindingsPage';
 import { FmcPage } from './pages/FmcPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
+import { NamingPage } from './pages/NamingPage';
 import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { ObjectsPage } from './pages/ObjectsPage';
 import { PoliciesPage } from './pages/PoliciesPage';
+import { RecommendationsPage } from './pages/RecommendationsPage';
 import { RulebasePage } from './pages/RulebasePage';
 import { ScoresPage } from './pages/ScoresPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -60,6 +62,8 @@ export function App() {
             ['findings', <FindingsPage key="f" />],
             ['scores', <ScoresPage key="q" />],
             ['assets', <AssetsPage key="a" />],
+            ['recommendations', <RecommendationsPage key="m" />],
+            ['naming', <NamingPage key="n" />],
           ] as const
         ).map(([path, element]) => (
           <Route key={path} path={path} element={<RequirePermission permission="policy:read">{element}</RequirePermission>} />
