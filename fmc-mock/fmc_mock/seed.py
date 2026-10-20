@@ -46,6 +46,13 @@ class FmcData:
     bgp_general: dict[str, list[Json]] = field(default_factory=dict)
     bgp: dict[str, list[Json]] = field(default_factory=dict)
     hitcounts: dict[tuple[str, str], list[Json]] = field(default_factory=dict)  # (policy, dev)
+    # Other policy types: resource -> policies, and (resource, policy id, sub) -> rules.
+    policy_lists: dict[str, list[Json]] = field(default_factory=dict)
+    policy_rules: dict[tuple[str, str, str], list[Json]] = field(default_factory=dict)
+
+    def add_policy(self, resource: str, policy: Json) -> Json:
+        self.policy_lists.setdefault(resource, []).append(policy)
+        return policy
 
     def by_id(self) -> dict[str, Json]:
         index: dict[str, Json] = {}
@@ -134,6 +141,9 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
     users_gen = b.net("NET_USERS_GENERAL", "10.100.0.0/16")
     dba_paw = b.host("H_DBA_PAW", "10.100.20.50")
     rng_obj = b.obj("ranges", "Range", "RANGE_SCANNERS", value="10.50.0.10-10.50.0.20")
+    dmz_web = b.host("H_DMZ_WEB", "172.16.50.10")  # referenced only by NAT
+    dmz_web_public = b.host("H_DMZ_WEB_PUBLIC", "198.51.100.10")  # referenced only by NAT
+    nat_pool = b.obj("ranges", "Range", "NAT_POOL_OUT", value="198.51.100.100-198.51.100.120")
     fqdn = b.obj(
         "fqdns", "FQDN", "FQDN_UPDATES", value="updates.vendor.example", dnsResolution="IPV4_ONLY"
     )
@@ -213,6 +223,72 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
     ips_max = {"id": _id(rng), "name": "Maximum Detection", "type": "IntrusionPolicy"}
     file_pol = {"id": _id(rng), "name": "Block Malware", "type": "FilePolicy"}
 
+    data = b.data
+    data.add_policy(
+        "intrusionpolicies",
+        {
+            **ips,
+            "inspectionMode": "PREVENTION",
+            "basePolicy": {"id": _id(rng), "name": "Balanced", "type": "IntrusionPolicy"},
+        },
+    )
+    data.add_policy("intrusionpolicies", {**ips_max, "inspectionMode": "PREVENTION"})
+    data.add_policy("filepolicies", dict(file_pol))
+    data.add_policy(
+        "dnspolicies", {"id": _id(rng), "name": "Default DNS Policy", "type": "DNSPolicy"}
+    )
+    decrypt = data.add_policy(
+        "decryptionpolicies", {"id": _id(rng), "name": "DECRYPT-DC", "type": "DecryptionPolicy"}
+    )
+    data.policy_rules[("decryptionpolicies", decrypt["id"], "decryptionpolicyrules")] = [
+        {
+            "id": _id(rng),
+            "type": "DecryptionPolicyRule",
+            "name": "DND_CORE",
+            "enabled": True,
+            "action": "DO_NOT_DECRYPT",
+            "destinationNetworks": objs(grp_core_ad, grp_core_dns),
+        },
+        {
+            "id": _id(rng),
+            "type": "DecryptionPolicyRule",
+            "name": "KNOWN_KEY_GOLD",
+            "enabled": True,
+            "action": "DECRYPT_KNOWN_KEY",
+            "destinationNetworks": objs(grp_gold),
+            "destinationPorts": objs(tcp443),
+        },
+        {
+            "id": _id(rng),
+            "type": "DecryptionPolicyRule",
+            "name": "RESIGN_USERS_OUT",
+            "enabled": True,
+            "action": "DECRYPT_RESIGN",
+            "sourceNetworks": objs(grp_users_all),
+        },
+    ]
+    identity = data.add_policy(
+        "identitypolicies", {"id": _id(rng), "name": "ID-CORP", "type": "IdentityPolicy"}
+    )
+    data.policy_rules[("identitypolicies", identity["id"], "identityrules")] = [
+        {
+            "id": _id(rng),
+            "type": "IdentityRule",
+            "name": "PASSIVE_USERS",
+            "enabled": True,
+            "action": "PASSIVE_AUTH",
+            "sourceNetworks": objs(users_gen),
+        },
+        {
+            "id": _id(rng),
+            "type": "IdentityRule",
+            "name": "NO_AUTH_SERVERS",
+            "enabled": True,
+            "action": "NO_AUTH",
+            "sourceNetworks": objs(silver_net, bronze_net),
+        },
+    ]
+
     user_sources = [users_fin, users_it, users_gen, grp_users_fin, grp_users_it, grp_users_all]
     server_dests = [
         grp_gold,
@@ -257,6 +333,96 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                 "type": "AccessPolicyDefaultAction",
             },
         }
+        prefilter = data.add_policy(
+            "prefilterpolicies",
+            {
+                "id": _id(rng),
+                "name": f"PF-{name}",
+                "type": "PrefilterPolicy",
+                "defaultAction": {
+                    "action": "ANALYZE_TUNNELS",
+                    "type": "PrefilterPolicyDefaultAction",
+                },
+            },
+        )
+        policy["prefilterPolicySetting"] = _ref(prefilter)
+        data.policy_rules[("prefilterpolicies", prefilter["id"], "prefilterrules")] = [
+            {
+                "id": _id(rng),
+                "type": "PrefilterRule",
+                "name": "BLOCK_BOGONS",
+                "enabled": True,
+                "ruleType": "PREFILTER",
+                "action": "BLOCK",
+                "sourceNetworks": {
+                    "literals": [
+                        {"type": "Network", "value": "0.0.0.0/8"},
+                        {"type": "Network", "value": "240.0.0.0/4"},
+                    ]
+                },
+            },
+            {
+                "id": _id(rng),
+                "type": "PrefilterRule",
+                "name": "FASTPATH_CORE_DNS",
+                "enabled": True,
+                "ruleType": "PREFILTER",
+                "action": "FASTPATH",
+                "destinationNetworks": objs(grp_core_dns),
+                "destinationPorts": objs(udp53),
+            },
+            {
+                "id": _id(rng),
+                "type": "PrefilterRule",
+                "name": "ANALYZE_GRE",
+                "enabled": True,
+                "ruleType": "TUNNEL",
+                "action": "ANALYZE",
+                "sourceInterfaces": objs(zones["outside"]),
+            },
+        ]
+        nat = data.add_policy(
+            "ftdnatpolicies", {"id": _id(rng), "name": f"NAT-{name}", "type": "FTDNatPolicy"}
+        )
+        data.policy_rules[("ftdnatpolicies", nat["id"], "manualnatrules")] = [
+            {
+                "id": _id(rng),
+                "type": "FTDManualNatRule",
+                "natType": "DYNAMIC",
+                "section": "BEFORE_AUTO",
+                "enabled": True,
+                "description": "Users PAT to pool",
+                "sourceInterface": _ref(zones["users"]),
+                "destinationInterface": _ref(zones["outside"]),
+                "originalSource": _ref(users_gen),
+                "translatedSource": _ref(nat_pool),
+            },
+            {
+                "id": _id(rng),
+                "type": "FTDManualNatRule",
+                "natType": "STATIC",
+                "section": "AFTER_AUTO",
+                "enabled": False,
+                "originalSource": _ref(bronze_net),
+                "translatedSource": _ref(bronze_net),
+                "originalDestination": _ref(grp_gold),
+                "translatedDestination": _ref(grp_gold),
+            },
+        ]
+        data.policy_rules[("ftdnatpolicies", nat["id"], "autonatrules")] = [
+            {
+                "id": _id(rng),
+                "type": "FTDAutoNatRule",
+                "natType": "STATIC",
+                "originalNetwork": _ref(dmz_web),
+                "translatedNetwork": _ref(dmz_web_public),
+                "sourceInterface": _ref(zones["dmz"]),
+                "destinationInterface": _ref(zones["outside"]),
+                "serviceProtocol": "TCP",
+                "originalPort": 8443,
+                "translatedPort": 443,
+            },
+        ]
         for d in devs:
             d["accessPolicy"] = _ref(policy)
         ha: Json = {
@@ -274,6 +440,14 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                 "id": policy["id"],
                 "type": "PolicyAssignment",
                 "policy": _ref(policy),
+                "targets": [_ref(ha)],
+            }
+        )
+        b.data.assignments.append(
+            {
+                "id": nat["id"],
+                "type": "PolicyAssignment",
+                "policy": _ref(nat),
                 "targets": [_ref(ha)],
             }
         )

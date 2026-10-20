@@ -106,3 +106,28 @@ def test_generator_is_deterministic_and_messy() -> None:
     rules = next(iter(a.rules.values()))
     assert any(r["name"] == "ANY_ANY_TEMP" for r in rules)
     assert any(r.get("enabled") is False for r in rules)
+
+
+def test_policy_dependencies(client: TestClient) -> None:
+    acp = client.get(f"{BASE}/policy/accesspolicies?expanded=true").json()["items"][0]
+    prefilter_ref = acp["prefilterPolicySetting"]
+    prefilters = client.get(f"{BASE}/policy/prefilterpolicies?expanded=true").json()["items"]
+    assert prefilter_ref["id"] in {p["id"] for p in prefilters}
+    rules = client.get(
+        f"{BASE}/policy/prefilterpolicies/{prefilter_ref['id']}/prefilterrules?expanded=true"
+    ).json()["items"]
+    assert {r["action"] for r in rules} == {"BLOCK", "FASTPATH", "ANALYZE"}
+    nat = client.get(f"{BASE}/policy/ftdnatpolicies").json()["items"][0]
+    auto = client.get(f"{BASE}/policy/ftdnatpolicies/{nat['id']}/autonatrules?expanded=true")
+    assert auto.json()["items"][0]["natType"] == "STATIC"
+    assignments = client.get(f"{BASE}/assignment/policyassignments?expanded=true").json()["items"]
+    assert {a["policy"]["type"] for a in assignments} == {"AccessPolicy", "FTDNatPolicy"}
+    for resource in (
+        "decryptionpolicies",
+        "identitypolicies",
+        "intrusionpolicies",
+        "filepolicies",
+        "dnspolicies",
+    ):
+        assert client.get(f"{BASE}/policy/{resource}").json()["paging"]["count"] >= 1
+    assert client.get(f"{BASE}/policy/ftdnatpolicies/nope/autonatrules").status_code == 404

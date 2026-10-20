@@ -77,6 +77,10 @@ def _objects_of(data: FmcData, resource: str) -> list[Json]:
     return data.objects.get(resource, [])
 
 
+def _policies_of(data: FmcData, resource: str) -> list[Json]:
+    return data.policy_lists.get(resource, [])
+
+
 def _interfaces_of(data: FmcData, kind: str, device_id: str) -> list[Json]:
     return data.interfaces.get(device_id, {}).get(kind, [])
 
@@ -148,6 +152,28 @@ def build_router(data: FmcData, domain_uuid: str, token_ok: Callable[[Request], 
         if key not in data.hitcounts:
             return _error(404, "No hit counts for this policy/device")
         return page(request, data.hitcounts[key])
+
+    for resource in (
+        "prefilterpolicies",
+        "decryptionpolicies",
+        "identitypolicies",
+        "ftdnatpolicies",
+        "intrusionpolicies",
+        "filepolicies",
+        "dnspolicies",
+    ):
+        collection(f"/policy/{resource}", partial(_policies_of, data, resource))
+
+    @router.get(CONFIG + "/policy/{resource}/{policy_id}/{sub}")
+    async def policy_rules(
+        request: Request, domain: str, resource: str, policy_id: str, sub: str
+    ) -> Response:
+        if (resp := guard(request, domain)) is not None:
+            return resp
+        rules = data.policy_rules.get((resource, policy_id, sub))
+        if rules is None:
+            return _error(404, "Not found")
+        return page(request, rules)
 
     def per_device(path: str, store: Callable[[str], list[Json] | None]) -> None:
         @router.get(CONFIG + "/devices/devicerecords/{device_id}" + path, name=f"dev:{path}")
