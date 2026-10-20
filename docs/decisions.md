@@ -3,6 +3,13 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-022 — Security exceptions to the 14-day release-age floor
+Locks only accept releases older than 14 days (supply-chain protection). A fix for a known
+vulnerability may be taken earlier, one package at a time, through
+`scripts/lock-exceptions.txt` (package, cutoff, advisory, reason); the line is removed once the
+release is older than 14 days. First use: certifi 2026.10.19 for GHSA-6q48-6c7w-9gw2 (the FMC
+client verifies against the internal CA, not certifi's bundle, but the SCA gate stays strict).
+
 ### D-021 — FMC look with open assets only
 The product owner wants the UI to look exactly like the current FMC. It is rebuilt with open
 assets bundled into the web image: the Inter font (OFL-1.1), Phosphor icons (MIT) and our own

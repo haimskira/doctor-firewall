@@ -1,0 +1,4 @@
+# Security exceptions to the 14-day release-age floor of scripts/lock-deps.sh.
+# One per line: <package> <cutoff YYYY-MM-DD> <advisory> <reason>. Remove the line once the
+# fixed release is older than 14 days (the normal cutoff then covers it).
+certifi 2026-10-21 GHSA-6q48-6c7w-9gw2 fix released 2026-10-19; CA bundle from the PyPA-trusted maintainer
