@@ -162,3 +162,11 @@ pre.details {
   white-space: pre-wrap; overflow-x: auto; font-size: 0.8rem; background: var(--bg);
   padding: 0.6rem; border-radius: var(--radius); text-align: left;
 }
+
+.rule-grid.generic {
+  grid-template-columns: 3.5rem minmax(10rem, 1.2fr) 7rem 9rem minmax(16rem, 4fr);
+}
+.match-fields { display: flex; flex-direction: column; gap: 0.2rem; }
+.match-field { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
+.action-fastpath, .action-do_not_decrypt { color: var(--warn); }
+.action-decrypt_known_key, .action-decrypt_resign, .action-analyze { color: var(--primary); }

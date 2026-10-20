@@ -11,6 +11,7 @@ import { mockFetch } from '../test/fetchMock';
 import type { Recorded } from '../test/fetchMock';
 import { FindingsPage } from './FindingsPage';
 import { ObjectDetailPage } from './ObjectDetailPage';
+import { PoliciesPage } from './PoliciesPage';
 import { RulebasePage } from './RulebasePage';
 import { SnapshotsPage } from './SnapshotsPage';
 
@@ -44,6 +45,7 @@ const SNAP: Snapshot = {
 function rule(index: number, extra: Partial<RuleRow> = {}): RuleRow {
   return {
     id: `r${String(index)}`,
+    rule_type: null,
     index,
     section: 'Mandatory',
     category: 'DC-Inbound',
@@ -107,11 +109,11 @@ describe('RulebasePage', () => {
       if (req.url === '/api/snapshots/7/clusters') {
         return {
           status: 200,
-          body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP-1', rule_count: 3 }],
+          body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP-1', rule_count: 3, policies: [{ id: 'p1', name: 'ACP-1', kind: 'access', via: 'assignment', rule_count: 3 }] }],
         };
       }
       if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_name: 'ACP-1', categories: [], total: 3, offset: 0, rows: rules } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP-1', categories: [], total: 3, offset: 0, rows: rules } };
       }
       return undefined;
     });
@@ -132,10 +134,10 @@ describe('RulebasePage', () => {
   it('sends the search to the server (debounced)', async () => {
     const calls = setup('/rules', <Route path="/rules" element={<RulebasePage />} />, (req) => {
       if (req.url === '/api/snapshots/7/clusters') {
-        return { status: 200, body: [{ fmc_id: 'c1', name: 'C', kind: 'ha_pair', sw_version: '', model: '', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1 }] };
+        return { status: 200, body: [{ fmc_id: 'c1', name: 'C', kind: 'ha_pair', sw_version: '', model: '', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, policies: [{ id: 'p1', name: 'ACP', kind: 'access', via: 'assignment', rule_count: 1 }] }] };
       }
       if (req.url.includes('/rules?')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [rule(1)] } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [rule(1)] } };
       }
       return undefined;
     });
@@ -162,7 +164,7 @@ describe('ObjectDetailPage', () => {
               { group_id: 'g2', group_name: 'GRP_DC_ALL', child_id: 'g1', depth: 2 },
             ],
             used_by: [
-              { policy_fmc_id: 'p', rule_id: 'r9', rule_index: 9, rule_name: 'FIN_TO_GOLD', field: 'dst_net', via_id: 'g1', via_name: 'GRP_SRV_GOLD' },
+              { policy_fmc_id: 'p', policy_kind: 'access', policy_name: 'ACP-1', rule_id: 'r9', rule_index: 9, rule_name: 'FIN_TO_GOLD', field: 'dst_net', via_id: 'g1', via_name: 'GRP_SRV_GOLD' },
             ],
             used_by_total: 1,
           },
@@ -237,5 +239,80 @@ describe('FindingsPage', () => {
     });
     await user.click(screen.getByText('Group cycle: A -> B'));
     expect(screen.getByText(/"groups"/)).toBeInTheDocument();
+  });
+});
+
+describe('policy dependencies', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 0, y: 0, width: 1200, height: 800 }),
+    );
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1200);
+  });
+
+  it('switches the rulebase to a NAT policy and shows labelled translation fields', async () => {
+    const calls = setup('/rules', <Route path="/rules" element={<RulebasePage />} />, (req) => {
+      if (req.url === '/api/snapshots/7/clusters') {
+        return {
+          status: 200,
+          body: [{
+            fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '', model: '', members: [],
+            policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1,
+            policies: [
+              { id: 'p1', name: 'ACP', kind: 'access', via: 'assignment', rule_count: 1 },
+              { id: 'n1', name: 'NAT-CL01', kind: 'nat', via: 'assignment', rule_count: 1 },
+              { id: 'i9', name: 'IPS', kind: 'intrusion', via: 'x', rule_count: 0 },
+            ],
+          }],
+        };
+      }
+      if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [rule(1)] } };
+      }
+      if (req.url.startsWith('/api/snapshots/7/policies/n1/rules')) {
+        const nat = rule(1, {
+          name: 'AUTO NAT 1', section: 'AUTO', category: '', action: 'STATIC', rule_type: 'AUTO',
+          refs: {
+            nat_orig_src: [{ id: 'h1', name: 'H_DMZ_WEB', kind: 'host', literal: null }],
+            nat_trans_sport: [{ id: null, name: '', kind: null, literal: 'TCP/443' }],
+          },
+        });
+        return { status: 200, body: { policy_fmc_id: 'n1', policy_kind: 'nat', policy_name: 'NAT-CL01', categories: [], total: 1, offset: 0, rows: [nat] } };
+      }
+      return undefined;
+    });
+    const picker = await screen.findByLabelText('Policy');
+    // Intrusion policies carry no rules and are not offered.
+    expect(within(picker).queryByText(/IPS/)).not.toBeInTheDocument();
+    await userEvent.selectOptions(picker, 'n1');
+    expect(await screen.findByText('AUTO NAT 1')).toBeInTheDocument();
+    expect(screen.getByText('original source:')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'H_DMZ_WEB' })).toBeInTheDocument();
+    expect(screen.getByText('TCP/443')).toBeInTheDocument();
+    expect(screen.getByText('Match')).toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/snapshots/7/policies/n1/rules'))).toBe(true);
+  });
+
+  it('lists every policy type with the clusters it governs', async () => {
+    setup('/policies', <Route path="/policies" element={<PoliciesPage />} />, (req) => {
+      if (req.url === '/api/snapshots/7/policies') {
+        return {
+          status: 200,
+          body: [
+            { id: 'a1', kind: 'access', name: 'ACP-1', default_action: 'BLOCK', rule_count: 10, links: [{ relation: 'prefilterPolicySetting', id: 'pf', name: 'PF-1', type: 'PrefilterPolicy' }], attrs: {}, clusters: ['FTD-CL01'] },
+            { id: 'd1', kind: 'decryption', name: 'DECRYPT-DC', default_action: '', rule_count: 3, links: [], attrs: {}, clusters: [] },
+            { id: 'i1', kind: 'intrusion', name: 'Max Detection', default_action: '', rule_count: 0, links: [], attrs: { inspection_mode: 'PREVENTION' }, clusters: [] },
+          ],
+        };
+      }
+      return undefined;
+    });
+    expect(await screen.findByText('Decryption (SSL)')).toBeInTheDocument();
+    expect(screen.getByText('PF-1')).toBeInTheDocument();
+    expect(screen.getByText('PREVENTION')).toBeInTheDocument();
+    expect(screen.getAllByText('not linked to a cluster')).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'Rules (3)' })).toHaveAttribute('href', '/rules?snapshot=7&policy=d1');
+    expect(screen.queryByRole('link', { name: 'Rules (0)' })).not.toBeInTheDocument();
   });
 });

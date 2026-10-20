@@ -23,6 +23,7 @@ export function Layout() {
             <>
               <NavLink to="/snapshots">{t('nav.snapshots')}</NavLink>
               <NavLink to="/clusters">{t('nav.clusters')}</NavLink>
+              <NavLink to="/policies">{t('nav.policies')}</NavLink>
               <NavLink to="/rules">{t('nav.rules')}</NavLink>
               <NavLink to="/objects">{t('nav.objects')}</NavLink>
               <NavLink to="/findings">{t('nav.findings')}</NavLink>

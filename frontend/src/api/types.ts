@@ -104,6 +104,28 @@ export interface ClusterMember {
   role: string;
 }
 
+export type PolicyKind = 'access' | 'prefilter' | 'decryption' | 'identity' | 'nat' | 'intrusion' | 'file' | 'dns';
+export const RULE_POLICY_KINDS: readonly PolicyKind[] = ['access', 'prefilter', 'decryption', 'identity', 'nat'];
+
+export interface GoverningPolicy {
+  id: string;
+  name: string;
+  kind: PolicyKind;
+  via: string;
+  rule_count: number;
+}
+
+export interface PolicyInfo {
+  id: string;
+  kind: PolicyKind;
+  name: string;
+  default_action: string;
+  rule_count: number;
+  links: { relation: string; id: string; name: string; type: string }[];
+  attrs: Record<string, unknown>;
+  clusters: string[];
+}
+
 export interface Cluster {
   fmc_id: string;
   name: string;
@@ -114,6 +136,7 @@ export interface Cluster {
   policy_fmc_id: string | null;
   policy_name: string | null;
   rule_count: number;
+  policies: GoverningPolicy[];
 }
 
 export interface RefItem {
@@ -137,10 +160,19 @@ export type RuleFieldName =
   | 'src_dyn'
   | 'dst_dyn'
   | 'user'
-  | 'vlan';
+  | 'vlan'
+  | 'nat_orig_src'
+  | 'nat_trans_src'
+  | 'nat_orig_dst'
+  | 'nat_trans_dst'
+  | 'nat_orig_sport'
+  | 'nat_trans_sport'
+  | 'nat_orig_dport'
+  | 'nat_trans_dport';
 
 export interface RuleRow {
   id: string;
+  rule_type: string | null;
   index: number;
   section: string;
   category: string;
@@ -158,6 +190,7 @@ export interface RuleRow {
 
 export interface RulesPage {
   policy_fmc_id: string;
+  policy_kind: PolicyKind;
   policy_name: string;
   categories: string[];
   total: number;
@@ -191,6 +224,8 @@ export interface MembershipEdge {
 
 export interface Usage {
   policy_fmc_id: string;
+  policy_kind: PolicyKind;
+  policy_name: string;
   rule_id: string;
   rule_index: number;
   rule_name: string;

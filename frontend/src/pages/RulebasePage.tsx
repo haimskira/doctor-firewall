@@ -2,7 +2,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, errorCode } from '../api/client';
-import type { Cluster, RuleRow, RulesPage } from '../api/types';
+import { RULE_POLICY_KINDS } from '../api/types';
+import type { Cluster, PolicyKind, RefItem, RuleFieldName, RuleRow, RulesPage } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import { RefList, SnapshotPicker } from '../components/inventory';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
@@ -14,6 +15,7 @@ const ROW_ESTIMATE = 56;
 interface Meta {
   total: number;
   policyName: string;
+  kind: PolicyKind;
 }
 
 /** Page cache for one query (``base``); a different query starts from an empty cache. */
@@ -34,12 +36,16 @@ export function RulebasePage() {
   const { t, tError } = useI18n();
   const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
   const [clusterParam, setClusterParam] = useQueryParam('cluster');
+  const [policyParam, setPolicyParam] = useQueryParam('policy');
   const [qParam, setQParam] = useQueryParam('q');
   const [search, setSearch] = useState(qParam ?? '');
   const clusters = useApi<Cluster[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/clusters`);
-  const withPolicy = (clusters.data ?? []).filter((c) => c.policy_fmc_id !== null);
+  const withPolicy = (clusters.data ?? []).filter((c) => c.policies.length > 0);
   const cluster = withPolicy.find((c) => c.fmc_id === clusterParam) ?? withPolicy[0] ?? null;
-  const policyId = cluster?.policy_fmc_id ?? null;
+  // Rule-bearing policies governing the cluster (access, prefilter, NAT, ...).
+  const choices = (cluster?.policies ?? []).filter((p) => RULE_POLICY_KINDS.includes(p.kind));
+  // ``?policy=`` also opens policies not linked to any cluster (e.g. from the Policies page).
+  const policyId = policyParam ?? choices.find((p) => p.kind === 'access')?.id ?? choices[0]?.id ?? null;
 
   const [cache, setCache] = useState<Cache>(() => emptyCache(null));
   const requested = useRef<{ base: string | null; pages: Set<number> }>({ base: null, pages: new Set() });
@@ -77,7 +83,7 @@ export function RulebasePage() {
             const c = forBase(prev);
             return {
               ...c,
-              meta: { total: data.total, policyName: data.policy_name },
+              meta: { total: data.total, policyName: data.policy_name, kind: data.policy_kind },
               pages: new Map(c.pages).set(page, data.rows),
             };
           });
@@ -136,11 +142,30 @@ export function RulebasePage() {
               value={cluster?.fmc_id ?? ''}
               onChange={(e) => {
                 setClusterParam(e.target.value);
+                setPolicyParam(null);
               }}
             >
               {withPolicy.map((c) => (
                 <option key={c.fmc_id} value={c.fmc_id}>
-                  {c.name} — {c.policy_name}
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inline-field">
+            {t('rules.policy')}
+            <select
+              value={policyId ?? ''}
+              onChange={(e) => {
+                setPolicyParam(e.target.value);
+              }}
+            >
+              {choices.every((p) => p.id !== policyId) && policyId !== null && (
+                <option value={policyId}>{meta?.policyName ?? policyId}</option>
+              )}
+              {choices.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {t(`kind.${p.kind}`)}: {p.name} ({p.rule_count})
                 </option>
               ))}
             </select>
@@ -168,17 +193,27 @@ export function RulebasePage() {
 
       {snapshotId !== null && meta !== null && (
         <div className="rulebase card">
-          <div className="rule-grid rule-head" role="row">
-            <span>{t('rules.col.index')}</span>
-            <span>{t('rules.col.name')}</span>
-            <span>{t('rules.col.srcZone')}</span>
-            <span>{t('rules.col.srcNet')}</span>
-            <span>{t('rules.col.dstZone')}</span>
-            <span>{t('rules.col.dstNet')}</span>
-            <span>{t('rules.col.service')}</span>
-            <span>{t('rules.col.action')}</span>
-            <span>{t('rules.col.hits')}</span>
-          </div>
+          {meta.kind === 'access' ? (
+            <div className="rule-grid rule-head" role="row">
+              <span>{t('rules.col.index')}</span>
+              <span>{t('rules.col.name')}</span>
+              <span>{t('rules.col.srcZone')}</span>
+              <span>{t('rules.col.srcNet')}</span>
+              <span>{t('rules.col.dstZone')}</span>
+              <span>{t('rules.col.dstNet')}</span>
+              <span>{t('rules.col.service')}</span>
+              <span>{t('rules.col.action')}</span>
+              <span>{t('rules.col.hits')}</span>
+            </div>
+          ) : (
+            <div className="rule-grid generic rule-head" role="row">
+              <span>{t('rules.col.index')}</span>
+              <span>{t('rules.col.name')}</span>
+              <span>{t('rules.col.type')}</span>
+              <span>{t('rules.col.action')}</span>
+              <span>{t('rules.col.match')}</span>
+            </div>
+          )}
           <div ref={scrollRef} className="rule-scroll" role="table" aria-rowcount={total}>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {items.map((item) => {
@@ -197,13 +232,21 @@ export function RulebasePage() {
                   >
                     {band && (
                       <div className="rule-band">
-                        {t('rules.section', { name: rule.section })} · <Ltr>{rule.category}</Ltr>
+                        {t('rules.section', { name: rule.section })}
+                        {rule.category !== '' && (
+                          <>
+                            {' · '}
+                            <Ltr>{rule.category}</Ltr>
+                          </>
+                        )}
                       </div>
                     )}
                     {rule === undefined ? (
                       <div className="rule-grid rule-row placeholder">…</div>
-                    ) : (
+                    ) : meta.kind === 'access' ? (
                       <RuleLine rule={rule} snapshotId={snapshotId} />
+                    ) : (
+                      <GenericRuleLine rule={rule} snapshotId={snapshotId} />
                     )}
                   </div>
                 );
@@ -246,6 +289,36 @@ function RuleLine({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) {
       </span>
       <span className={`action action-${rule.action.toLowerCase()}`}>{rule.action}</span>
       <span className={rule.hit_count === 0 ? 'bad' : ''}>{rule.hit_count ?? '—'}</span>
+    </div>
+  );
+}
+
+/** Prefilter / decryption / identity / NAT rules: every populated field, labelled. */
+function GenericRuleLine({ rule, snapshotId }: { rule: RuleRow; snapshotId: number }) {
+  const { t } = useI18n();
+  const fields = Object.entries(rule.refs) as [RuleFieldName, RefItem[]][];
+  return (
+    <div className={`rule-grid generic rule-row${rule.enabled ? '' : ' disabled'}`} role="row">
+      <span>{rule.index}</span>
+      <span>
+        <Ltr>{rule.name}</Ltr>
+        {!rule.enabled && <span className="badge">{t('rules.disabled')}</span>}
+      </span>
+      <span>
+        <Ltr>{rule.rule_type ?? rule.section}</Ltr>
+      </span>
+      <span className={`action action-${rule.action.toLowerCase()}`}>{rule.action}</span>
+      <span className="match-fields">
+        {fields.length === 0 ? (
+          <span className="muted">{t('rules.any')}</span>
+        ) : (
+          fields.map(([field, items]) => (
+            <span key={field} className="match-field">
+              <span className="muted small">{t(`field.${field}`)}:</span> <RefList items={items} snapshotId={snapshotId} />
+            </span>
+          ))
+        )}
+      </span>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { ObjectsPage } from './pages/ObjectsPage';
+import { PoliciesPage } from './pages/PoliciesPage';
 import { RulebasePage } from './pages/RulebasePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SnapshotsPage } from './pages/SnapshotsPage';
@@ -50,6 +51,7 @@ export function App() {
           [
             ['snapshots', <SnapshotsPage key="s" />],
             ['clusters', <ClustersPage key="c" />],
+            ['policies', <PoliciesPage key="p" />],
             ['rules', <RulebasePage key="r" />],
             ['objects', <ObjectsPage key="o" />],
             ['objects/:objectId', <ObjectDetailPage key="d" />],

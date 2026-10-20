@@ -80,6 +80,7 @@ export function ObjectDetailPage() {
               <table>
                 <thead>
                   <tr>
+                    <th>{t('rules.policy')}</th>
                     <th>{t('rules.col.index')}</th>
                     <th>{t('rules.col.name')}</th>
                     <th>{t('objects.col.kind')}</th>
@@ -89,9 +90,17 @@ export function ObjectDetailPage() {
                 <tbody>
                   {d.used_by.map((u) => (
                     <tr key={`${u.policy_fmc_id}-${u.rule_id}-${u.field}-${u.via_id}`}>
+                      <td>
+                        {t(`kind.${u.policy_kind}`)}
+                        <div className="muted small">
+                          <Ltr>{u.policy_name}</Ltr>
+                        </div>
+                      </td>
                       <td>{u.rule_index}</td>
                       <td>
-                        <Link to={`/rules?snapshot=${String(snapshotId)}&q=${encodeURIComponent(u.rule_name)}`}>
+                        <Link
+                          to={`/rules?snapshot=${String(snapshotId)}&policy=${encodeURIComponent(u.policy_fmc_id)}&q=${encodeURIComponent(u.rule_name)}`}
+                        >
                           <Ltr>{u.rule_name}</Ltr>
                         </Link>
                       </td>
