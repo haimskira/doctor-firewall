@@ -3,6 +3,16 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-012 — Policy links discovered from `*PolicySetting`, not guessed
+The access-policy field that references the decryption / identity policy is not documented for
+the FMC 10.1 REST API. Instead of guessing a name, the adapter records every `*PolicySetting`
+reference returned (documented: `prefilterPolicySetting`), and collects all decryption / identity
+policies regardless. Confirm the field on the real FMC before relying on cluster linkage.
+
+### D-011 — Dependency age floor for npm as well
+New npm dependencies are pinned to the newest release at least 14 days old (same rule as the
+Python lock's `--exclude-newer`), e.g. `@tanstack/react-virtual` 3.14.13.
+
 ### D-010 — Derived PostgreSQL image without gosu
 The offline image gate found 25 fixable HIGH/CRITICAL issues in `gosu` (static Go binary,
 old Go stdlib) in both the Debian and Alpine `postgres:16.15` images. We never need it:

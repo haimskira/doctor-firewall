@@ -91,7 +91,10 @@ worker: run_collection
   token -> serverversion -> select_adapter("10.1") (unknown versions are refused)
   objects (15 resource types, paged, checkpointed per page)
   devices + HA pairs + policy assignments -> clusters
-  per assigned access policy: categories, rules (paged; count verified), hit counts per unit
+  policies of every kind (inventory): access, prefilter, decryption, identity, NAT,
+    intrusion, file, DNS — and which clusters each one governs
+  rules (paged; count verified per sub-resource): assigned access policies (+ categories,
+    hit counts per unit), prefilter, decryption, identity, NAT (manual + auto)
   per cluster (primary unit): interfaces (4 kinds), IPv4 static routes, BGP
   stub objects for referenced-only ids (applications, …); connected routes from interfaces
   -> "complete" -> RQ "analysis" -> findings -> analyzed_at
@@ -114,3 +117,27 @@ the production FMC, run a collection against it in a test window and review any 
 failure: the error names the resource, the item id and the offending fields (never values). Real,
 sanitised payloads (accessrules `expanded=true`, networkgroups, hitcounts, ipv4staticroutes) can be
 added as adapter test fixtures to lock the behaviour in.
+
+## Policy dependencies
+
+| Kind | FMC resource | Rules | How it is tied to a cluster |
+|---|---|---|---|
+| Access control | `policy/accesspolicies` | `accessrules` (+ categories, hit counts) | policy assignment |
+| Prefilter | `policy/prefilterpolicies` | `prefilterrules` (PREFILTER / TUNNEL; ANALYZE / BLOCK / FASTPATH) | `prefilterPolicySetting` on the access policy |
+| Decryption (SSL) | `policy/decryptionpolicies` | `decryptionpolicyrules` | any `*PolicySetting` the FMC returns on the access policy (see below) |
+| Identity | `policy/identitypolicies` | `identityrules` | as above |
+| NAT | `policy/ftdnatpolicies` | `manualnatrules`, `autonatrules` | policy assignment |
+| Intrusion | `policy/intrusionpolicies` | inventory only (referenced by access rules) | via access rules |
+| File / malware | `policy/filepolicies` | inventory only (referenced by access rules) | via access rules |
+| DNS | `policy/dnspolicies` | inventory only | — |
+
+All rule-bearing policies share one rules / references model, so the object explorer's
+where-used and the unused-object finding account for every policy type (an object used only
+by NAT is "used").
+
+**Linkage discovery.** Cisco documents `prefilterPolicySetting` on the access policy but not how
+the access policy references its decryption or identity policy in the 10.1 REST payload. The
+adapter therefore records *every* `*PolicySetting` reference present on an access policy rather
+than hard-coding a guessed field name, and all decryption / identity policies are collected even
+when no link is found (they are shown as "not linked to a cluster"). Validate on the production
+FMC (API Explorer or the first pull) and pin the field name once confirmed.
