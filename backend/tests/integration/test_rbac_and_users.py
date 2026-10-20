@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -13,6 +12,7 @@ from app.db.session import get_sessionmaker
 from app.main import create_app
 from app.models.audit import AuditRecord
 from tests.integration.conftest import PASSWORD, login, make_user
+from tests.routes import MIN_EXPECTED_ROUTES, iter_api_routes
 
 PUBLIC_ROUTES = {
     ("GET", "/api/health"),
@@ -34,9 +34,9 @@ def _guards(dependant: Any) -> list[str]:
 def test_every_route_is_guarded_or_explicitly_public() -> None:
     app = create_app()
     unguarded = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    routes = list(iter_api_routes(app.routes))
+    assert len(routes) >= MIN_EXPECTED_ROUTES, "route walk found too few routes"
+    for route in routes:
         for method in route.methods or set():
             if (method, route.path) in PUBLIC_ROUTES:
                 assert not _guards(route.dependant), f"public route has a guard: {route.path}"

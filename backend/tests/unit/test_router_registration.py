@@ -10,15 +10,16 @@ from fastapi.routing import APIRoute
 
 import app.api
 from app.main import create_app
+from tests.routes import MIN_EXPECTED_ROUTES, iter_api_routes
 
 
 def test_every_api_router_is_registered() -> None:
     mounted = {
         (route.path, method)
-        for route in create_app().routes
-        if isinstance(route, APIRoute)
+        for route in iter_api_routes(create_app().routes)
         for method in route.methods or set()
     }
+    assert len(mounted) >= MIN_EXPECTED_ROUTES
     missing = []
     for info in pkgutil.iter_modules(app.api.__path__):
         module = importlib.import_module(f"app.api.{info.name}")
