@@ -1,0 +1,67 @@
+# UI design requirement — look like the current FMC
+
+*Requested by the product owner, 2026-10-20.* The system must look **exactly like the new
+Firewall Management Center UI** (current versions). Reference: the FMC Policy Editor screenshot in
+[design/fmc-policy-editor-reference.png](design/fmc-policy-editor-reference.png). Every screen
+follows these conventions; new screens must be designed against them.
+
+## Shell
+
+* **Top bar** — dark navy, full width: product name ("Firewall Management Center"-style title with
+  our product name) and a breadcrumb under it (e.g. *Policies / Security policies / Policy
+  Editor*); on the end side a global **Search** field, action button(s), a **notifications bell
+  with a red count badge**, help, and the user menu.
+* **Left sidebar** — white, collapsible (hamburger at the top), grouped under small grey section
+  headings: **Monitor** (Insights & Reports, Events & Logs) and **Manage** (Policies, Objects,
+  Firewall Devices, Secure Connections, Integrations), then Troubleshooting and Administration.
+  Each item has an icon and a chevron; the active item has a light-blue background and a blue
+  edge bar.
+* **Content** — light grey background, white cards / tables.
+
+## Policy Editor (rulebase)
+
+* Back link at the top ("Return to Access Control Policy Management"), then the policy name with a
+  lock icon (read-only) and an edit pencil.
+* **Policy flow tabs** in evaluation order, separated by arrows, each with a status circle (green
+  check = present, empty = none): *Packets → Prefilter Rules → Decryption → Security Intelligence →
+  Identity → Access Control → More*. The active tab is underlined in blue. "Targeted: N devices" at
+  the end.
+* Toolbar: filter button, "Type to search" field, "Total N rules", view icons, outline button
+  (e.g. *Add Category*) and primary blue button (e.g. *Add Rule*).
+* **Rule table**: checkbox column; `#`; **Name** as a blue link; **Action** as a coloured icon plus
+  text (green arrow *Allow*, red circle *Block / Block with reset*); small inspection icons (IPS
+  shield, file, logging); a two-level header — **Source** over *Zones / Networks* and
+  **Destination** over *Zones / Networks / Ports*; "Any" in grey; zone icons; long cells show two
+  values and a blue "+N more" link; edit pencil and a kebab menu at the end of each row.
+* **Section rows**: grey bands with a collapse chevron and checkbox — "**Mandatory** 4 rules (1 - 4)",
+  "**Default** 6 rules (5 - 10)" — plus inherited "Parent Policy (No rules)" rows.
+* Footer: **Default Action** selector (e.g. "Access Control: Block All Traffic"), rows-per-page
+  selector (1000) and pagination ("1-10 of 10").
+
+## Colours (light theme; a matching dark theme is kept)
+
+| Token | Use | Value |
+|---|---|---|
+| `--top` | top bar | `#1b2531` |
+| `--side` | sidebar | `#ffffff` |
+| `--bg` | content background | `#f2f4f7` |
+| `--primary` | links, primary buttons, active tab | `#1d69cc` |
+| `--band` | section rows, table header | `#eef1f5` |
+| `--allow` | Allow / Trust | `#2e9e5b` |
+| `--block` | Block | `#d64545` |
+
+Fonts: system UI fonts only (offline; no web-font downloads). Hebrew uses the same layout mirrored
+(RTL): the sidebar moves to the right; IPs, object names and ACL values stay LTR.
+
+## Status
+
+* **Done:** the shell (top bar with breadcrumb, object search, high-findings bell and user menu;
+  collapsible grouped sidebar with icons) and the Policy Editor (flow tabs per cluster, "Targeted:
+  N devices", toolbar with "Total N rules", two-level Source / Destination header, action icons,
+  IPS / file / logging indicators, "+N more" cells, collapsible section bands from the API's
+  `groups`, Default Action footer). The colour tokens apply to every screen (tables, cards,
+  buttons, alerts).
+* **Deliberately absent until the feature exists:** Add Rule / Add Category / Save / Deploy, row
+  checkboxes, edit pencils and kebab menus — the editor is read-only (a snapshot). They arrive with
+  changesets (phase 3) and enforcement (phase 5); no button is shown that does nothing.
+* Icons are inline SVG (`frontend/src/components/icons.tsx`); no icon fonts or CDNs.

@@ -39,6 +39,8 @@ function renderApp(path = '/') {
 }
 
 const NO_SESSION = { status: 401, body: { detail: 'not_authenticated' } };
+/** The shell asks for snapshots (alerts badge); an empty estate answers with none. */
+const NO_SNAPSHOTS = (url: string) => (url.startsWith('/api/snapshots') ? { status: 200, body: [] } : undefined);
 
 describe('App', () => {
   it('shows the login page without a session, then signs in', async () => {
@@ -81,7 +83,7 @@ describe('App', () => {
   });
 
   it('hides admin navigation from a viewer', async () => {
-    mockFetch(() => ({ status: 200, body: me(['viewer'], ['policy:read']) }));
+    mockFetch((req) => NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) });
     renderApp();
     expect(await screen.findByRole('link', { name: 'Overview' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
@@ -89,16 +91,16 @@ describe('App', () => {
   });
 
   it('redirects a viewer away from admin pages', async () => {
-    mockFetch(() => ({ status: 200, body: me(['viewer'], ['policy:read']) }));
+    mockFetch((req) => NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) });
     renderApp('/users');
     expect(await screen.findByText('Welcome, Alice')).toBeInTheDocument();
   });
 
   it('shows admin navigation to an administrator', async () => {
-    mockFetch((req) =>
-      req.url === '/api/fmc/connections'
-        ? { status: 200, body: [] }
-        : { status: 200, body: me(['admin'], ADMIN_PERMS) },
+    mockFetch(
+      (req) =>
+        NO_SNAPSHOTS(req.url) ??
+        (req.url === '/api/fmc/connections' ? { status: 200, body: [] } : { status: 200, body: me(['admin'], ADMIN_PERMS) }),
     );
     renderApp();
     expect(await screen.findByRole('link', { name: 'Users' })).toBeInTheDocument();
@@ -114,6 +116,8 @@ describe('App', () => {
       if (req.url === '/api/users') {
         return { status: 200, body: [] };
       }
+      const empty = NO_SNAPSHOTS(req.url);
+      if (empty !== undefined) return empty;
       return { status: 200, body: me(['admin'], ADMIN_PERMS, { must_change_password: true }) };
     });
     renderApp('/users');
@@ -141,6 +145,26 @@ describe('App', () => {
     expect(change?.headers['X-CSRF-Token']).toBe('csrf-abc');
   });
 
+  it('shows high-severity findings on the bell and searches objects from the top bar', async () => {
+    const calls = mockFetch((req) => {
+      if (req.url === '/api/snapshots?limit=20') {
+        return { status: 200, body: [{ id: 4, status: 'complete', analyzed_at: '2026-10-20T10:00:00Z' }] };
+      }
+      if (req.url === '/api/snapshots/4/findings?severity=high&limit=1') {
+        return { status: 200, body: { total: 12, offset: 0, summary: {}, rows: [] } };
+      }
+      return NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) };
+    });
+    renderApp();
+    const bell = await screen.findByRole('button', { name: '12 high-severity findings' });
+    expect(bell).toHaveTextContent('12');
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('searchbox', { name: 'Search objects' }), 'H_GOLD{Enter}');
+    // The search opens the object explorer filtered by the query.
+    expect(await screen.findByText('Objects', { selector: '[aria-current="page"]' })).toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/snapshots/4/findings?severity=high&limit=1')).toBe(true);
+  });
+
   it('signs out', async () => {
     let session = true;
     mockFetch((req) => {
@@ -148,11 +172,14 @@ describe('App', () => {
         session = false;
         return { status: 204 };
       }
-      return session ? { status: 200, body: me(['viewer'], ['policy:read']) } : NO_SESSION;
+      if (!session) return NO_SESSION;
+      return NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) };
     });
     renderApp();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Sign out' }));
+    // Sign-out lives in the user menu of the top bar, as in the FMC.
+    await user.click(await screen.findByRole('button', { name: 'Alice' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(await screen.findByRole('button', { name: /Sign in|כניסה/ })).toBeInTheDocument();
   });
 });

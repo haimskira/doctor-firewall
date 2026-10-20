@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { RefItem, Severity, Snapshot } from '../api/types';
@@ -25,16 +26,42 @@ export function RefChip({ item, snapshotId }: { item: RefItem; snapshotId: numbe
   );
 }
 
-export function RefList({ items, snapshotId }: { items: RefItem[] | undefined; snapshotId: number }) {
+/**
+ * A rule cell's references. With ``limit``, only the first values are shown, followed by a
+ * "+N more" toggle (as in the FMC rule table); "Any" when the field is empty.
+ */
+export function RefList({
+  items,
+  snapshotId,
+  limit,
+}: {
+  items: RefItem[] | undefined;
+  snapshotId: number;
+  limit?: number;
+}) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
   if (items === undefined || items.length === 0) {
     return <span className="muted">{t('rules.any')}</span>;
   }
+  const hidden = limit === undefined || expanded ? 0 : Math.max(0, items.length - limit);
+  const shown = hidden > 0 ? items.slice(0, limit) : items;
   return (
     <span className="chips-inline">
-      {items.map((item, i) => (
+      {shown.map((item, i) => (
         <RefChip key={`${item.id ?? item.literal ?? ''}-${String(i)}`} item={item} snapshotId={snapshotId} />
       ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="more"
+          onClick={() => {
+            setExpanded(true);
+          }}
+        >
+          {t('rules.more', { count: hidden })}
+        </button>
+      )}
     </span>
   );
 }

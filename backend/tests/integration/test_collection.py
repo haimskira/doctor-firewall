@@ -138,6 +138,21 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     assert [r["name"] for r in page["rows"]] == [r["name"] for r in expected][:500]
     assert [r["index"] for r in page["rows"]] == list(range(1, len(page["rows"]) + 1))
     assert page["categories"] == ["DC-Inbound", "Users", "Infra"]
+    # Section bands: contiguous runs covering every rule exactly once, in order.
+    assert page["default_action"]
+    bands = page["groups"]
+    assert sum(g["count"] for g in bands) == len(expected)
+    assert [g["start"] for g in bands] == [
+        sum(g["count"] for g in bands[:i]) for i in range(len(bands))
+    ]
+    runs = [(r["metadata"]["section"], r["metadata"]["category"]) for r in expected]
+    assert [(g["section"], g["category"]) for g in bands] == [
+        run for i, run in enumerate(runs) if i == 0 or runs[i - 1] != run
+    ]
+    assert bands[0]["first_index"] == 1
+    assert bands[-1]["last_index"] == len(expected)
+    later = client.get(f"/api/snapshots/{sid}/policies/{policy}/rules?offset=200").json()
+    assert later["groups"] == []
     sql_rule = next(r for r in page["rows"] if r["name"] == "FIN-APP_TO_GOLD-DB_SQL")
     assert sql_rule["section"] == "Mandatory"
     assert sql_rule["ips_policy"] == "Maximum Detection"
@@ -228,6 +243,11 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     nat = next(p for p in first["policies"] if p["kind"] == "nat")
     nat_rules = client.get(f"/api/snapshots/{sid}/policies/{nat['id']}/rules").json()
     assert [r["section"] for r in nat_rules["rows"]] == ["BEFORE_AUTO", "AUTO", "AFTER_AUTO"]
+    assert [(g["section"], g["count"]) for g in nat_rules["groups"]] == [
+        ("BEFORE_AUTO", 1),
+        ("AUTO", 1),
+        ("AFTER_AUTO", 1),
+    ]
     auto = nat_rules["rows"][1]
     assert {x["name"] for x in auto["refs"]["nat_orig_src"]} == {"H_DMZ_WEB"}
     assert [x["literal"] for x in auto["refs"]["nat_trans_sport"]] == ["TCP/443"]

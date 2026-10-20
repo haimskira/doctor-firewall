@@ -98,7 +98,7 @@ describe('RulebasePage scores', () => {
         return { status: 200, body: [{ fmc_id: 'c1', name: 'C', kind: 'ha_pair', sw_version: '', model: '', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, ace_total: 10, ace_limit: 100, ace_limit_verified: false, policies: [{ id: 'p1', name: 'ACP', kind: 'access', via: 'assignment', rule_count: 1 }] }] };
       }
       if (req.url.includes('/rules?')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [row] } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', default_action: 'BLOCK', groups: [], categories: [], total: 1, offset: 0, rows: [row] } };
       }
       return undefined;
     });

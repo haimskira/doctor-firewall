@@ -244,10 +244,24 @@ export interface ClusterLimits {
   is_default: boolean;
 }
 
+/** A contiguous run of rules with the same section and category (an FMC section band). */
+export interface RuleGroup {
+  section: string;
+  category: string;
+  /** 0-based position of the first rule in the (filtered) ordered list. */
+  start: number;
+  count: number;
+  first_index: number;
+  last_index: number;
+}
+
 export interface RulesPage {
   policy_fmc_id: string;
   policy_kind: PolicyKind;
   policy_name: string;
+  default_action: string;
+  /** Present on the first page (offset 0) only. */
+  groups: RuleGroup[];
   categories: string[];
   total: number;
   offset: number;

@@ -93,40 +93,79 @@ describe('RulebasePage', () => {
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1200);
   });
 
-  it('shows rules in FMC order with category bands, object links and flagged literals', async () => {
+  it('renders the FMC policy editor: flow tabs, section bands, +N more, default action', async () => {
     const rules = [
       rule(1, {
+        ips_policy: 'Maximum Detection',
         refs: {
           src_net: [{ id: 'g1', name: 'GRP_SRC_FIN', kind: 'network_group', literal: null }],
-          dst_net: [{ id: null, name: '', kind: null, literal: '1.1.1.1/32' }],
+          dst_net: [
+            { id: null, name: '', kind: null, literal: '1.1.1.1/32' },
+            { id: 'h2', name: 'H_TWO', kind: 'host', literal: null },
+            { id: 'h3', name: 'H_THREE', kind: 'host', literal: null },
+            { id: 'h4', name: 'H_FOUR', kind: 'host', literal: null },
+          ],
           dst_port: [{ id: 'p1', name: 'SVC_TCP1433', kind: 'port', literal: null }],
         },
       }),
-      rule(2, { enabled: false }),
+      rule(2, { enabled: false, action: 'BLOCK_RESET' }),
       rule(3, { section: 'Default', category: '--Undefined--', name: 'ANY_ANY', hit_count: 0 }),
+    ];
+    const groups = [
+      { section: 'Mandatory', category: 'DC-Inbound', start: 0, count: 2, first_index: 1, last_index: 2 },
+      { section: 'Default', category: '--Undefined--', start: 2, count: 1, first_index: 3, last_index: 3 },
     ];
     const calls = setup('/rules', <Route path="/rules" element={<RulebasePage />} />, (req) => {
       if (req.url === '/api/snapshots/7/clusters') {
+        const policies = [
+          { id: 'pf1', name: 'PF-1', kind: 'prefilter', via: 'link', rule_count: 1 },
+          { id: 'p1', name: 'ACP-1', kind: 'access', via: 'assignment', rule_count: 3 },
+        ];
         return {
           status: 200,
-          body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP-1', rule_count: 3, policies: [{ id: 'p1', name: 'ACP-1', kind: 'access', via: 'assignment', rule_count: 3 }] }],
+          body: [
+            { fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP-1', rule_count: 3, policies },
+            { fmc_id: 'c2', name: 'FTD-CL02', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP-1', rule_count: 3, policies },
+          ],
         };
       }
       if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP-1', categories: [], total: 3, offset: 0, rows: rules } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP-1', default_action: 'BLOCK', groups, categories: [], total: 3, offset: 0, rows: rules } };
       }
       return undefined;
     });
     expect(await screen.findByText('RULE-1')).toBeInTheDocument();
-    expect(screen.getByText('ANY_ANY')).toBeInTheDocument();
-    expect(screen.getByText('3 rules', { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ACP-1' })).toBeInTheDocument();
+    // Policy flow: present kinds are enabled tabs; the access tab is selected.
+    expect(screen.getByRole('tab', { name: 'Access control' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Prefilter' })).toBeEnabled();
+    expect(screen.getByRole('tab', { name: 'Decryption (SSL)' })).toBeDisabled();
+    expect(screen.getByText('Targeted: 2 devices')).toBeInTheDocument();
+    expect(screen.getByText('Total 3 rules')).toBeInTheDocument();
+    // Section bands with counts and index ranges.
+    expect(screen.getByText('2 rules (1 - 2)')).toBeInTheDocument();
     expect(screen.getByText('DC-Inbound')).toBeInTheDocument();
     expect(screen.getByText('--Undefined--')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: 'GRP_SRC_FIN' });
-    expect(link).toHaveAttribute('href', '/objects/g1?snapshot=7');
+    // Cells: object links, flagged literals, "Any", +N more.
+    expect(screen.getByRole('link', { name: 'GRP_SRC_FIN' })).toHaveAttribute('href', '/objects/g1?snapshot=7');
     expect(screen.getByText('1.1.1.1/32').closest('.literal')).toHaveAttribute('title', 'Inline value without an object');
+    expect(screen.queryByRole('link', { name: 'H_THREE' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '+2 more' }));
+    expect(screen.getByRole('link', { name: 'H_FOUR' })).toBeInTheDocument();
+    expect(screen.getAllByText('Any').length).toBeGreaterThan(0);
+    // Actions and inspection indicators.
+    expect(screen.getByText('Block with reset')).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: 'Intrusion policy: Maximum Detection' })).toHaveLength(1);
     expect(screen.getByText('disabled')).toBeInTheDocument();
-    expect(screen.getAllByText('any').length).toBeGreaterThan(0);
+    // Default action footer.
+    expect(screen.getByText('Default Action')).toBeInTheDocument();
+    expect(screen.getAllByText('Block').length).toBeGreaterThan(0);
+    // Collapsing a band hides its rules.
+    await userEvent.click(screen.getByRole('button', { name: /Mandatory/ }));
+    expect(screen.queryByText('RULE-1')).not.toBeInTheDocument();
+    expect(screen.getByText('ANY_ANY')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Mandatory/ }));
+    expect(screen.getByText('RULE-1')).toBeInTheDocument();
     const ruleCall = calls.find((c) => c.url.includes('/rules?'));
     expect(ruleCall?.url).toContain('offset=0');
   });
@@ -137,7 +176,7 @@ describe('RulebasePage', () => {
         return { status: 200, body: [{ fmc_id: 'c1', name: 'C', kind: 'ha_pair', sw_version: '', model: '', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, policies: [{ id: 'p1', name: 'ACP', kind: 'access', via: 'assignment', rule_count: 1 }] }] };
       }
       if (req.url.includes('/rules?')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [rule(1)] } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', default_action: 'BLOCK', groups: [], categories: [], total: 1, offset: 0, rows: [rule(1)] } };
       }
       return undefined;
     });
@@ -268,7 +307,7 @@ describe('policy dependencies', () => {
         };
       }
       if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', categories: [], total: 1, offset: 0, rows: [rule(1)] } };
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', default_action: 'BLOCK', groups: [], categories: [], total: 1, offset: 0, rows: [rule(1)] } };
       }
       if (req.url.startsWith('/api/snapshots/7/policies/n1/rules')) {
         const nat = rule(1, {
@@ -278,7 +317,7 @@ describe('policy dependencies', () => {
             nat_trans_sport: [{ id: null, name: '', kind: null, literal: 'TCP/443' }],
           },
         });
-        return { status: 200, body: { policy_fmc_id: 'n1', policy_kind: 'nat', policy_name: 'NAT-CL01', categories: [], total: 1, offset: 0, rows: [nat] } };
+        return { status: 200, body: { policy_fmc_id: 'n1', policy_kind: 'nat', policy_name: 'NAT-CL01', default_action: '', groups: [{ section: 'AUTO', category: '', start: 0, count: 1, first_index: 1, last_index: 1 }], categories: [], total: 1, offset: 0, rows: [nat] } };
       }
       return undefined;
     });

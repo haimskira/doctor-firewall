@@ -153,10 +153,23 @@ class RuleOut(BaseModel):
     dead: bool = False
 
 
+class RuleGroup(BaseModel):
+    """A contiguous run of rules with the same section and category (FMC section rows)."""
+
+    section: str
+    category: str
+    start: int  # 0-based position in the (filtered) ordered rule list
+    count: int
+    first_index: int
+    last_index: int
+
+
 class RulesPage(BaseModel):
     policy_fmc_id: str
     policy_kind: str
     policy_name: str
+    default_action: str
+    groups: list[RuleGroup]
     categories: list[str]
     total: int
     offset: int
@@ -523,6 +536,8 @@ def list_rules(
         )
         base = base.where(_search(Rule.name, q) | Rule.id.in_(by_ref))
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    # Section runs are only needed once per query (the client keeps them across pages).
+    groups = _rule_groups(db, base) if offset == 0 else []
     # NAT is evaluated manual (before auto) -> auto -> manual (after auto).
     section_rank = case(
         (Rule.section == "BEFORE_AUTO", 0),
@@ -567,6 +582,8 @@ def list_rules(
         policy_fmc_id=policy.fmc_id,
         policy_kind=policy.kind,
         policy_name=policy.name,
+        default_action=policy.default_action,
+        groups=groups,
         categories=policy.categories,
         total=total,
         offset=offset,
@@ -592,6 +609,37 @@ def list_rules(
             for r in rules
         ],
     )
+
+
+def _rule_groups(db: Session, base: Select[Any]) -> list[RuleGroup]:
+    """Contiguous (section, category) runs over the ordered (and filtered) rules."""
+    ordered = base.with_only_columns(Rule.section, Rule.category, Rule.rule_index).order_by(
+        case(
+            (Rule.section == "BEFORE_AUTO", 0),
+            (Rule.section == "AUTO", 1),
+            (Rule.section == "AFTER_AUTO", 2),
+            else_=0,
+        ),
+        Rule.rule_index,
+    )
+    groups: list[RuleGroup] = []
+    for position, (section, category, index) in enumerate(db.execute(ordered).all()):
+        last = groups[-1] if groups else None
+        if last is not None and last.section == section and last.category == category:
+            last.count += 1
+            last.last_index = index
+        else:
+            groups.append(
+                RuleGroup(
+                    section=section,
+                    category=category,
+                    start=position,
+                    count=1,
+                    first_index=index,
+                    last_index=index,
+                )
+            )
+    return groups
 
 
 def _score_fields(sc: RuleScore | None) -> dict[str, Any]:
