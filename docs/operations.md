@@ -10,20 +10,22 @@ bundle still exists — see [operations-offline.md](operations-offline.md).
 ```bash
 docker login                                  # your Docker Hub account; nothing is stored in the repo
 git status                                    # clean tree, the commit you want to ship
-DF_IMAGE_PREFIX=<user>/doctor-firewall- scripts/publish-images.sh 0.4.0
+DF_IMAGE_REPO=haim1418/doctor-firewall scripts/publish-images.sh 0.5.0
 ```
 
-PowerShell: `$env:DF_IMAGE_PREFIX='<user>/doctor-firewall-'; scripts\publish-images.ps1 0.4.0`.
+PowerShell: `$env:DF_IMAGE_REPO='haim1418/doctor-firewall'; scripts\publish-images.ps1 0.5.0`.
 
 The script runs the full CI gate, builds the runtime images labelled with the version and the Git
 commit, scans them with Trivy (fixable HIGH / CRITICAL block the push) and pushes:
 
-| Image | Content |
+Repository: one Docker Hub repository, one tag per component (`haim1418/doctor-firewall`).
+
+| Tag | Content |
 |---|---|
-| `<prefix>api:<ver>` | FastAPI API, RQ workers, scheduler, CLI, migrations |
-| `<prefix>web:<ver>` | nginx with the built UI (no Node at runtime) |
-| `<prefix>postgres:<ver>` | PostgreSQL 16 without gosu, runs as `postgres` |
-| `<prefix>redis:<ver>` | the pinned Redis image, re-tagged |
+| `api-<ver>` | FastAPI API, RQ workers, scheduler, CLI, migrations |
+| `web-<ver>` | nginx with the built UI (no Node at runtime) |
+| `postgres-<ver>` | PostgreSQL 16 without gosu, runs as `postgres` |
+| `redis-<ver>` | the pinned Redis image, re-tagged |
 
 The images contain the application code (public in this repository anyway) and **no secrets**:
 passwords, the master keyring, TLS keys and the FMC trust store are files mounted at runtime from
@@ -36,11 +38,11 @@ be made private on Docker Hub (then `docker login` on the server too).
 git clone https://github.com/haimskira/doctor-firewall.git /opt/doctor-firewall   # first time
 cd /opt/doctor-firewall && git fetch && git checkout <commit printed by publish>
 # first time: FMC CA -> infra/trust/fmc-ca.pem ; UI cert -> infra/certs/ui/ui.pem + ui.key
-sudo DF_IMAGE_PREFIX=<user>/doctor-firewall- scripts/install-online.sh 0.4.0
+sudo DF_IMAGE_REPO=haim1418/doctor-firewall scripts/install-online.sh 0.5.0
 ```
 
 `install-online.sh` pulls the four images, refuses to continue if they were built from a different
-commit than the checkout, writes `DF_VERSION` / `DF_IMAGE_PREFIX` into `infra/.env`, creates any
+commit than the checkout, writes `DF_VERSION` and `DF_IMAGE_API` / `_WEB` / `_POSTGRES` / `_REDIS` into `infra/.env`, creates any
 missing secrets (never overwrites), checks the FMC trust store and the UI certificate, runs the
 migrations and starts the stack (`up --wait`). First installation: create the first administrator
 with the command it prints.

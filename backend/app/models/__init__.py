@@ -2,6 +2,7 @@
 
 from app.models.assets import Asset, ClusterSetting, RuleScore
 from app.models.audit import AuditRecord
+from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.fmc import FmcConnection
 from app.models.inventory import (
     Bgp,
@@ -25,7 +26,10 @@ from app.models.user import User
 __all__ = [
     "Asset",
     "AuditRecord",
+    "Batch",
     "Bgp",
+    "Changeset",
+    "ChangesetItem",
     "Cluster",
     "ClusterPolicy",
     "ClusterSetting",

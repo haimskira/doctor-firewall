@@ -27,3 +27,14 @@ class FmcProtocolError(FmcError):
     """The FMC answered with something that does not match the documented contract."""
 
     code = "unexpected_response"
+
+
+class FmcWriteRejectedError(FmcError):
+    """The FMC refused a configuration write (validation, object in use, duplicate name...)."""
+
+    code = "write_rejected"
+
+    def __init__(self, message: str, status: int, description: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.description = description

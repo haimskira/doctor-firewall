@@ -25,6 +25,7 @@ from fmc_mock.auth import TokenStore
 from fmc_mock.limits import GET_PER_MINUTE, FmcLimitsMiddleware
 from fmc_mock.resources import build_router
 from fmc_mock.seed import FmcData, generate
+from fmc_mock.writes import build_write_router
 
 GLOBAL_DOMAIN_UUID = "e276abec-e0f2-11e3-8169-6d9ed49b625f"
 SERVER_VERSION = "10.1.0 (build 117)"
@@ -57,12 +58,16 @@ def create_app(
             ttl_seconds=float(os.environ.get("MOCK_TOKEN_TTL_SECONDS", "1800")),
         )
     limit = get_per_minute or int(os.environ.get("MOCK_GET_PER_MINUTE", str(GET_PER_MINUTE)))
-    if data is None:
-        data = generate(
+
+    def regenerate() -> FmcData:
+        return generate(
             clusters=int(os.environ.get("MOCK_CLUSTERS", "3")),
             rules_per_policy=int(os.environ.get("MOCK_RULES_PER_POLICY", "200")),
             seed=int(os.environ.get("MOCK_SEED", "1")),
         )
+
+    if data is None:
+        data = regenerate()
 
     app = FastAPI(title="FMC 10.1 mock", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.tokens = store
@@ -120,11 +125,11 @@ def create_app(
             }
         )
 
-    app.include_router(
-        build_router(
-            data,
-            GLOBAL_DOMAIN_UUID,
-            lambda request: store.valid(request.headers.get("X-auth-access-token")),
-        )
-    )
+    def token_ok(request: Request) -> bool:
+        return store.valid(request.headers.get("X-auth-access-token"))
+
+    app.include_router(build_router(data, GLOBAL_DOMAIN_UUID, token_ok))
+    writes, write_state = build_write_router(data, GLOBAL_DOMAIN_UUID, token_ok, regenerate)
+    app.include_router(writes)
+    app.state.writes = write_state
     return app

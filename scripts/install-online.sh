@@ -2,7 +2,7 @@
 # Install / upgrade on the Linux production server from a registry (Docker Hub).
 # Run as root from the repository checkout (compose files and scripts come from Git):
 #
-#   sudo DF_IMAGE_PREFIX=myuser/doctor-firewall- scripts/install-online.sh <x.y.z>
+#   sudo DF_IMAGE_REPO=haim1418/doctor-firewall scripts/install-online.sh <x.y.z>
 #
 # Steps: pull the images -> verify they were built from this checkout's commit ->
 # secrets/certs/trust checks -> migrations + start -> health.
@@ -11,18 +11,19 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 VERSION="${1:-}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)?$ ]] \
-    || die "usage: DF_IMAGE_PREFIX=<user>/doctor-firewall- install-online.sh <x.y.z>"
-PREFIX="${DF_IMAGE_PREFIX:-}"
-valid_image_prefix "$PREFIX" || die "set DF_IMAGE_PREFIX (the same prefix the images were published with)"
+    || die "usage: DF_IMAGE_REPO=<user>/<repo> install-online.sh <x.y.z>"
+REPO="${DF_IMAGE_REPO:-}"
+valid_image_repo "$REPO" || die "set DF_IMAGE_REPO (the repository the images were published to)"
 [[ "$(id -u)" == "0" ]] || die "run as root (secrets and certificates must be root-owned)"
 docker compose version >/dev/null 2>&1 || die "the 'docker compose' plugin is missing (Ubuntu: docker-compose-v2)"
 
-log "Pulling ${PREFIX}*:$VERSION"
+log "Pulling $REPO:*-$VERSION"
 for component in "${RUNTIME_COMPONENTS[@]}"; do
-    docker pull -q "${PREFIX}${component}:$VERSION" >/dev/null || die "cannot pull ${PREFIX}${component}:$VERSION"
+    image="$(registry_image "$REPO" "$component" "$VERSION")"
+    docker pull -q "$image" >/dev/null || die "cannot pull $image"
 done
 HEAD_SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD)"
-IMAGE_SHA="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${PREFIX}api:$VERSION")"
+IMAGE_SHA="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(registry_image "$REPO" api "$VERSION")")"
 [[ "$IMAGE_SHA" == "$HEAD_SHA" ]] \
     || die "images were built from commit $IMAGE_SHA but this checkout is $HEAD_SHA — git checkout $IMAGE_SHA first"
 ok "images $VERSION match checkout $HEAD_SHA"
@@ -41,13 +42,15 @@ set_env() {
     fi
 }
 set_env DF_VERSION "$VERSION"
-set_env DF_IMAGE_PREFIX "$PREFIX"
+for component in "${RUNTIME_COMPONENTS[@]}"; do
+    set_env "DF_IMAGE_${component^^}" "$(registry_image "$REPO" "$component" "$VERSION")"
+done
 init_secret_dir "$INFRA/secrets"
 CA_FILE="$(grep -E '^DF_FMC_CA_FILE=' "$INFRA/.env" | cut -d= -f2-)"
 [[ -s "$INFRA/${CA_FILE#./}" ]] || die "FMC trust store ${CA_FILE} not found — see infra/trust/README.md"
 TLS_DIR="$(grep -E '^DF_UI_TLS_DIR=' "$INFRA/.env" | cut -d= -f2-)"
 [[ -s "$INFRA/${TLS_DIR#./}/ui.pem" && -s "$INFRA/${TLS_DIR#./}/ui.key" ]] \
-    || die "UI certificate missing in ${TLS_DIR} — install the PKI cert or run: DF_VERSION=$VERSION DF_IMAGE_PREFIX=$PREFIX scripts/gen-certs.sh --ui <hostname>"
+    || die "UI certificate missing in ${TLS_DIR} — install the PKI cert or run: DF_IMAGE_API=$(registry_image "$REPO" api "$VERSION") scripts/gen-certs.sh --ui <hostname>"
 chmod 0700 "$INFRA/secrets" "$INFRA/${TLS_DIR#./}"
 
 log "Starting (migrations run first, automatically)"

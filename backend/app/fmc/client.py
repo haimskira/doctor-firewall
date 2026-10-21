@@ -44,6 +44,7 @@ from app.fmc.errors import (
     FmcRateLimitedError,
     FmcTlsError,
     FmcUnavailableError,
+    FmcWriteRejectedError,
 )
 from app.fmc.validation import TOKEN_RE, UUID_RE, host_for_url
 
@@ -142,6 +143,17 @@ def _is_tls_failure(exc: BaseException) -> bool:
             return True
         seen = seen.__cause__ or seen.__context__
     return False
+
+
+def _error_description(response: httpx.Response) -> str:
+    """The FMC's error text (``error.messages[].description``), bounded; never raises."""
+    try:
+        data = response.json()
+        messages = data.get("error", {}).get("messages", []) if isinstance(data, dict) else []
+        text = "; ".join(str(m.get("description", "")) for m in messages if isinstance(m, dict))
+    except ValueError:
+        text = ""
+    return text[:300]
 
 
 class FmcSession:
@@ -331,6 +343,48 @@ class FmcSession:
                 return response.json()
             except ValueError as exc:
                 raise FmcProtocolError(f"GET {path} returned invalid JSON") from exc
+        raise FmcProtocolError("unreachable")  # pragma: no cover
+
+    async def write_json(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        params: dict[str, str | int] | None = None,
+    ) -> Any:
+        """Authenticated configuration write (POST / PUT / DELETE).
+
+        Only :mod:`app.enforce.executor` calls this, for an approved batch, under the
+        cross-worker write lock. A 4xx answer raises :class:`FmcWriteRejectedError` with the
+        FMC's own description (never retried — the caller rolls back); 429 is retried by
+        ``_send`` (one write at a time per FMC).
+        """
+        if method not in ("POST", "PUT", "DELETE"):
+            raise ValueError("write_json is for POST, PUT and DELETE")
+        for attempt in (1, 2):
+            if self._tokens is None:
+                raise FmcAuthError("no active FMC session")
+            headers = {"X-auth-access-token": self._tokens.access, "Accept": "application/json"}
+            response = await self._send(method, path, params=params, json=body, headers=headers)
+            if response.status_code == 401 and attempt == 1:
+                await self._refresh_token()
+                continue
+            if response.status_code == 401:
+                raise FmcAuthError("FMC rejected the access token")
+            if 400 <= response.status_code < 500:
+                raise FmcWriteRejectedError(
+                    f"{method} {path} rejected with HTTP {response.status_code}",
+                    response.status_code,
+                    _error_description(response),
+                )
+            if response.status_code not in (200, 201, 202, 204):
+                raise FmcProtocolError(f"{method} {path} returned HTTP {response.status_code}")
+            if response.status_code == 204 or not response.content:
+                return None
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise FmcProtocolError(f"{method} {path} returned invalid JSON") from exc
         raise FmcProtocolError("unreachable")  # pragma: no cover
 
     async def iter_pages(

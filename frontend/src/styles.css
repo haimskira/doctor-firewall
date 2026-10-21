@@ -564,3 +564,19 @@ h3 { font-size: 0.95rem; margin-block: 0.5rem 0.35rem; }
   .map-layout { grid-template-columns: 1fr; }
   .map-side { position: static; max-height: none; }
 }
+
+/* ---- phase 5: deployment ---- */
+.fmc-deploy { color: var(--top-text); font-weight: 600; padding-inline: 0.5rem; text-decoration: none; }
+.fmc-deploy:hover, .fmc-deploy.active { color: #fff; text-decoration: underline; }
+.batch { border: 1px solid var(--border); border-inline-start: 4px solid var(--border); border-radius: var(--radius-card); padding: 0.75rem 0.9rem; }
+.batch-deployed { border-inline-start-color: var(--allow); }
+.batch-failed, .batch-rolled_back { border-inline-start-color: var(--block); }
+.batch-approved, .batch-running { border-inline-start-color: var(--primary); }
+.batch-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1rem; }
+@media (max-width: 900px) { .batch-body { grid-template-columns: 1fr; } }
+ul.ops { padding-inline-start: 1rem; margin-block: 0.15rem 0.5rem; }
+ol.ops-list { padding-inline-start: 1.4rem; margin: 0; }
+.badge.batch-deployed, .badge.cs-completed { border-color: var(--allow); color: var(--allow); }
+.badge.batch-failed, .badge.batch-rolled_back, .badge.cs-failed { border-color: var(--block); color: var(--block); }
+.badge.batch-approved, .badge.batch-running, .badge.cs-in_progress { border-color: var(--primary); color: var(--primary); }
+.stage-form { align-items: center; }

@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 import { useI18n } from './i18n/I18nProvider';
 import { AssetsPage } from './pages/AssetsPage';
 import { AuditPage } from './pages/AuditPage';
+import { DeployPage } from './pages/DeployPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClustersPage } from './pages/ClustersPage';
 import { FindingsPage } from './pages/FindingsPage';
@@ -65,6 +66,7 @@ export function App() {
             ['assets', <AssetsPage key="a" />],
             ['recommendations', <RecommendationsPage key="m" />],
             ['map', <MapPage key="g" />],
+            ['deploy', <DeployPage key="y" />],
             ['naming', <NamingPage key="n" />],
           ] as const
         ).map(([path, element]) => (

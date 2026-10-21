@@ -3,6 +3,18 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-024 — Rollback by recorded undo, not FMC rollback requests
+Every write records the inverse operation (the full original object for a PUT, a DELETE for a
+create, a re-create with mapped ids for a delete). On any failure the writer undoes in reverse
+and redeploys. FMC `rollbackrequests` restores a whole previous deployment, which could also undo
+changes made by others in the meantime; the recorded undo touches only what the batch changed.
+
+### D-023 — Drift check instead of object versions
+The FMC REST API (unlike FDM) does not expose a version for optimistic locking on every object.
+Before each write the executor re-reads the object and compares the name and the identities of
+exactly the fields / members it will change with the snapshot (`expect`). Any difference stops
+the batch before that write.
+
 ### D-022 — Security exceptions to the 14-day release-age floor
 Locks only accept releases older than 14 days (supply-chain protection). A fix for a known
 vulnerability may be taken earlier, one package at a time, through
@@ -24,7 +36,9 @@ Stated by the product owner on 2026-10-20: production is a Linux server with int
 another environment; images are published to Docker Hub and pulled there, code comes from Git.
 `scripts/publish-images.*` (CI gate + Trivy scan + push) and `scripts/install-online.sh` (pull,
 commit check, migrations, start) are the primary path; the offline bundle remains available.
-The runtime still talks only to the FMC. Image names are configurable (`DF_IMAGE_PREFIX`).
+The runtime still talks only to the FMC. Registry: one repository with a tag per component
+(`haim1418/doctor-firewall:api-<ver>` ...); compose takes `DF_IMAGE_<COMPONENT>`, defaulting to
+the local names.
 
 ### D-019 — Connectivity map from rules, not traffic
 The spec's map shows source → destination with port, hits and rule score. Without flow data

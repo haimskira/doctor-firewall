@@ -6,14 +6,14 @@ configuration from the FMC **read-only**, analyses them against the firewall doc
 recommends clean-ups and SSL/IPS placement, and pushes changes **only** after explicit
 approval, in batches that never exceed the deploy limit.
 
-> **Status: phase 4 — connectivity map.** On top of the secure foundation (auth, RBAC,
-> tamper-evident audit, encrypted credentials, offline build/CI/bundle), the system pulls every
-> cluster's configuration read-only into versioned snapshots (phase 1), analyses it — match
-> spaces, shadowing, dead rules, ACE expansion, asset table, explained rule score (phase 2) —
-> proposes doctrine-backed changes with preview, deploy cost and impact plus an admin naming
-> convention (phase 3), and draws who-talks-to-whom by tier, coloured by risk, with the before /
-> after of each recommendation (phase 4). The UI follows the current FMC look. Nothing is written
-> to the FMC yet; controlled enforcement (phase 5) is next. See
+> **Status: phase 5 — controlled enforcement.** The system pulls every cluster's
+> configuration read-only into versioned snapshots, analyses it (shadowing, dead rules, ACE
+> expansion, asset tiers, explained rule score), proposes doctrine-backed changes with preview,
+> deploy cost and impact, draws the connectivity map — and now applies accepted changes:
+> changesets with a ticket id, batches under each cluster's deploy limit, approval by someone
+> other than the author, drift-checked writes, verification, deploy, and automatic rollback.
+> Nothing reaches the FMC without that chain. The UI follows the current FMC look. Phase 6
+> (SSL/IPS recommendations, TACACS+/LDAP) is next. See
 > [docs/architecture.md](docs/architecture.md#roadmap).
 
 Production pulls the images from Docker Hub ([docs/operations.md](docs/operations.md)); an

@@ -47,6 +47,7 @@ from app.analysis.score import PERMIT_ACTIONS, AssetIndex, RuleFacts, ScoreResul
 from app.analysis.semantic import load_assets
 from app.analysis.shadow import verdict
 from app.analysis.space import AddressSet, MatchSpace, PortSet
+from app.enforce.plan import PlanBuilder, identity
 from app.models.assets import Asset, RuleScore
 from app.models.inventory import (
     ClusterPolicy,
@@ -137,6 +138,8 @@ class Draft:
     ace_delta: int = 0
     score_delta: int | None = None
     warnings: list[str] = field(default_factory=list)
+    # Executable FMC operations (app.enforce.plan); not part of the fingerprint.
+    plan: dict[str, Any] = field(default_factory=dict)
 
     def fingerprint(self) -> str:
         """Stable identity of the proposal: what it touches and what it changes.
@@ -254,12 +257,135 @@ class Estate:
                 by_value[(o.kind, o.value)].append(o)
         self.by_value = by_value
         self.rule_headers: dict[int, tuple[str, int, str, str]] = {}
+        # FMC "type" of every referenced object (needed in write payloads).
+        self.types: dict[str, str] = {
+            oid: t
+            for oid, t in session.execute(
+                select(RuleRef.object_fmc_id, RuleRef.object_type)
+                .where(RuleRef.snapshot_id == snapshot_id, RuleRef.object_fmc_id.is_not(None))
+                .distinct()
+            ).all()
+            if oid is not None and t
+        }
+        self.types.update(
+            dict(
+                session.execute(
+                    select(FwObject.fmc_id, FwObject.fmc_type).where(
+                        FwObject.snapshot_id == snapshot_id
+                    )
+                ).all()
+            )
+        )
         # (policy, zones) -> networks behind them; many rules share the same zones.
         self.zone_networks: dict[
             tuple[str, tuple[str, ...]], list[tuple[str, str | None, str]] | None
         ] = {}
 
     # ---- helpers
+
+    def ref_json(self, ref: Ref) -> dict[str, Any]:
+        """A reference as it goes into a plan (object with its FMC type, or a literal)."""
+        if ref.object_id is not None:
+            return {
+                "id": ref.object_id,
+                "type": self.types.get(ref.object_id, ""),
+                "name": ref.name,
+            }
+        return {"literal": ref.literal, "literal_kind": ref.literal_kind}
+
+    def refs_json(self, refs: Iterable[Ref]) -> list[dict[str, Any]]:
+        return [self.ref_json(r) for r in refs]
+
+    def obj_json(self, o: Obj) -> dict[str, Any]:
+        return {"id": o.fmc_id, "type": self.types.get(o.fmc_id, ""), "name": o.name}
+
+    def rule_records(
+        self, rule_ids: Iterable[int]
+    ) -> list[tuple[dict[str, Any], dict[str, list[Ref]]]]:
+        """(rule identity, references per field) of rules given by database id."""
+        ids = sorted(set(rule_ids))
+        if not ids:
+            return []
+        heads: dict[int, dict[str, Any]] = {}
+        refs: dict[int, dict[str, list[Ref]]] = defaultdict(lambda: defaultdict(list))
+        for rid, fmc_id, name, policy, policy_kind in self.session.execute(
+            select(Rule.id, Rule.fmc_id, Rule.name, Rule.policy_fmc_id, Rule.policy_kind).where(
+                Rule.id.in_(ids)
+            )
+        ).all():
+            heads[rid] = {"policy": policy, "policy_kind": policy_kind, "id": fmc_id, "name": name}
+        for rid, fld, oid, oname, literal, literal_kind in self.session.execute(
+            select(
+                RuleRef.rule_id,
+                RuleRef.field,
+                RuleRef.object_fmc_id,
+                RuleRef.object_name,
+                RuleRef.literal,
+                RuleRef.literal_kind,
+            )
+            .where(RuleRef.rule_id.in_(ids))
+            .order_by(RuleRef.id)
+        ).all():
+            refs[rid][fld].append(Ref(oid, oname or (literal or ""), literal, literal_kind))
+        return [(heads[rid], dict(refs[rid])) for rid in ids if rid in heads]
+
+    def repoint(
+        self,
+        pb: PlanBuilder,
+        replace: dict[str, list[dict[str, Any]]],
+        *,
+        rule_ids: Iterable[int],
+        groups: Iterable[str],
+        literal: tuple[str, str] | None = None,
+    ) -> None:
+        """Rewrite references: rules and groups pointing at replaced objects (or at an inline
+        literal, ``(object kind, value)``) get the replacement references, deduplicated."""
+
+        def rewrite(refs: list[Ref]) -> tuple[list[dict[str, Any]], bool]:
+            out: list[dict[str, Any]] = []
+            changed = False
+            for r in refs:
+                if r.object_id is not None and r.object_id in replace:
+                    out += replace[r.object_id]
+                    changed = True
+                elif (
+                    literal is not None
+                    and r.literal is not None
+                    and (_literal_object_kind(r.literal, r.literal_kind), r.literal) == literal
+                ):
+                    out += replace[f"literal:{literal[1]}"]
+                    changed = True
+                else:
+                    out.append(self.ref_json(r))
+            seen: set[str] = set()
+            unique = []
+            for x in out:
+                if identity(x) not in seen:
+                    seen.add(identity(x))
+                    unique.append(x)
+            return unique, changed
+
+        for rule, fields in self.rule_records(rule_ids):
+            old: dict[str, list[dict[str, Any]]] = {}
+            new: dict[str, list[dict[str, Any]]] = {}
+            for f, refs in fields.items():
+                rewritten, changed = rewrite(refs)
+                if changed:
+                    old[f] = self.refs_json(refs)
+                    new[f] = rewritten
+            if new:
+                pb.update_rule(rule, old, new)
+        for gid in sorted(set(groups)):
+            g = self.objects.get(gid)
+            if g is None:
+                continue
+            members = self.members.get(gid, [])
+            rewritten, changed = rewrite(members)
+            if changed:
+                pb.update_group(self.obj_json(g), self.refs_json(members), rewritten)
+        for oid in replace:
+            if self.route_users[oid]:
+                pb.block("route_reference")
 
     def leaves_of(self, ref: Ref) -> Leaves:
         if ref.object_id is not None:
@@ -409,6 +535,17 @@ def with_status(
             changes["name"] = {"added": [view["name"]], "removed": [before["name"]]}
         out["changes"] = changes
     return out
+
+
+def _rule_dict(info: RuleInfo) -> dict[str, Any]:
+    r = info.rule
+    return {"policy": r.policy_fmc_id, "policy_kind": r.policy_kind, "id": r.fmc_id, "name": r.name}
+
+
+def _plan(build: Any) -> dict[str, Any]:
+    pb = PlanBuilder()
+    build(pb)
+    return pb.build()
 
 
 def _rule_target(info: RuleInfo) -> dict[str, Any]:
@@ -603,6 +740,7 @@ def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) ->
                     policy_fmc_id=policy.fmc_id,
                     ace_delta=-ace,
                     warnings=["conflict_intent"] if conflict else [],
+                    plan=_plan(lambda pb, info=info: pb.delete_rule(_rule_dict(info))),
                 )
             )
             continue
@@ -629,6 +767,7 @@ def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) ->
                     policy_fmc_id=policy.fmc_id,
                     ace_delta=-ace,
                     warnings=["hit_counts_reset"],
+                    plan=_plan(lambda pb, info=info: pb.delete_rule(_rule_dict(info))),
                 )
             )
     return drafts
@@ -725,6 +864,7 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
         scores: list[int] = []
         names_used: set[str] = set(taken)
         after_pairs: list[tuple[RuleInfo, dict[str, list[Ref]]]] = []
+        new_names: list[str] = []
         for n, tier in enumerate(ordered):
             refs = {**info.refs, "dst_net": parts[tier]}
             after_pairs.append((info, refs))
@@ -738,11 +878,27 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
             base = _rule_name(estate, info, refs, f"{r.name}_{tier}", evaluator)
             name = disambiguate(base, names_used)
             names_used.add(name)
+            new_names.append(name)
             after.append(with_status(rule_view(info, refs, name=name, new=True), "new"))
         old = _old_score(info)
         warnings = ["group_expanded"] if expanded else []
         if UNCLASSIFIED in parts:
             warnings.append("unclassified_part")
+        # The original rule keeps the first tier; the others are inserted right after it,
+        # each copied from the (already narrowed) original.
+        pb = PlanBuilder()
+        rd = _rule_dict(info)
+        first = {"dst_net": estate.refs_json(parts[ordered[0]])}
+        pb.update_rule(rd, {"dst_net": estate.refs_json(info.refs["dst_net"])}, first)
+        previous = r.fmc_id
+        for tier, name in zip(ordered[1:], new_names, strict=True):
+            previous = pb.create_rule(
+                rd,
+                first,
+                insert_after=previous,
+                name=name,
+                new={"dst_net": estate.refs_json(parts[tier])},
+            )
         drafts.append(
             Draft(
                 kind="split_rule",
@@ -764,6 +920,7 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
                 ace_delta=sum(aces) - info.ace,
                 score_delta=(round(mean(scores)) - old) if scores and old is not None else None,
                 warnings=warnings,
+                plan=pb.build(),
             )
         )
     return drafts
@@ -832,6 +989,14 @@ def _merge_draft(
     after = [with_status(rule_view(first, refs), "modified", before[0])]
     after += [with_status(rule_view(i), "removed") for i in run[1:]]
     olds = [s for s in (_old_score(i) for i in run) if s is not None]
+    pb = PlanBuilder()
+    pb.update_rule(
+        _rule_dict(first),
+        {"src_net": estate.refs_json(first.refs["src_net"])},
+        {"src_net": estate.refs_json(sources)},
+    )
+    for i in run[1:]:
+        pb.delete_rule(_rule_dict(i))
     return Draft(
         kind="merge_rules",
         principle="merge_same_intent",
@@ -853,6 +1018,7 @@ def _merge_draft(
         policy_fmc_id=policy.fmc_id,
         ace_delta=ace - sum(i.ace for i in run),
         score_delta=(score - round(mean(olds))) if score is not None and olds else None,
+        plan=pb.build(),
     )
 
 
@@ -981,6 +1147,13 @@ def _tighten_source(
         ace_delta=ace - info.ace,
         score_delta=(score - old) if score is not None and old is not None else None,
         warnings=warnings,
+        plan=_plan(
+            lambda pb: pb.update_rule(
+                _rule_dict(info),
+                {"src_net": []},
+                {"src_net": estate.refs_json(sources)},
+            )
+        ),
     )
 
 
@@ -1068,17 +1241,32 @@ def _tighten_ports(
         ace_delta=ace - info.ace,
         score_delta=(score - old) if score is not None and old is not None else None,
         warnings=warnings,
+        plan=_plan(
+            lambda pb: pb.update_rule(
+                _rule_dict(info),
+                {"dst_port": estate.refs_json(info.refs.get("dst_port", []))},
+                {"dst_port": estate.refs_json(ports)},
+            )
+        ),
     )
 
 
 # ------------------------------------------------------------------ object recommenders
 
 
-def _keep_order(estate: Estate, o: Obj) -> tuple[int, int, int, str]:
+def _keep_order(estate: Estate, o: Obj) -> tuple[int, int, int, int, str]:
+    """Which duplicate survives: one used by static routes first (routes are device settings the
+    writer does not repoint), then the most referenced, convention-compliant, shortest name."""
     rules, parents, routes = estate.object_refs(o.fmc_id)
     convention = estate.conventions.get(o.kind)
     compliant = 0 if convention is not None and convention.complies(o.name) else 1
-    return (-(len(rules) + len(parents) + routes), compliant, len(o.name), o.name)
+    return (
+        0 if routes else 1,
+        -(len(rules) + len(parents) + routes),
+        compliant,
+        len(o.name),
+        o.name,
+    )
 
 
 def _merge_objects_draft(
@@ -1095,6 +1283,16 @@ def _merge_objects_draft(
         parents |= p
         routes += n
     parents -= {o.fmc_id for o in others}
+    pb = PlanBuilder()
+    keep_ref = estate.obj_json(keep)
+    estate.repoint(
+        pb,
+        {o.fmc_id: [keep_ref] for o in others},
+        rule_ids=rules,
+        groups=parents,
+    )
+    for o in others:
+        pb.delete_object(estate.obj_json(o))
 
     def obj_view(o: Obj, status: str) -> dict[str, Any]:
         r, p, n = estate.object_refs(o.fmc_id)
@@ -1131,6 +1329,7 @@ def _merge_objects_draft(
             ),
         },
         warnings=["external_references"],
+        plan=pb.build(),
     )
 
 
@@ -1196,6 +1395,8 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
             continue
         ordered = [t for t in TIER_ORDER if t in parts]
         new_groups = []
+        pb = PlanBuilder()
+        created: list[dict[str, Any]] = []
         for tier in ordered:
             rendered = (
                 convention.render({"TIER": tier, "ROLE": tier, "SYSTEM": None, "TYPE": None})
@@ -1204,6 +1405,9 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
             )
             name = disambiguate(rendered or f"{o.name}_{tier}"[:MAX_NAME], taken)
             taken.add(name)
+            created.append(
+                pb.create_object("network_group", name, members=estate.refs_json(parts[tier]))
+            )
             new_groups.append(
                 {
                     "id": None,
@@ -1215,6 +1419,8 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
                 }
             )
         rules, parents, routes = estate.object_refs(o.fmc_id)
+        estate.repoint(pb, {o.fmc_id: created}, rule_ids=rules, groups=parents)
+        pb.delete_object(estate.obj_json(o))
         drafts.append(
             Draft(
                 kind="split_group",
@@ -1247,6 +1453,7 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
                 },
                 warnings=["external_references"]
                 + (["unclassified_part"] if UNCLASSIFIED in parts else []),
+                plan=pb.build(),
             )
         )
     return drafts
@@ -1287,6 +1494,7 @@ def _rename_draft(
             "routes": routes,
         },
         warnings=["external_references", *warnings],
+        plan=_plan(lambda pb: pb.rename_object(estate.obj_json(o), new_name)),
     )
 
 
@@ -1380,6 +1588,11 @@ def recommend_rule_renames(
                 score_delta=0,
                 warnings=["external_references"]
                 + (["name_disambiguated"] if name != proposed else []),
+                plan=_plan(
+                    lambda pb, info=info, name=name: pb.update_rule(
+                        _rule_dict(info), {}, {}, name=name
+                    )
+                ),
             )
         )
     return drafts
@@ -1427,6 +1640,7 @@ def recommend_literals(estate: Estate) -> list[Draft]:
     for (kind, value), rules in sorted(uses.items()):
         existing = estate.existing_object(kind, value)
         create = existing is None
+        pb = PlanBuilder()
         if existing is not None:
             name = existing.name
         else:
@@ -1448,6 +1662,14 @@ def recommend_literals(estate: Estate) -> list[Draft]:
                 continue
             name = disambiguate(proposed[:MAX_NAME], taken)
             taken.add(name)
+        target = (
+            estate.obj_json(existing)
+            if existing is not None
+            else pb.create_object(kind, name, value=value)
+        )
+        estate.repoint(
+            pb, {f"literal:{value}": [target]}, rule_ids=rules, groups=(), literal=(kind, value)
+        )
         drafts.append(
             Draft(
                 kind="literal_to_object",
@@ -1471,6 +1693,7 @@ def recommend_literals(estate: Estate) -> list[Draft]:
                     },
                     "affected_rules": {"total": len(rules), "sample": estate.rule_sample(rules)},
                 },
+                plan=pb.build(),
             )
         )
     return drafts
@@ -1516,6 +1739,7 @@ def recommend_unused(estate: Estate) -> list[Draft]:
                     }
                 },
                 warnings=["external_references"],
+                plan=_plan(lambda pb, o=o: pb.delete_object(estate.obj_json(o))),
             )
         )
     return drafts
@@ -1567,6 +1791,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
                     "score_delta": d.score_delta,
                     "warnings": d.warnings,
                     "fingerprint": d.fingerprint(),
+                    "plan": d.plan,
                 }
                 for d in drafts
             ],

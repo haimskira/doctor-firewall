@@ -13,6 +13,7 @@ class QueueName(StrEnum):
     COLLECT = "collect"  # FMC reads (one connection at a time per snapshot)
     ANALYSIS = "analysis"  # CPU-heavy analysis of stored snapshots
     MAINTENANCE = "maintenance"
+    ENFORCE = "enforce"  # approved FMC writes + deploys (one batch at a time per FMC)
 
 
 def get_queue(name: QueueName, connection: Redis) -> Queue:

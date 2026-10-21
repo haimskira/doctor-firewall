@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { api, errorCode } from '../api/client';
 import { RECOMMENDATION_KINDS } from '../api/types';
@@ -10,6 +11,7 @@ import { SnapshotPicker } from '../components/inventory';
 import { RecommendationPreviewView, signed, tagGroup } from '../components/recommendations';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
+import { useOpLabel } from './DeployPage';
 
 const PAGE_SIZE = 100;
 const STATES = ['open', 'accepted', 'dismissed'] as const;
@@ -124,6 +126,9 @@ export function RecommendationsPage() {
                 ))}
               </select>
             </label>
+            {accepted !== undefined && accepted.count > 0 && can('changeset:write') && snapshotId !== null && (
+              <StageForm snapshotId={snapshotId} />
+            )}
             {accepted !== undefined && (
               <span className="pe-total">
                 {t('rec.acceptedSummary', {
@@ -267,6 +272,7 @@ function Detail({
 }) {
   const { t, tError } = useI18n();
   const hasRules = (rec.preview.after?.length ?? 0) > 0;
+  const opLabel = useOpLabel();
   const [view, setView] = useState<'inline' | 'split'>(rec.display);
   const [note, setNote] = useState(rec.decision?.note ?? '');
   const [busy, setBusy] = useState(false);
@@ -317,6 +323,18 @@ function Detail({
           )}
         </div>
       </div>
+      {!rec.executable && (
+        <div className="alert alert-error" role="note">
+          <strong>{t('rec.notExecutable')}</strong>
+          <ul>
+            {rec.blocked.map((b) => (
+              <li key={b}>
+                <Known code={`rec.blocked.${b}`} raw={b} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {rec.warnings.length > 0 && (
         <div className="alert alert-info" role="note">
           <strong>{t('rec.warnings')}</strong>
@@ -347,6 +365,18 @@ function Detail({
         </div>
       )}
       <RecommendationPreviewView preview={rec.preview} view={view} snapshotId={snapshotId} />
+      {(rec.plan.ops ?? []).length > 0 && (
+        <section>
+          <h3>{t('rec.plan')}</h3>
+          <ol className="small ops-list">
+            {(rec.plan.ops ?? []).map((op, n) => (
+              <li key={`${op.op}-${String(n)}`}>
+                <Ltr>{opLabel(op)}</Ltr>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       {rec.decision !== null && (
         <p className="muted small">
@@ -395,5 +425,95 @@ function Detail({
         </form>
       )}
     </div>
+  );
+}
+
+/** Stage every accepted recommendation of the snapshot into a new changeset (local only). */
+function StageForm({ snapshotId }: { snapshotId: number }) {
+  const { t, tError } = useI18n();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [ticket, setTicket] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await api<Page>(
+        `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&limit=500`,
+      );
+      const made = await api<{ id: number }>('/api/changesets', 'POST', {
+        snapshot_id: snapshotId,
+        recommendation_ids: page.rows.map((r) => r.id),
+        title: title.trim(),
+        ticket_id: ticket.trim(),
+      });
+      void navigate(`/deploy?changeset=${String(made.id)}`);
+    } catch (err) {
+      setError(errorCode(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        {t('dep.stage')}
+      </button>
+    );
+  }
+  return (
+    <form className="row stage-form" onSubmit={(e) => void submit(e)}>
+      <label className="inline-field">
+        {t('dep.stageTitle')}
+        <input
+          dir="auto"
+          required
+          minLength={3}
+          maxLength={200}
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+          }}
+        />
+      </label>
+      <label className="inline-field">
+        {t('dep.stageTicket')}
+        <input
+          dir="ltr"
+          className="ltr"
+          required
+          pattern="[A-Za-z0-9][A-Za-z0-9._/\-]{1,63}"
+          maxLength={64}
+          value={ticket}
+          onChange={(e) => {
+            setTicket(e.target.value);
+          }}
+        />
+      </label>
+      <button type="submit" disabled={busy}>
+        {t('dep.stageCreate')}
+      </button>
+      <button
+        type="button"
+        className="secondary"
+        onClick={() => {
+          setOpen(false);
+        }}
+      >
+        {t('common.cancel')}
+      </button>
+      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+    </form>
   );
 }

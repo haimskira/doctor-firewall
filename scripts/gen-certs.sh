@@ -11,7 +11,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 MODE="${1:-}"
-IMAGE="${DF_IMAGE_PREFIX:-doctor-firewall/}api:${DF_VERSION:-dev}"
+IMAGE="${DF_IMAGE_API:-doctor-firewall/api:${DF_VERSION:-dev}}"
 CERTS="$INFRA/certs"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE not found — build or load it first"
 

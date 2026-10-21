@@ -90,6 +90,8 @@ class Recommendation(Base):
     score_delta: Mapped[int | None] = mapped_column(Integer)
     warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # Executable FMC operations (app.enforce.plan): {"version", "ops", "executable", "blocked"}.
+    plan: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class RecommendationDecision(Base):

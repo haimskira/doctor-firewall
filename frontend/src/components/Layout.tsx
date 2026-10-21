@@ -81,6 +81,7 @@ const NAV: NavGroup[] = [
           { to: '/policies', label: 'shell.securityPolicies', permission: 'policy:read' },
           { to: '/recommendations', label: 'nav.recommendations', permission: 'policy:read' },
           { to: '/naming', label: 'nav.naming', permission: 'policy:read' },
+          { to: '/deploy', label: 'nav.deploy', permission: 'policy:read' },
         ],
       },
       {
@@ -239,6 +240,11 @@ export function Layout() {
                 }}
               />
             </form>
+          )}
+          {readable && (
+            <NavLink to="/deploy" className="fmc-deploy">
+              {t('shell.deploy')}
+            </NavLink>
           )}
           {readable && (
             <button

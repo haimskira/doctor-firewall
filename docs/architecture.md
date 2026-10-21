@@ -67,9 +67,9 @@ All containers run as non-root from the first process, `read_only` root FS,
 | Verified TLS against internal trust store, hostname checked | done |
 | Paging `offset/limit` (max 1000), `expanded=true`, hit counts per device | done |
 | Limits: 300 GET/min/IP, 10 connections/IP | done: token bucket (default 240/min) + concurrency cap (4) + 429 backoff with `Retry-After` |
-| 1 write at a time, 2 MB payload | mock enforces; Redis write lock in phase 5 |
-| Writes: GET → merge → PUT with version; dependency ordering; bulk ≤ 1000 rules | phase 5 |
-| Deploy as async job, poll `jobhistories` until DEPLOYED, rollback requests, ticket ids | phase 5 |
+| 1 write at a time, 2 MB payload | Redis write lock per FMC + sequential writes (phase 5); mock enforces |
+| Writes: GET → merge → PUT; dependency ordering | done: GET + `expect` drift check → full PUT; ordered plans (bulk insert not used: one rule per POST keeps undo exact) |
+| Deploy as async job, poll until DEPLOYED, rollback, ticket ids | done: `deploymentrequests` + `job/taskstatuses` polling; rollback by recorded undo + redeploy; ticket id in the audit trail (FMC change-management tickets: to verify) |
 
 ## Roadmap
 
@@ -80,8 +80,8 @@ All containers run as non-root from the first process, `read_only` root FS,
 | 2 | Analysis & score: ACE expansion, shadowing / overlaps, dead rules, asset table (manual, CSV, bootstrap + confirm), per-cluster limits, explained rule score — see [scoring.md](scoring.md) | **done** |
 | 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview (inline / split) & deploy cost, local accept / dismiss — see [recommendations.md](recommendations.md); UI in the current FMC look ([ui-design.md](ui-design.md)) | **done** |
 | 4 | Connectivity map: three views, filtering, risk colouring, before/after — see [connectivity.md](connectivity.md) | **done** |
-| 5 | Controlled enforcement: changesets, batching under the per-cluster deploy limit, approval, deploy, verification, rollback | next |
-| 6 | SSL/IPS recommendations; TACACS+ (ISE) and LDAP providers | |
+| 5 | Controlled enforcement: executable plans, changesets, batching under the per-cluster deploy limit, four-eyes approval, drift-checked writes, verification, deploy, rollback — see [enforcement.md](enforcement.md) | **done** |
+| 6 | SSL/IPS recommendations; TACACS+ (ISE) and LDAP providers | next |
 
 ## Collection (phase 1)
 

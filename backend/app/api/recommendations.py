@@ -70,10 +70,14 @@ class RecommendationOut(BaseModel):
     warnings: list[str]
     fingerprint: str
     decision: Decision | None
+    # Whether the writer can apply it (phase 5) and, if not, why.
+    executable: bool
+    blocked: list[str]
 
 
 class RecommendationDetail(RecommendationOut):
     preview: dict[str, Any]
+    plan: dict[str, Any]
 
 
 class KindSummary(BaseModel):
@@ -170,6 +174,8 @@ def _out(r: Recommendation, d: RecommendationDecision | None) -> RecommendationO
         warnings=r.warnings,
         fingerprint=r.fingerprint,
         decision=_decision(d),
+        executable=bool(r.plan.get("executable")),
+        blocked=[str(x) for x in r.plan.get("blocked", [])],
     )
 
 
@@ -283,7 +289,9 @@ def get_recommendation(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     rec, decision = row
-    return RecommendationDetail(**_out(rec, decision).model_dump(), preview=rec.preview)
+    return RecommendationDetail(
+        **_out(rec, decision).model_dump(), preview=rec.preview, plan=rec.plan
+    )
 
 
 @router.put(

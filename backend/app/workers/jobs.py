@@ -19,6 +19,7 @@ from app.analysis.semantic import analyze_semantics
 from app.collector.runner import SnapshotBusyError, request_collection, run_collection
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
+from app.enforce.executor import execute_batch, redis_lock
 from app.models.fmc import FmcConnection
 from app.models.inventory import Snapshot
 from app.runtime import get_audit, get_redis, get_secretbox
@@ -118,8 +119,30 @@ def schedule_due_collections() -> list[int]:
     return started
 
 
+def enqueue_batch(batch_id: int) -> None:
+    settings = get_settings()
+    get_queue(QueueName.ENFORCE, get_redis()).enqueue(
+        execute_batch_job, batch_id, job_timeout=settings.deploy_timeout_seconds + 3600
+    )
+
+
+def execute_batch_job(batch_id: int) -> dict[str, Any]:
+    """Apply one approved batch to the FMC (writes, verification, deploy or rollback)."""
+    return asyncio.run(
+        execute_batch(
+            batch_id,
+            sessions=get_sessionmaker(),
+            box=get_secretbox(),
+            audit=get_audit(),
+            settings=get_settings(),
+            lock=redis_lock(get_redis()),
+        )
+    )
+
+
 ALLOWED_JOBS: frozenset[str] = frozenset(
     {
+        "app.workers.jobs.execute_batch_job",
         "app.workers.jobs.verify_audit_chain",
         "app.workers.jobs.collect_snapshot",
         "app.workers.jobs.analyze_snapshot",

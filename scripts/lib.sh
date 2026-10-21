@@ -90,13 +90,17 @@ require_vendor() {
         || die "vendor/npm-cache is missing — run scripts/vendor.sh first"
 }
 
-# Runtime image names: <prefix><component>:<version>. The default prefix keeps the local
-# names (doctor-firewall/api ...); for Docker Hub use e.g. "myuser/doctor-firewall-"
-# (-> myuser/doctor-firewall-api). See docs/operations.md.
+# Runtime images are built locally as doctor-firewall/<component>:<version>. Published to a
+# registry they are tags of ONE repository: <repo>:<component>-<version>
+# (e.g. haim1418/doctor-firewall:api-0.5.0). See docs/operations.md.
 RUNTIME_COMPONENTS=(api web postgres redis)
 
-valid_image_prefix() {
-    [[ "$1" =~ ^([a-z0-9]+([._-][a-z0-9]+)*/)?[a-z0-9]+([._-][a-z0-9]+)*[/_.-]$ ]]
+valid_image_repo() {
+    [[ "$1" =~ ^([a-z0-9.-]+(:[0-9]+)?/)?[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)+$ ]]
+}
+
+registry_image() {  # registry_image <repo> <component> <version>
+    printf '%s:%s-%s' "$1" "$2" "$3"
 }
 
 # build_runtime_images <prefix> <version> <git sha>

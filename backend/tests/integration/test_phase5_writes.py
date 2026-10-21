@@ -1,0 +1,292 @@
+"""Phase 5 (writes): approved batches applied to the FMC mock — success, drift, rollback, lock."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.core.config import get_settings, read_secret_file
+from app.db.session import get_sessionmaker
+from app.enforce.executor import execute_batch, redis_lock
+from app.fmc.client import FmcSession, build_ssl_context
+from app.models.audit import AuditRecord
+from app.models.enforce import Batch
+from app.runtime import get_audit, get_redis, get_secretbox
+from app.workers import jobs
+from tests.integration.conftest import login, make_user
+from tests.integration.test_phase2 import DOCTRINE_CSV, _snapshot
+from tests.integration.test_phase3 import _all
+
+CONFIG = "/api/fmc_config/v1/domain/{domain}"
+
+
+async def _mock(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    """Talk to the FMC mock directly (test setup: reset, faults, out-of-band changes)."""
+    password = read_secret_file(Path(os.environ["DF_TEST_FMC_PASSWORD_FILE"]))
+    settings = get_settings()
+    async with FmcSession(
+        host="fmc-mock",
+        port=443,
+        username="api_user",
+        password_provider=lambda: bytearray(password.encode()),
+        ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+        timeout=30,
+    ) as fmc:
+        full = path.replace("{domain}", fmc.domain_uuid)
+        if method == "GET":
+            return await fmc.get_json(full, {"limit": 1000, "expanded": "true"})
+        return await fmc.write_json(method, full, body)
+
+
+def mock(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    return asyncio.run(_mock(method, path, body))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_mock() -> Iterator[None]:
+    mock("POST", "/mock/reset")
+    yield
+    mock("POST", "/mock/reset")
+
+
+@pytest.fixture
+def admin(client: TestClient) -> dict[str, str]:
+    make_user("p5w-admin", ["admin"])
+    return {"X-CSRF-Token": login(client, "p5w-admin")}
+
+
+def _run(batch_id: int) -> dict[str, Any]:
+    return asyncio.run(
+        execute_batch(
+            batch_id,
+            sessions=get_sessionmaker(),
+            box=get_secretbox(),
+            audit=get_audit(),
+            settings=get_settings(),
+            lock=redis_lock(get_redis()),
+            poll_seconds=0,
+        )
+    )
+
+
+class Flow:
+    """Analyse, accept, stage and approve recommendations through the real API."""
+
+    def __init__(self, client: TestClient, admin: dict[str, str]) -> None:
+        client.post("/api/assets/import", headers=admin, json={"csv": DOCTRINE_CSV})
+        self.client = client
+        self.admin = admin
+        self.sid = _snapshot(client, admin)
+        jobs.analyze_snapshot(self.sid)
+        make_user("p5w-opt", ["optimizer"])
+        make_user("p5w-appr", ["approver"])
+        self.opt = TestClient(client.app, base_url="https://testserver")
+        self.appr = TestClient(client.app, base_url="https://testserver")
+        self.oh = {"X-CSRF-Token": login(self.opt, "p5w-opt")}
+        self.ah = {"X-CSRF-Token": login(self.appr, "p5w-appr")}
+
+    def find(self, kind: str, name: str) -> dict[str, Any]:
+        return next(
+            r
+            for r in _all(self.client, self.sid, kind=kind)
+            if any(t["name"] == name for t in r["targets"])
+        )
+
+    def approved_batch(self, recs: list[dict[str, Any]]) -> tuple[int, int]:
+        for rec in recs:
+            self.opt.put(
+                f"/api/snapshots/{self.sid}/recommendations/{rec['id']}/decision",
+                headers=self.oh,
+                json={"status": "accepted"},
+            )
+        made = self.opt.post(
+            "/api/changesets",
+            headers=self.oh,
+            json={
+                "snapshot_id": self.sid,
+                "recommendation_ids": [r["id"] for r in recs],
+                "title": "write test",
+                "ticket_id": "CHG-5000",
+            },
+        )
+        assert made.status_code == 201, made.text
+        cs = made.json()
+        assert len(cs["batches"]) == 1
+        ok = self.appr.post(f"/api/changesets/{cs['id']}/batches/1/approve", headers=self.ah)
+        assert ok.status_code == 200, ok.text
+        with get_sessionmaker()() as s:
+            batch_id = s.scalar(
+                select(Batch.id).where(Batch.changeset_id == cs["id"], Batch.seq == 1)
+            )
+        assert batch_id is not None
+        return cs["id"], batch_id
+
+    def rules(self, policy: str) -> dict[str, dict[str, Any]]:
+        listing = mock("GET", CONFIG + f"/policy/accesspolicies/{policy}/accessrules")
+        return {r["name"]: r for r in listing["items"]}
+
+    def close(self) -> None:
+        self.opt.close()
+        self.appr.close()
+
+
+def test_batch_is_written_verified_and_deployed(client: TestClient, admin: dict[str, str]) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs_id, batch_id = flow.approved_batch([split, rename, unused])
+
+    # The author can never run it; only an approved batch runs.
+    assert (
+        flow.opt.post(f"/api/changesets/{cs_id}/batches/1/run", headers=flow.oh).status_code == 403
+    )
+    result = _run(batch_id)
+    assert result["ok"] is True, result
+    assert result["status"] == "deployed"
+    assert result["operations"] == 4
+    assert result["task"]
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["status"] == "completed"
+    assert cs["batches"][0]["status"] == "deployed"
+    assert [r["op"] for r in cs["batches"][0]["results"]] == [
+        "update_rule",
+        "create_rule",
+        "rename_object",
+        "delete_object",
+    ]
+    # A completed changeset can never run again.
+    with pytest.raises(Exception, match="changeset_closed"):
+        _run(batch_id)
+
+    # A fresh read-only pull shows exactly the intended configuration.
+    policy = split["policy_fmc_id"]
+    rules = flow.rules(policy)
+    original = rules["MIXED_TIERS_SQL"]
+    added = rules["MIXED_TIERS_SQL_SILVER"]
+    assert [o["name"] for o in original["destinationNetworks"]["objects"]] == ["NET_GOLD_DB"]
+    assert [o["name"] for o in added["destinationNetworks"]["objects"]] == ["NET_SILVER_APP"]
+    assert added["metadata"]["ruleIndex"] == original["metadata"]["ruleIndex"] + 1
+    assert added["sourceNetworks"] == original["sourceNetworks"]
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert "GRP_APPS" in groups
+    assert "GRP_10.30.0.0" not in groups
+    assert "GRP_UNUSED" not in groups
+    assert "items" not in mock("GET", CONFIG + "/deployment/deployabledevices")  # all deployed
+
+    with get_sessionmaker()() as s:
+        actions = list(
+            s.scalars(select(AuditRecord.action).where(AuditRecord.action.like("changeset.%")))
+        )
+    assert "changeset.batch_deployed" in actions
+    flow.close()
+
+
+def test_drift_stops_before_any_write(client: TestClient, admin: dict[str, str]) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    # Someone edits the rule in the FMC after the snapshot.
+    policy = split["policy_fmc_id"]
+    rule = flow.rules(policy)["MIXED_TIERS_SQL"]
+    body = {k: v for k, v in rule.items() if k not in ("links", "metadata")}
+    body["destinationNetworks"] = {"objects": rule["destinationNetworks"]["objects"][:1]}
+    mock("PUT", CONFIG + f"/policy/accesspolicies/{policy}/accessrules/{rule['id']}", body)
+
+    result = _run(batch_id)
+    assert result["ok"] is False
+    assert result["error"] == "drift"
+    assert result["status"] == "rolled_back"
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["status"] == "rolled_back"
+    assert batch["error"].startswith("drift")
+    assert batch["results"] == []  # nothing was written
+    assert "MIXED_TIERS_SQL_SILVER" not in flow.rules(policy)
+    flow.close()
+
+
+def test_failure_mid_batch_rolls_everything_back(client: TestClient, admin: dict[str, str]) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    _, batch_id = flow.approved_batch([split, rename])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)["MIXED_TIERS_SQL"]
+    # The rename (second item) is refused by the FMC after the split was written.
+    mock("POST", "/mock/faults", {"fail_write_on": "GRP_APPS"})
+
+    result = _run(batch_id)
+    assert result["ok"] is False
+    assert result["error"] == "write_rejected"
+    assert result["status"] == "rolled_back", result
+    after = flow.rules(policy)
+    assert "MIXED_TIERS_SQL_SILVER" not in after
+    restored = after["MIXED_TIERS_SQL"]
+    assert restored["destinationNetworks"] == before["destinationNetworks"]
+    assert restored["id"] == before["id"]
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert "GRP_10.30.0.0" in groups
+    flow.close()
+
+
+def test_deploy_failure_rolls_back_and_lock_busy_keeps_batch(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    _, first = flow.approved_batch([unused])
+
+    # Another writer holds the FMC write lock: nothing happens, the batch stays approved.
+    redis = get_redis()
+    key = "df:fmc-write:fmc-mock:443"
+    redis.set(key, "someone-else", ex=60)
+    try:
+        busy = _run(first)
+    finally:
+        redis.delete(key)
+    assert busy == {"ok": False, "error": "write_lock_busy", "status": "approved"}
+    with get_sessionmaker()() as s:
+        batch = s.get(Batch, first)
+        assert batch is not None
+        assert batch.status == "approved"
+
+    mock("POST", "/mock/faults", {"deploy_fail": True})
+    result = _run(first)
+    assert result["ok"] is False
+    assert result["error"] == "deploy_failed"
+    # The undo itself succeeded; re-deploying the restored config also hit the injected fault.
+    assert result["status"] == "failed"
+    assert any("redeploy after rollback" in x for x in result["undo_failed"])
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert "GRP_UNUSED" in groups  # re-created by the rollback
+
+    mock("POST", "/mock/faults", {})
+    _, second = flow.approved_batch([rename])
+    assert _run(second)["ok"] is True
+    flow.close()
+
+
+def test_run_endpoint_enqueues_an_approved_batch(client: TestClient, admin: dict[str, str]) -> None:
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs_id, _ = flow.approved_batch([unused])
+    url = f"/api/changesets/{cs_id}/batches/1/run"
+    make_user("p5w-view", ["viewer"])
+    with TestClient(client.app, base_url="https://testserver") as viewer:
+        assert (
+            viewer.post(url, headers={"X-CSRF-Token": login(viewer, "p5w-view")}).status_code == 403
+        )
+    queued = flow.appr.post(url, headers=flow.ah)
+    assert queued.status_code == 202
+    assert (
+        flow.appr.post(f"/api/changesets/{cs_id}/batches/9/run", headers=flow.ah).status_code == 404
+    )
+    flow.close()

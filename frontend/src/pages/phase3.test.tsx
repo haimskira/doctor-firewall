@@ -50,7 +50,7 @@ const SPLIT: Recommendation = {
   id: 5, kind: 'split_rule', policy_fmc_id: 'p1', title: 'Split #12 MIXED by destination tier: GOLD, SILVER',
   principle: 'one_destination_tier', priority: 70, targets: [{ type: 'rule', id: 'r12', name: 'MIXED', index: 12 }],
   display: 'split', deploy_cost: 2, ace_delta: 0, score_delta: 25, warnings: ['unclassified_part', 'brand_new_code'],
-  fingerprint: 'f'.repeat(64), decision: null,
+  fingerprint: 'f'.repeat(64), decision: null, executable: true, blocked: [],
 };
 const REMOVE: Recommendation = {
   ...SPLIT, id: 6, kind: 'remove_dead_rule', title: 'Remove #40 OLD: permit rule without hits', principle: 'rule_decay',
@@ -58,6 +58,13 @@ const REMOVE: Recommendation = {
 };
 const SPLIT_DETAIL: RecommendationDetail = {
   ...SPLIT,
+  plan: {
+    executable: true,
+    ops: [
+      { op: 'update_rule', rule_name: 'MIXED' },
+      { op: 'create_rule', name: 'MIXED_SILVER' },
+    ],
+  },
   preview: {
     policy: { id: 'p1', name: 'ACP-1', kind: 'access' },
     before: [{ id: 'r12', index: 12, name: 'MIXED', action: 'ALLOW', enabled: true, section: 'Default', category: '', fields: { dst_net: ['NET_GOLD', 'NET_SILVER'] } }],

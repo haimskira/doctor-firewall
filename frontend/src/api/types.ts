@@ -435,6 +435,8 @@ export interface Recommendation {
   warnings: string[];
   fingerprint: string;
   decision: RecommendationDecision | null;
+  executable: boolean;
+  blocked: string[];
 }
 
 export type RowStatus = 'unchanged' | 'modified' | 'new' | 'removed';
@@ -485,8 +487,26 @@ export interface RecommendationPreview {
   map?: { before: MapChangeEdge[]; after: MapChangeEdge[] };
 }
 
+export interface PlanOp {
+  op: 'create_object' | 'update_group' | 'rename_object' | 'delete_object' | 'create_rule' | 'update_rule' | 'delete_rule';
+  name?: string;
+  rule_name?: string;
+  object_name?: string;
+  type?: string;
+  kind?: string;
+  set?: Partial<Record<RuleFieldName, { id?: string; temp?: string; name?: string; literal?: string }[]>>;
+}
+
+export interface Plan {
+  version?: number;
+  ops?: PlanOp[];
+  executable?: boolean;
+  blocked?: string[];
+}
+
 export interface RecommendationDetail extends Recommendation {
   preview: RecommendationPreview;
+  plan: Plan;
 }
 
 export interface KindSummary {
@@ -606,4 +626,60 @@ export interface DashboardData {
   map_risk: Record<MapRisk, number>;
   riskiest_connections: { src: string; dst: string; risk: MapRisk; rule_count: number; hits: number }[];
   worst_rules: { id: string; name: string; index: number; policy_id: string; policy_name: string; score: number }[];
+}
+
+// ---- phase 5: changesets and batches (mirrors app/api/changesets.py) ----
+
+export type ChangesetStatus = 'open' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+export type BatchStatus = 'pending' | 'approved' | 'running' | 'deployed' | 'failed' | 'rolled_back' | 'cancelled';
+
+export interface BatchResult {
+  op: string;
+  name?: string;
+  id?: string;
+  detail?: string;
+}
+
+export interface ChangesetBatch {
+  seq: number;
+  status: BatchStatus;
+  op_count: number;
+  deploy_limit: number;
+  clusters: string[];
+  approved_by: string | null;
+  approved_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  results: BatchResult[];
+}
+
+export interface ChangesetItem {
+  fingerprint: string;
+  kind: RecommendationKind;
+  title: string;
+  policy_fmc_id: string | null;
+  batch_seq: number;
+  op_count: number;
+  plan: Plan;
+}
+
+export interface Changeset {
+  id: number;
+  snapshot_id: number | null;
+  connection_id: number | null;
+  title: string;
+  ticket_id: string;
+  status: ChangesetStatus;
+  deploy_limit: number;
+  deploy_limit_verified: boolean;
+  created_by: string;
+  created_at: string;
+  op_count: number;
+  item_count: number;
+  batches: ChangesetBatch[];
+}
+
+export interface ChangesetDetail extends Changeset {
+  items: ChangesetItem[];
 }
