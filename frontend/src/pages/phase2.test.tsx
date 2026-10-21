@@ -18,7 +18,7 @@ import { ScoresPage } from './ScoresPage';
 const ME: Me = {
   id: 1, username: 'opt', display_name: 'Opt', roles: ['optimizer'],
   permissions: ['policy:read', 'collect:run', 'assets:write'], language: 'en',
-  must_change_password: false, csrf_token: 'csrf-2',
+  auth_provider: 'local', must_change_password: false, csrf_token: 'csrf-2',
 };
 const SNAP = { id: 7, connection_id: 1, connection_name: 'FMC', status: 'complete', requested_by: 'x', created_at: '2026-10-20T10:00:00Z', started_at: null, finished_at: null, analyzed_at: null, fmc_version: null, error: null, error_detail: null, stats: {} } satisfies Snapshot;
 

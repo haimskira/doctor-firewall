@@ -27,6 +27,7 @@ OPS = frozenset(
         "rename_object",
         "delete_rule",
         "delete_object",
+        "set_inspection",
     }
 )
 # Rule kinds the writer supports (same field layout in the FMC API).
@@ -208,6 +209,43 @@ class PlanBuilder:
             }
         )
 
+    def set_inspection(
+        self,
+        rule: dict[str, Any],
+        current: dict[str, Any],
+        *,
+        ips: dict[str, Any] | None = None,
+        file: dict[str, Any] | None = None,
+        action: str | None = None,
+    ) -> None:
+        """Attach an intrusion and / or file policy to an access rule (``None``: keep).
+
+        ``current`` holds the rule's ``action`` and its ``ips`` / ``file`` policy ids as in the
+        snapshot; the executor stops if the FMC differs. ``action`` turns TRUST into ALLOW
+        (trusted traffic skips Snort, so an intrusion policy needs an ALLOW rule).
+        """
+        if rule["policy_kind"] != "access":
+            self.block(f"unsupported_rule_kind:{rule['policy_kind']}")
+        if ips is None and file is None and action is None:
+            return
+        op: dict[str, Any] = {
+            "op": "set_inspection",
+            **self._rule(rule),
+            "expect": {
+                "name": rule["name"],
+                "action": current["action"],
+                "ips": current.get("ips"),
+                "file": current.get("file"),
+            },
+        }
+        if ips is not None:
+            op["ips"] = {"id": ips["id"], "name": ips["name"], "type": "IntrusionPolicy"}
+        if file is not None:
+            op["file"] = {"id": file["id"], "name": file["name"], "type": "FilePolicy"}
+        if action is not None:
+            op["action"] = action
+        self.ops.append(op)
+
     def build(self) -> dict[str, Any]:
         return {
             "version": PLAN_VERSION,
@@ -227,7 +265,7 @@ def touched(plan: dict[str, Any]) -> dict[str, set[str]]:
     }
     for op in plan.get("ops", []):
         kind = op["op"]
-        if kind in ("update_rule", "delete_rule"):
+        if kind in ("update_rule", "delete_rule", "set_inspection"):
             out["rules"].add(f"{op['policy']}/{op['rule']}")
         if kind == "create_rule":
             out["rules"].add(f"{op['policy']}/{op['copy_from']}")

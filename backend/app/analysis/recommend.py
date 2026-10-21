@@ -26,7 +26,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from statistics import mean
 from typing import Any
 
@@ -576,9 +576,15 @@ class Evaluator:
             out[f] = bucket
         return out
 
-    def evaluate(self, info: RuleInfo, refs: dict[str, list[Ref]]) -> tuple[int, int | None]:
-        """(ACE estimate, score) of the rule with these references."""
-        ace, result, _space = self._assess(info, refs)
+    def evaluate(
+        self,
+        info: RuleInfo,
+        refs: dict[str, list[Ref]],
+        *,
+        overrides: dict[str, Any] | None = None,
+    ) -> tuple[int, int | None]:
+        """(ACE estimate, score) of the rule with these references (and other facts)."""
+        ace, result, _space = self._assess(info, refs, overrides)
         return ace, (result.score if result is not None else None)
 
     def map_edges(self, info: RuleInfo, refs: dict[str, list[Ref]]) -> list[dict[str, str]]:
@@ -592,7 +598,10 @@ class Evaluator:
         return edges_for(self.estate.mapper, space.src_net, space.dst_net, risk)
 
     def _assess(
-        self, info: RuleInfo, refs: dict[str, list[Ref]]
+        self,
+        info: RuleInfo,
+        refs: dict[str, list[Ref]],
+        overrides: dict[str, Any] | None = None,
     ) -> tuple[int, ScoreResult | None, MatchSpace]:
         leaves = self.leaves(refs)
         space = build_space(leaves)
@@ -600,27 +609,25 @@ class Evaluator:
         r = info.rule
         if r.action not in PERMIT_ACTIONS or not r.enabled:
             return ace, None, space
-        result = score_rule(
-            RuleFacts(
-                action=r.action,
-                enabled=r.enabled,
-                src=space.src_net,
-                dst=space.dst_net,
-                dst_ports_any=space.dst_port.any,
-                dst_port_count=space.dst_port.port_count(),
-                apps_any=space.token("app").any,
-                ips_policy=r.ips_policy,
-                file_policy=r.file_policy,
-                log_end=r.log_end,
-                log_begin=r.log_begin,
-                hit_count=r.hit_count,
-                dead=bool(info.score and info.score.dead),
-                shadowed_by=info.score.shadowed_by if info.score else None,
-                has_literals=any(x.literal is not None for v in refs.values() for x in v),
-                ace_count=ace,
-            ),
-            self.estate.assets,
+        facts = RuleFacts(
+            action=r.action,
+            enabled=r.enabled,
+            src=space.src_net,
+            dst=space.dst_net,
+            dst_ports_any=space.dst_port.any,
+            dst_port_count=space.dst_port.port_count(),
+            apps_any=space.token("app").any,
+            ips_policy=r.ips_policy,
+            file_policy=r.file_policy,
+            log_end=r.log_end,
+            log_begin=r.log_begin,
+            hit_count=r.hit_count,
+            dead=bool(info.score and info.score.dead),
+            shadowed_by=info.score.shadowed_by if info.score else None,
+            has_literals=any(x.literal is not None for v in refs.values() for x in v),
+            ace_count=ace,
         )
+        result = score_rule(replace(facts, **(overrides or {})), self.estate.assets)
         return ace, result, space
 
 
@@ -1752,9 +1759,14 @@ def recommend_unused(estate: Estate) -> list[Draft]:
 def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     """Recompute all recommendations of a snapshot (idempotent). Caller commits."""
     session.execute(delete(Recommendation).where(Recommendation.snapshot_id == snapshot_id))
+    # Phase-6 inspection builds on this module's primitives (imported here: no cycle).
+    from app.analysis import inspection
+
     estate = Estate(session, snapshot_id)
     drafts: list[Draft] = []
     renames, naming_stats = recommend_renames(estate)
+    profiles = inspection.load_profiles(session)
+    ssl = inspection.SslAdvisor(estate)
     for policy in sorted(estate.policies.values(), key=lambda p: (p.kind, p.name)):
         if policy.kind not in ("access", "prefilter", "decryption"):
             continue
@@ -1767,6 +1779,11 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
             drafts += recommend_merge_rules(estate, policy, rules)
             drafts += recommend_tighten(estate, policy, rules)
             drafts += recommend_rule_renames(estate, policy, rules, naming_stats)
+            drafts += inspection.recommend_inspection(estate, policy, rules, profiles)
+            ssl.access(policy, rules)
+        elif policy.kind == "decryption":
+            ssl.decryption_policy(policy, rules)
+    drafts += ssl.drafts()
     drafts += recommend_object_merges(estate)
     drafts += recommend_split_groups(estate)
     drafts += renames

@@ -33,6 +33,8 @@ def _ref(obj: Json) -> Json:
 @dataclass
 class FmcData:
     objects: dict[str, list[Json]] = field(default_factory=dict)  # FMC resource name -> items
+    # Not firewall objects (the collector does not pull them); used by rule writes.
+    variable_sets: list[Json] = field(default_factory=list)
     devices: list[Json] = field(default_factory=list)
     ha_pairs: list[Json] = field(default_factory=list)
     policies: list[Json] = field(default_factory=list)
@@ -716,4 +718,20 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                 },
             }
         ]
+    # Every FMC has a built-in variable set (used by rules with an intrusion policy).
+    # A fixed id keeps the random stream (and so all other seeded data) unchanged.
+    variables = {
+        "id": str(uuid.uuid5(uuid.NAMESPACE_URL, "fmc-mock/variableset/Default-Set")),
+        "name": "Default-Set",
+        "type": "VariableSet",
+    }
+    b.data.variable_sets.append({**variables, "description": "Default Variable Set"})
+    # As the FMC returns them: inspection only on Allow rules, always with a variable set.
+    for rules in b.data.rules.values():
+        for item in rules:
+            if item.get("action") != "ALLOW":
+                item.pop("ipsPolicy", None)
+                item.pop("filePolicy", None)
+            elif "ipsPolicy" in item:
+                item["variableSet"] = dict(variables)
     return b.data

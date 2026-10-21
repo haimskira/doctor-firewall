@@ -119,6 +119,7 @@ def build_router(data: FmcData, domain_uuid: str, token_ok: Callable[[Request], 
     ):
         collection(f"/object/{resource}", partial(_objects_of, data, resource))
 
+    collection("/object/variablesets", lambda: data.variable_sets)
     collection("/devices/devicerecords", lambda: data.devices)
     collection("/devicehapairs/ftddevicehapairs", lambda: data.ha_pairs)
     collection("/deviceclusters/ftddevicecluster", lambda: [])

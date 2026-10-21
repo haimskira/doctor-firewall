@@ -86,6 +86,8 @@ OBJECT_RESOURCES = {
     "DynamicObject": "dynamicobjects",
 }
 PROTOCOL_NUMBERS = {"TCP": "6", "UDP": "17", "SCTP": "132"}
+# The variable set an intrusion policy uses when a rule has none (built into every FMC).
+DEFAULT_VARIABLE_SET = "Default-Set"
 READ_ONLY_KEYS = ("id", "links", "metadata")
 DEPLOYED = frozenset({"deployed", "success", "succeeded", "completed"})
 DEPLOY_FAILED = frozenset({"failed", "error", "aborted", "cancelled"})
@@ -186,6 +188,7 @@ class Writer:
     undo: list[dict[str, Any]] = field(default_factory=list)
     results: list[dict[str, Any]] = field(default_factory=list)
     checks: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
+    _variable_set: dict[str, Any] | None = None
 
     def path(self, suffix: str) -> str:
         return self.adapter.config_path(self.domain, suffix)
@@ -257,6 +260,7 @@ class Writer:
             "update_rule": self.update_rule,
             "create_rule": self.create_rule,
             "delete_rule": self.delete_rule,
+            "set_inspection": self.set_inspection,
         }.get(str(op.get("op")))
         if handler is None:
             raise BatchError("unsupported_operation", str(op.get("op")))
@@ -441,6 +445,82 @@ class Writer:
         async def verify() -> None:
             if await self.fmc.get_json(path, allow_not_found=True) is not None:
                 raise BatchError("verification_failed", f"rule {op.get('rule_name')} still exists")
+
+        self.checks.append(verify)
+
+    async def default_variable_set(self) -> dict[str, Any]:
+        """The FMC's built-in variable set (read once per batch)."""
+        if self._variable_set is None:
+            listing = await self.fmc.get_json(
+                self.path("/object/variablesets"), {"limit": 1000, "offset": 0}
+            )
+            items = listing.get("items", []) if isinstance(listing, dict) else []
+            found = next(
+                (
+                    i
+                    for i in items
+                    if isinstance(i, dict)
+                    and i.get("name") == DEFAULT_VARIABLE_SET
+                    and isinstance(i.get("id"), str)
+                ),
+                None,
+            )
+            if found is None:
+                raise BatchError("variable_set_missing", DEFAULT_VARIABLE_SET)
+            self._variable_set = {
+                "id": found["id"],
+                "name": DEFAULT_VARIABLE_SET,
+                "type": "VariableSet",
+            }
+        return self._variable_set
+
+    async def set_inspection(self, op: dict[str, Any]) -> None:
+        if op.get("policy_kind") != "access":
+            raise BatchError("unsupported_rule_kind", str(op.get("policy_kind")))
+        path = self.rule_path(op, op["rule"])
+        item = await self.get(path)
+        expect = op["expect"]
+
+        def ref_id(value: Any) -> str | None:
+            return str(value["id"]) if isinstance(value, dict) and "id" in value else None
+
+        if item.get("name") != expect["name"]:
+            raise BatchError("drift", f"rule {op.get('rule_name')} was renamed in the FMC")
+        if (
+            item.get("action") != expect["action"]
+            or ref_id(item.get("ipsPolicy")) != expect.get("ips")
+            or ref_id(item.get("filePolicy")) != expect.get("file")
+        ):
+            raise BatchError(
+                "drift", f"rule {op.get('rule_name')}: action or inspection changed in the FMC"
+            )
+        body = self._clean(item, keep_id=True)
+        if "action" in op:
+            body["action"] = op["action"]
+        if "ips" in op:
+            body["ipsPolicy"] = dict(op["ips"])
+            if ref_id(body.get("variableSet")) is None:
+                body["variableSet"] = dict(await self.default_variable_set())
+        if "file" in op:
+            body["filePolicy"] = dict(op["file"])
+        await self.write("PUT", path, body)
+        self.undo.append({"method": "PUT", "path": path, "body": self._clean(item, keep_id=True)})
+        self.results.append({"op": "set_inspection", "name": body["name"], "id": op["rule"]})
+        wanted = (
+            body["action"],
+            ref_id(body.get("ipsPolicy")),
+            ref_id(body.get("filePolicy")),
+        )
+
+        async def verify() -> None:
+            after = await self.get(path)
+            found = (
+                after.get("action"),
+                ref_id(after.get("ipsPolicy")),
+                ref_id(after.get("filePolicy")),
+            )
+            if found != wanted:
+                raise BatchError("verification_failed", f"inspection of {op.get('rule_name')}")
 
         self.checks.append(verify)
 

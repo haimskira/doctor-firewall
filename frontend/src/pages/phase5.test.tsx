@@ -14,7 +14,7 @@ import { DeployPage } from './DeployPage';
 function me(username: string, permissions: Permission[]): Me {
   return {
     id: 1, username, display_name: username, roles: ['approver'], permissions, language: 'en',
-    must_change_password: false, csrf_token: 'csrf-5',
+    auth_provider: 'local', must_change_password: false, csrf_token: 'csrf-5',
   };
 }
 

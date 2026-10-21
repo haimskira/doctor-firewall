@@ -13,11 +13,14 @@ approval, in batches that never exceed the deploy limit.
 > changesets with a ticket id, batches under each cluster's deploy limit, approval by someone
 > other than the author, drift-checked writes, verification, deploy, and automatic rollback.
 > Nothing reaches the FMC without that chain. The UI follows the current FMC look. Phase 6
-> (SSL/IPS recommendations, TACACS+/LDAP) is next. See
+> adds inspection by destination tier (IPS / file policy, SSL decryption —
+> [docs/inspection.md](docs/inspection.md)) and sign-in through LDAP / AD or TACACS+ (ISE)
+> with roles from the directory ([docs/authentication.md](docs/authentication.md)). See
 > [docs/architecture.md](docs/architecture.md#roadmap).
 
-Production pulls the images from Docker Hub ([docs/operations.md](docs/operations.md)); an
-air-gapped install from an offline bundle is also supported. At runtime nothing talks to
+Production runs on a server **without internet**: images published to Docker Hub are pulled on
+an internet-connected Linux, exported into a bundle and installed offline
+([docs/operations.md](docs/operations.md)). At runtime nothing talks to
 anything except the FMC.
 
 ---

@@ -33,6 +33,7 @@ def _to_response(user: User) -> UserResponse:
         id=user.id,
         username=user.username,
         display_name=user.display_name,
+        auth_provider=user.auth_provider,
         roles=sorted(parse_roles(user.roles)),
         is_active=user.is_active,
         must_change_password=user.must_change_password,
@@ -79,15 +80,22 @@ def create_user(
     username = body.username.lower()
     if db.scalar(select(User.id).where(User.username == username)) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "username_taken")
-    _check_password(body.temporary_password, username)
+    local = body.auth_provider == "local"
+    if local != (body.temporary_password is not None):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "password_required" if local else "password_not_allowed",
+        )
+    if body.temporary_password is not None:
+        _check_password(body.temporary_password, username)
     user = User(
         username=username,
         display_name=body.display_name,
-        auth_provider="local",
-        password_hash=hash_password(body.temporary_password),
+        auth_provider=body.auth_provider,
+        password_hash=hash_password(body.temporary_password) if body.temporary_password else None,
         roles=sorted({r.value for r in body.roles}),
         is_active=True,
-        must_change_password=True,
+        must_change_password=local,
         language="he",
     )
     db.add(user)
@@ -101,7 +109,7 @@ def create_user(
             outcome="success",
             target=username,
             source_ip=client_ip(request),
-            details={"roles": user.roles},
+            details={"roles": user.roles, "provider": user.auth_provider},
         ),
     )
     db.commit()

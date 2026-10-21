@@ -8,12 +8,18 @@ inspect``, process listings or crash dumps of the settings object.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
+from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+AUTH_PROVIDERS = ("local", "ldap", "tacacs")
+ROLES = ("viewer", "optimizer", "approver", "admin")
+_LDAP_FILTER = re.compile(r"^\(.*\{username\}.*\)$")
 
 
 class SecretFileError(RuntimeError):
@@ -84,6 +90,32 @@ class Settings(BaseSettings):
     session_idle_minutes: int = Field(default=30, ge=5, le=240)
     session_absolute_hours: int = Field(default=8, ge=1, le=24)
 
+    # Sign-in providers, in the order tried for a username not yet known locally.
+    # "local" always works for existing local accounts (break-glass administrator).
+    auth_providers: str = Field(default="local", pattern=r"^[a-z]+(,[a-z]+)*$")
+
+    # LDAP / Active Directory (LDAPS or StartTLS only; certificate verified against ldap_ca_file).
+    ldap_url: str = ""
+    ldap_start_tls: bool = False
+    ldap_ca_file: Path = Path("/etc/doctor-firewall/trust/ldap-ca.pem")
+    ldap_bind_dn: str = ""
+    ldap_bind_password_file: Path = Path("/run/secrets/ldap_bind_password")
+    ldap_user_base: str = ""
+    ldap_user_filter: str = "(&(objectClass=user)(sAMAccountName={username}))"
+    ldap_display_name_attribute: str = Field(default="displayName", pattern=r"^[A-Za-z0-9-]+$")
+    # role=group DN pairs separated by ";" (DNs contain commas). Empty: roles stay local.
+    ldap_group_roles: str = ""
+    ldap_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+
+    # TACACS+ (e.g. Cisco ISE), RFC 8907. Roles from an authorization attribute.
+    tacacs_host: str = ""
+    tacacs_port: int = Field(default=49, ge=1, le=65535)
+    tacacs_secret_file: Path = Path("/run/secrets/tacacs_secret")
+    tacacs_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    tacacs_service: str = Field(default="shell", pattern=r"^[A-Za-z0-9_-]{1,32}$")
+    # Attribute carrying the roles (e.g. "df-role=optimizer,approver"). Empty: roles stay local.
+    tacacs_role_attribute: str = Field(default="df-role", pattern=r"^([A-Za-z0-9_-]{1,32})?$")
+
     # Brute-force protection for local login.
     login_max_failures: int = Field(default=5, ge=3, le=20)
     login_lockout_minutes: int = Field(default=15, ge=1, le=1440)
@@ -95,6 +127,49 @@ class Settings(BaseSettings):
     def is_dev(self) -> bool:
         return self.environment == "dev"
 
+    @property
+    def providers(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.auth_providers.split(",")))
+
+    @property
+    def ldap_role_groups(self) -> dict[str, frozenset[str]]:
+        """role -> group DNs (normalised: lower case, no spaces around separators)."""
+        out: dict[str, set[str]] = {}
+        for item in self.ldap_group_roles.split(";"):
+            if not item.strip():
+                continue
+            role, _, dn = item.partition("=")
+            out.setdefault(role.strip(), set()).add(normalise_dn(dn))
+        return {role: frozenset(dns) for role, dns in out.items()}
+
+    @model_validator(mode="after")
+    def _auth_config(self) -> Self:
+        unknown = set(self.providers) - set(AUTH_PROVIDERS)
+        if unknown:
+            raise ValueError(f"unknown auth provider(s): {', '.join(sorted(unknown))}")
+        if "ldap" in self.providers:
+            url = urlsplit(self.ldap_url)
+            if url.scheme not in ("ldaps", "ldap") or not url.hostname:
+                raise ValueError(
+                    "DF_LDAP_URL must be ldaps://host[:port] (or ldap:// with StartTLS)"
+                )
+            if url.scheme == "ldap" and not self.ldap_start_tls:
+                raise ValueError("plain LDAP is refused: use ldaps:// or DF_LDAP_START_TLS=true")
+            if not self.ldap_user_base or not self.ldap_bind_dn:
+                raise ValueError("DF_LDAP_USER_BASE and DF_LDAP_BIND_DN are required for LDAP")
+            if not _LDAP_FILTER.fullmatch(self.ldap_user_filter):
+                raise ValueError("DF_LDAP_USER_FILTER must be an LDAP filter containing {username}")
+            for item in self.ldap_group_roles.split(";"):
+                if item.strip():
+                    role, sep, dn = item.partition("=")
+                    if not sep or role.strip() not in ROLES or not dn.strip():
+                        raise ValueError(
+                            "DF_LDAP_GROUP_ROLES: role=<group DN>;... with known roles"
+                        )
+        if "tacacs" in self.providers and not self.tacacs_host:
+            raise ValueError("DF_TACACS_HOST is required for TACACS+")
+        return self
+
     def db_password(self) -> str:
         return read_secret_file(self.db_password_file)
 
@@ -105,3 +180,8 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def normalise_dn(dn: str) -> str:
+    """Case-insensitive, whitespace-tolerant form of a DN for comparisons."""
+    return ",".join(part.strip() for part in dn.strip().lower().split(","))

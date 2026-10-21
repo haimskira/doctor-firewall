@@ -106,6 +106,28 @@ services:
 
   api:
     <<: *backend
+    environment:
+      <<: *backend-env
+      # Sign-in providers (docs/authentication.md). Secrets: infra/secrets/ldap_bind_password,
+      # infra/secrets/tacacs_secret; the LDAPS CA: infra/trust/ldap-ca.pem.
+      DF_AUTH_PROVIDERS: ${DF_AUTH_PROVIDERS:-local}
+      DF_LDAP_URL: ${DF_LDAP_URL:-}
+      DF_LDAP_START_TLS: ${DF_LDAP_START_TLS:-false}
+      DF_LDAP_CA_FILE: /etc/doctor-firewall/directory-trust/ldap-ca.pem
+      DF_LDAP_BIND_DN: ${DF_LDAP_BIND_DN:-}
+      DF_LDAP_BIND_PASSWORD_FILE: /run/secrets/ldap_bind_password
+      DF_LDAP_USER_BASE: ${DF_LDAP_USER_BASE:-}
+      DF_LDAP_USER_FILTER: ${DF_LDAP_USER_FILTER:-(&(objectClass=user)(sAMAccountName={username}))}
+      DF_LDAP_GROUP_ROLES: ${DF_LDAP_GROUP_ROLES:-}
+      DF_TACACS_HOST: ${DF_TACACS_HOST:-}
+      DF_TACACS_PORT: ${DF_TACACS_PORT:-49}
+      DF_TACACS_SECRET_FILE: /run/secrets/tacacs_secret
+      DF_TACACS_SERVICE: ${DF_TACACS_SERVICE:-shell}
+      DF_TACACS_ROLE_ATTRIBUTE: ${DF_TACACS_ROLE_ATTRIBUTE-df-role}
+    secrets: [db_app_password, redis_password, master_keyring, ldap_bind_password, tacacs_secret]
+    volumes:
+      - ${DF_FMC_CA_FILE:-./trust/fmc-ca.pem}:/etc/doctor-firewall/trust/fmc-ca.pem:ro
+      - ./trust:/etc/doctor-firewall/directory-trust:ro
     networks: [backend, fmc]
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -173,3 +195,6 @@ secrets:
   db_app_password:   { file: ./secrets/db_app_password }
   redis_password:    { file: ./secrets/redis_password }
   master_keyring:    { file: ./secrets/master_keyring }
+  # Empty unless LDAP / TACACS+ sign-in is configured (created empty by init-secrets).
+  ldap_bind_password: { file: ./secrets/ldap_bind_password }
+  tacacs_secret:     { file: ./secrets/tacacs_secret }

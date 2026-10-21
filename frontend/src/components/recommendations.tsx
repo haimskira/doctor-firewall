@@ -6,7 +6,7 @@ import type {
   PreviewRule,
   RecommendationKind,
   RecommendationPreview,
-  RuleFieldName,
+  PreviewFieldName,
   RuleRecTag,
 } from '../api/types';
 import { useI18n } from '../i18n/I18nProvider';
@@ -14,7 +14,7 @@ import type { MessageKey } from '../i18n/messages';
 import { Ltr } from './common';
 import { MapChange } from './mapParts';
 
-type TagGroup = 'remove' | 'split' | 'merge' | 'tighten' | 'rename' | 'object';
+type TagGroup = 'remove' | 'split' | 'merge' | 'tighten' | 'rename' | 'object' | 'inspect';
 
 const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['remove_shadowed_rule', 'remove'],
@@ -30,6 +30,9 @@ const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['rename_role', 'rename'],
   ['rename_convention', 'rename'],
   ['literal_to_object', 'object'],
+  ['add_inspection', 'inspect'],
+  ['ssl_exempt_core', 'inspect'],
+  ['ssl_decrypt_inbound', 'inspect'],
 ]);
 
 export function tagGroup(kind: RecommendationKind): TagGroup {
@@ -65,7 +68,7 @@ export function signed(value: number): string {
   return '0';
 }
 
-const FIELD_ORDER: readonly RuleFieldName[] = [
+const FIELD_ORDER: readonly PreviewFieldName[] = [
   'src_zone',
   'src_net',
   'src_sgt',
@@ -80,17 +83,19 @@ const FIELD_ORDER: readonly RuleFieldName[] = [
   'app',
   'url',
   'vlan',
+  'ips_policy',
+  'file_policy',
 ];
 
-function fieldValues(rule: PreviewRule, field: RuleFieldName): string[] {
+function fieldValues(rule: PreviewRule, field: PreviewFieldName): string[] {
   return new Map(Object.entries(rule.fields)).get(field) ?? [];
 }
 
-function fieldChange(rule: PreviewRule, field: RuleFieldName | 'name'): { added: string[]; removed: string[] } | undefined {
+function fieldChange(rule: PreviewRule, field: PreviewFieldName | 'name' | 'action'): { added: string[]; removed: string[] } | undefined {
   return new Map(Object.entries(rule.changes ?? {})).get(field);
 }
 
-function FieldValues({ rule, field, inline }: { rule: PreviewRule; field: RuleFieldName; inline: boolean }) {
+function FieldValues({ rule, field, inline }: { rule: PreviewRule; field: PreviewFieldName; inline: boolean }) {
   const values = fieldValues(rule, field);
   const change = inline ? fieldChange(rule, field) : undefined;
   const added = new Set(change?.added ?? []);
@@ -123,6 +128,7 @@ function RuleCard({ rule, inline }: { rule: PreviewRule; inline: boolean }) {
     (f) => fieldValues(rule, f).length > 0 || (inline && fieldChange(rule, f) !== undefined),
   );
   const rename = inline ? fieldChange(rule, 'name') : undefined;
+  const actionChange = inline ? fieldChange(rule, 'action') : undefined;
   return (
     <div className={`rule-card status-${status}`}>
       <div className="rule-card-head">
@@ -141,9 +147,20 @@ function RuleCard({ rule, inline }: { rule: PreviewRule; inline: boolean }) {
             <Ltr>{rule.name}</Ltr>
           )}
         </strong>
-        <span className="badge">
-          <Ltr>{rule.action}</Ltr>
-        </span>
+        {actionChange !== undefined ? (
+          <span className="badge">
+            <del className="diff-del">
+              <Ltr>{actionChange.removed[0] ?? ''}</Ltr>
+            </del>{' '}
+            <ins className="diff-add">
+              <Ltr>{rule.action}</Ltr>
+            </ins>
+          </span>
+        ) : (
+          <span className="badge">
+            <Ltr>{rule.action}</Ltr>
+          </span>
+        )}
         {status !== 'unchanged' && <span className={`badge status-${status}`}>{t(`rec.status.${status}`)}</span>}
       </div>
       {fields.length === 0 ? (
@@ -269,6 +286,18 @@ export function RecommendationPreviewView({
           </div>
         ))}
       {preview.map !== undefined && <MapChange before={preview.map.before} after={preview.map.after} />}
+      {preview.rules !== undefined && preview.rules.length > 0 && (
+        <div>
+          <h3>{t('rec.tlsRules')}</h3>
+          <ul className="plain-list small">
+            {preview.rules.map((r) => (
+              <li key={`${r.policy}-${r.id}`}>
+                <bdi>{r.policy}</bdi> · #{r.index} <Ltr>{r.name}</Ltr>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {preview.objects !== undefined && (
         <div className="split-view">
           <div>

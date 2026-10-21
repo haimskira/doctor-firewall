@@ -251,6 +251,34 @@ def build_write_router(
 
     # ---------------------------------------------------------------- rules
 
+    def ref_id(value: Any) -> str | None:
+        return str(value["id"]) if isinstance(value, dict) and "id" in value else None
+
+    def inspection_error(body: Json) -> Response | None:
+        """The FMC's checks on the intrusion / file policy of an access rule."""
+        ips, file, variables = (
+            ref_id(body.get("ipsPolicy")),
+            ref_id(body.get("filePolicy")),
+            ref_id(body.get("variableSet")),
+        )
+        policies = {
+            kind: {p["id"] for p in data.policy_lists.get(kind, [])}
+            for kind in ("intrusionpolicies", "filepolicies")
+        }
+        if body.get("ipsPolicy") is not None:
+            if ips not in policies["intrusionpolicies"]:
+                return _error(400, "Invalid intrusion policy")
+            if body.get("action") != "ALLOW":
+                return _error(400, "An intrusion policy requires the Allow action")
+            if variables not in {v["id"] for v in data.variable_sets}:
+                return _error(400, "A variable set is required with an intrusion policy")
+        if body.get("filePolicy") is not None:
+            if file not in policies["filepolicies"]:
+                return _error(400, "Invalid file policy")
+            if body.get("action") != "ALLOW":
+                return _error(400, "A file policy requires the Allow action")
+        return None
+
     def renumber(rules: list[Json]) -> None:
         for index, r in enumerate(rules, start=1):
             r.setdefault("metadata", {})["ruleIndex"] = index
@@ -285,7 +313,7 @@ def build_write_router(
                 missing = unknown_refs(body, set())
                 if missing:
                     return _error(400, f"Unknown object(s): {', '.join(missing[:3])}")
-                return None
+                return inspection_error(body)
 
             @router.get(base + "/{rule_id}", name=f"get:{store}")
             async def _get(request: Request, domain: str, policy_id: str, rule_id: str) -> Response:

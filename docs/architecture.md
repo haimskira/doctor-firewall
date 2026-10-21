@@ -81,7 +81,7 @@ All containers run as non-root from the first process, `read_only` root FS,
 | 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview (inline / split) & deploy cost, local accept / dismiss — see [recommendations.md](recommendations.md); UI in the current FMC look ([ui-design.md](ui-design.md)) | **done** |
 | 4 | Connectivity map: three views, filtering, risk colouring, before/after — see [connectivity.md](connectivity.md) | **done** |
 | 5 | Controlled enforcement: executable plans, changesets, batching under the per-cluster deploy limit, four-eyes approval, drift-checked writes, verification, deploy, rollback — see [enforcement.md](enforcement.md) | **done** |
-| 6 | SSL/IPS recommendations; TACACS+ (ISE) and LDAP providers | next |
+| 6 | Inspection by destination tier (IPS / file policy, SSL decryption) — see [inspection.md](inspection.md); sign-in through LDAP / AD and TACACS+ (ISE) with roles from the directory — see [authentication.md](authentication.md) | **done** |
 
 ## Collection (phase 1)
 

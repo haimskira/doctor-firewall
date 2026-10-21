@@ -26,6 +26,7 @@
   --danger: #c4314b;
   --ok: #2e8b57;
   --warn: #b26b00;
+  --inspect: #7a4fc4;
   --radius: 6px;
   --radius-card: 8px;
   --top-h: 50px;
@@ -70,6 +71,7 @@
     --danger: #f97066;
     --ok: #4cc786;
     --warn: #f0b13d;
+    --inspect: #b495ec;
     --bar-blue: #33507a;
     --bar-green: #2f5a3a;
     --bar-pink: #6b3445;
@@ -493,6 +495,7 @@ label.button {
 .tag-split, .tag-merge { color: var(--primary); }
 .tag-tighten { color: var(--warn); }
 .tag-rename, .tag-object { color: var(--muted); }
+.tag-inspect { color: var(--inspect); }
 .rec-summary { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .rec-kind, .rec-kind:hover:not(:disabled) {
   display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; min-width: 9rem;
@@ -503,6 +506,7 @@ label.button {
 .rec-kind.tag-split, .rec-kind.tag-merge { border-block-start-color: var(--primary); }
 .rec-kind.tag-tighten { border-block-start-color: var(--warn); }
 .rec-kind.tag-rename, .rec-kind.tag-object { border-block-start-color: var(--muted); }
+.rec-kind.tag-inspect { border-block-start-color: var(--inspect); }
 .rec-kind strong { font-size: 1.2rem; }
 .rec-kind.active { box-shadow: inset 0 0 0 1px var(--primary); background: var(--side-active); }
 .card-toolbar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }

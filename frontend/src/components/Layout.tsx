@@ -81,6 +81,7 @@ const NAV: NavGroup[] = [
           { to: '/policies', label: 'shell.securityPolicies', permission: 'policy:read' },
           { to: '/recommendations', label: 'nav.recommendations', permission: 'policy:read' },
           { to: '/naming', label: 'nav.naming', permission: 'policy:read' },
+          { to: '/inspection', label: 'nav.inspection', permission: 'policy:read' },
           { to: '/deploy', label: 'nav.deploy', permission: 'policy:read' },
         ],
       },
@@ -175,7 +176,9 @@ function useDismiss(open: boolean, close: () => void, ref: RefObject<HTMLElement
 
 export function Layout() {
   const { t } = useI18n();
-  const { can, logout } = useAuth();
+  const { can, logout, state } = useAuth();
+  // Directory accounts (LDAP / TACACS+) change their password in the directory, not here.
+  const localAccount = state.status === 'authenticated' && state.me.auth_provider === 'local';
   const me = useMe();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -306,7 +309,12 @@ export function Layout() {
         </button>
         {NAV.map((group, gi) => {
           const items = group.items
-            .map((item) => ({ ...item, children: item.children.filter((c) => c.permission === null || can(c.permission)) }))
+            .map((item) => ({
+              ...item,
+              children: item.children.filter(
+                (c) => (c.permission === null || can(c.permission)) && (c.to !== '/password' || localAccount),
+              ),
+            }))
             .filter((item) => item.children.length > 0);
           if (items.length === 0) return null;
           return (

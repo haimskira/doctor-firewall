@@ -18,7 +18,7 @@ class User(Base):
             name="roles_known",
         ),
         CheckConstraint("language IN ('he','en')", name="language_known"),
-        CheckConstraint("auth_provider IN ('local')", name="auth_provider_known"),
+        CheckConstraint("auth_provider IN ('local','ldap','tacacs')", name="auth_provider_known"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

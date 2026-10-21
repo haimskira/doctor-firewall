@@ -58,7 +58,7 @@ function target(id: string, node: boolean) {
 
 const ME: Me = {
   id: 1, username: 'v', display_name: 'V', roles: ['viewer'], permissions: ['policy:read'], language: 'en',
-  must_change_password: false, csrf_token: 'c',
+  auth_provider: 'local', must_change_password: false, csrf_token: 'c',
 };
 const SNAP = {
   id: 7, connection_id: 1, connection_name: 'FMC', status: 'complete', requested_by: 'x', created_at: '2026-10-20T10:00:00Z',

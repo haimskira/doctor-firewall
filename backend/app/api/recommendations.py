@@ -15,16 +15,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
 from app.api.schemas import StrictModel
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
-from app.models.inventory import Snapshot
+from app.models.inventory import Policy, Snapshot
 from app.models.recommendations import (
     CONVENTION_KINDS,
+    INSPECTION_TIERS,
     RECOMMENDATION_KINDS,
+    InspectionProfile,
     NamingConvention,
     Recommendation,
     RecommendationDecision,
@@ -43,6 +46,8 @@ CollectorDep = Annotated[Principal, Depends(require(Permission.COLLECT_RUN))]
 FmcIdQuery = Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 KindPattern = "^(" + "|".join(RECOMMENDATION_KINDS) + ")$"
 ConventionKindPath = Annotated[str, Path(pattern="^(" + "|".join(CONVENTION_KINDS) + ")$")]
+TierPath = Annotated[str, Path(pattern="^(" + "|".join(INSPECTION_TIERS) + ")$")]
+PolicyName = Annotated[str, Field(min_length=1, max_length=256)]
 
 
 # ------------------------------------------------------------------ schemas
@@ -429,4 +434,112 @@ def delete_convention(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     db.delete(current)
     _audit(audit, db, who, request, "naming.delete", kind, {})
+    db.commit()
+
+
+# ------------------------------------------------------------------ inspection profiles
+
+
+class InspectionProfileIn(StrictModel):
+    ips_policy: PolicyName | None = None
+    file_policy: PolicyName | None = None
+
+
+class InspectionProfileOut(BaseModel):
+    tier: str
+    ips_policy: str | None
+    file_policy: str | None
+    configured: bool
+    # Doctrine for the tier: weakest acceptable built-in level and whether a file policy is due.
+    min_level: int
+    file_required: bool
+
+
+class PolicyChoice(BaseModel):
+    name: str
+    level: int | None  # 0..4 for policies based on Cisco's built-in intrusion policies
+
+
+class InspectionCatalog(BaseModel):
+    profiles: list[InspectionProfileOut]
+    intrusion_policies: list[PolicyChoice]
+    file_policies: list[PolicyChoice]
+    snapshot_id: int | None
+
+
+def _latest_complete(db: Session) -> int | None:
+    return db.scalar(
+        select(Snapshot.id)
+        .where(Snapshot.status == "complete")
+        .order_by(Snapshot.id.desc())
+        .limit(1)
+    )
+
+
+@router.get("/inspection-profiles", response_model=InspectionCatalog)
+def list_inspection_profiles(db: DbDep, _: ReaderDep) -> InspectionCatalog:
+    """Tier -> intrusion / file policy, and the policies the latest snapshot offers."""
+    profiles = load_profiles(db)
+    sid = _latest_complete(db)
+    choices: dict[str, list[PolicyChoice]] = {"intrusion": [], "file": []}
+    if sid is not None:
+        for p in db.scalars(
+            select(Policy)
+            .where(Policy.snapshot_id == sid, Policy.kind.in_(("intrusion", "file")))
+            .order_by(Policy.name)
+        ):
+            level = (
+                ips_level(p.name, str(p.attrs.get("base_policy") or "") or None)
+                if p.kind == "intrusion"
+                else None
+            )
+            choices[p.kind].append(PolicyChoice(name=p.name, level=level))
+    return InspectionCatalog(
+        profiles=[
+            InspectionProfileOut(
+                tier=t,
+                ips_policy=profiles[t].ips_policy,
+                file_policy=profiles[t].file_policy,
+                configured=profiles[t].configured,
+                min_level=DOCTRINE[t].min_level,
+                file_required=DOCTRINE[t].file_policy,
+            )
+            for t in INSPECTION_TIERS
+        ],
+        intrusion_policies=choices["intrusion"],
+        file_policies=choices["file"],
+        snapshot_id=sid,
+    )
+
+
+@router.put("/inspection-profiles/{tier}", status_code=status.HTTP_204_NO_CONTENT)
+def set_inspection_profile(
+    tier: TierPath,
+    body: InspectionProfileIn,
+    request: Request,
+    db: DbDep,
+    audit: AuditDep,
+    who: ConventionDep,
+) -> None:
+    """Takes effect at the next analysis (recommendations are recomputed per snapshot)."""
+    current = db.get(InspectionProfile, tier, with_for_update=True)
+    if current is None:
+        db.add(InspectionProfile(tier=tier, updated_by=who.username, **body.model_dump()))
+    else:
+        current.ips_policy, current.file_policy = body.ips_policy, body.file_policy
+        current.updated_by = who.username
+    _audit(audit, db, who, request, "inspection.set", tier, body.model_dump())
+    db.commit()
+
+
+@router.delete("/inspection-profiles/{tier}", status_code=status.HTTP_204_NO_CONTENT)
+def reset_inspection_profile(
+    tier: TierPath, request: Request, db: DbDep, audit: AuditDep, who: ConventionDep
+) -> None:
+    """Back to the doctrine default."""
+    current = db.get(InspectionProfile, tier)
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    db.delete(current)
+    _audit(audit, db, who, request, "inspection.reset", tier, {})
     db.commit()

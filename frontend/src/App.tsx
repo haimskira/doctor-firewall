@@ -15,6 +15,7 @@ import { FmcPage } from './pages/FmcPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { MapPage } from './pages/MapPage';
+import { InspectionPage } from './pages/InspectionPage';
 import { NamingPage } from './pages/NamingPage';
 import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { ObjectsPage } from './pages/ObjectsPage';
@@ -68,6 +69,7 @@ export function App() {
             ['map', <MapPage key="g" />],
             ['deploy', <DeployPage key="y" />],
             ['naming', <NamingPage key="n" />],
+            ['inspection', <InspectionPage key="i" />],
           ] as const
         ).map(([path, element]) => (
           <Route key={path} path={path} element={<RequirePermission permission="policy:read">{element}</RequirePermission>} />

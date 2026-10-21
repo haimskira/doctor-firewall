@@ -20,7 +20,7 @@ function me(roles: Role[], permissions: Permission[], extra: Partial<Me> = {}): 
     roles,
     permissions,
     language: 'en',
-    must_change_password: false,
+    auth_provider: 'local', must_change_password: false,
     csrf_token: 'csrf-abc',
     ...extra,
   };

@@ -10,10 +10,11 @@ from app.api.schemas import ChangePasswordRequest, LoginRequest, MeResponse, Pre
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require_authenticated
 from app.auth.passwords import PasswordPolicyError, check_policy, hash_password, verify_password
-from app.auth.providers.local import LocalProvider
 from app.auth.rbac import parse_roles, permissions_for
 from app.auth.sessions import SESSION_COOKIE, SessionStore
+from app.auth.signin import sign_in
 from app.auth.throttle import LoginThrottle
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
 from app.runtime import get_audit, get_login_throttle, get_session_store
@@ -40,6 +41,7 @@ def _me(user: User, csrf_token: str) -> MeResponse:
         id=user.id,
         username=user.username,
         display_name=user.display_name,
+        auth_provider=user.auth_provider,
         roles=sorted(roles),
         permissions=sorted(p.value for p in permissions_for(roles)),
         language="en" if user.language == "en" else "he",
@@ -74,20 +76,25 @@ def login(
         db.commit()
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too_many_attempts")
 
-    identity = LocalProvider().authenticate(db, username, body.password)
-    if identity is None:
+    result = sign_in(db, get_settings(), username, body.password, remote=ip or "")
+    user = result.user
+    if user is None:
         throttle.register_failure(username, ip)
         audit.record(
             db,
-            AuditEvent(actor=username, action="auth.login", outcome="failure", source_ip=ip),
+            AuditEvent(
+                actor=username,
+                action="auth.login",
+                outcome="failure",
+                source_ip=ip,
+                details={"provider": result.provider, "reason": result.reason[:200]},
+            ),
         )
         db.commit()
+        # One answer for every failure: no hint whether the user, password or directory failed.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
 
     throttle.reset(username)
-    user = db.get(User, identity.user_id)
-    if user is None:  # pragma: no cover - identity was just loaded from the DB
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
     user.last_login_at = datetime.now(UTC)
     audit.record(
         db,
@@ -97,6 +104,7 @@ def login(
             action="auth.login",
             outcome="success",
             source_ip=ip,
+            details={"provider": result.provider, **result.details},
         ),
     )
     db.commit()

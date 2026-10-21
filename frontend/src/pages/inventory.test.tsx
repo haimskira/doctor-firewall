@@ -23,7 +23,7 @@ const ME: Me = {
   roles: ['optimizer'],
   permissions: ['policy:read', 'collect:run', 'changeset:write'],
   language: 'en',
-  must_change_password: false,
+  auth_provider: 'local', must_change_password: false,
   csrf_token: 'csrf-1',
 };
 

@@ -81,6 +81,10 @@ init_secret_dir() {
     if [[ -n "$with_mock" ]]; then
         write_secret "$dir/fmc_mock_password" "$(random_secret)"
     fi
+    # Directory sign-in secrets are provided by the administrator (docs/authentication.md);
+    # empty placeholders keep compose happy while LDAP / TACACS+ are not used.
+    write_secret "$dir/ldap_bind_password" ""
+    write_secret "$dir/tacacs_secret" ""
 }
 
 require_vendor() {

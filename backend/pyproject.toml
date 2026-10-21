@@ -65,7 +65,12 @@ addopts = "-ra --strict-markers --strict-config"
 markers = [
   "integration: needs real PostgreSQL + Redis (run inside the CI compose stack)",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # ldap3 2.9.1 imports pyasn1 names deprecated (still provided) since pyasn1 0.6.
+  "ignore:tagMap is deprecated:DeprecationWarning",
+  "ignore:typeMap is deprecated:DeprecationWarning",
+]
 
 [tool.coverage.run]
 branch = true

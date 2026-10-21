@@ -44,6 +44,7 @@ class MeResponse(BaseModel):
     id: int
     username: str
     display_name: str
+    auth_provider: str  # local accounts change their password here; directory accounts do not
     roles: list[Role]
     permissions: list[str]
     language: Language
@@ -54,11 +55,16 @@ class MeResponse(BaseModel):
 # ---- users (admin) ----
 
 
+AuthProviderName = Literal["local", "ldap", "tacacs"]
+
+
 class UserCreateRequest(StrictModel):
     username: Username
     display_name: Annotated[str, Field(max_length=128)] = ""
     roles: Annotated[list[Role], Field(min_length=1, max_length=4)]
-    temporary_password: Password
+    # Local accounts need a temporary password; directory accounts (LDAP / TACACS+) have none.
+    auth_provider: AuthProviderName = "local"
+    temporary_password: Password | None = None
 
 
 class UserUpdateRequest(StrictModel):
@@ -75,6 +81,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     display_name: str
+    auth_provider: str
     roles: list[Role]
     is_active: bool
     must_change_password: bool

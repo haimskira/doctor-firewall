@@ -42,6 +42,10 @@ RECOMMENDATION_KINDS = (
     "rename_role",
     "rename_convention",
     "literal_to_object",
+    # Phase 6: inspection where the doctrine wants it (IPS / file policy, SSL decryption).
+    "add_inspection",
+    "ssl_exempt_core",
+    "ssl_decrypt_inbound",
 )
 DECISIONS = ("accepted", "dismissed")
 # Object kinds a naming convention can be defined for ("rule" = access rules).
@@ -124,6 +128,32 @@ class NamingConvention(Base):
     template: Mapped[str] = mapped_column(String(128), nullable=False)
     letter_case: Mapped[str] = mapped_column(String(8), nullable=False, default="upper")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+INSPECTION_TIERS = ("GOLD", "SILVER", "BRONZE")
+
+
+class InspectionProfile(Base):
+    """Which FMC intrusion / file policy implements the doctrine's inspection for a tier.
+
+    Values are policy names as they appear in the FMC; a missing row falls back to the
+    doctrine default (Cisco's built-in intrusion policies; no file policy).
+    """
+
+    __tablename__ = "inspection_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "tier IN (" + ",".join(f"'{t}'" for t in INSPECTION_TIERS) + ")", name="tier_known"
+        ),
+    )
+
+    tier: Mapped[str] = mapped_column(String(8), primary_key=True)
+    ips_policy: Mapped[str | None] = mapped_column(String(256))
+    file_policy: Mapped[str | None] = mapped_column(String(256))
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

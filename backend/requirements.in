@@ -12,3 +12,4 @@ rq
 httpx
 argon2-cffi
 cryptography
+ldap3

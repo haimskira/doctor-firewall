@@ -77,4 +77,6 @@ system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or
 * **Connectivity map:** tier-tinted pill nodes in light column bands, soft curved edges, focus on
   hover / tap fades everything not connected.
 * **Assets:** list / detail — assets with kind icons and tier chips, components table inside.
+* **Inspection profiles** (Policies flyout): tier → intrusion / file policy table; recommendation
+  tag *Inspection* (purple) and an Allow ← Trust action diff in previews.
 * Deliberately absent until the feature exists: Add Rule, Save — no button that does nothing.

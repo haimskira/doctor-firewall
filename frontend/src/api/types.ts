@@ -16,10 +16,14 @@ export type Permission =
 
 export type Language = 'he' | 'en';
 
+export type AuthProviderName = 'local' | 'ldap' | 'tacacs';
+export const AUTH_PROVIDERS: readonly AuthProviderName[] = ['local', 'ldap', 'tacacs'];
+
 export interface Me {
   id: number;
   username: string;
   display_name: string;
+  auth_provider: AuthProviderName;
   roles: Role[];
   permissions: Permission[];
   language: Language;
@@ -31,6 +35,7 @@ export interface User {
   id: number;
   username: string;
   display_name: string;
+  auth_provider: AuthProviderName;
   roles: Role[];
   is_active: boolean;
   must_change_password: boolean;
@@ -402,7 +407,10 @@ export type RecommendationKind =
   | 'tighten_ports'
   | 'rename_role'
   | 'rename_convention'
-  | 'literal_to_object';
+  | 'literal_to_object'
+  | 'add_inspection'
+  | 'ssl_exempt_core'
+  | 'ssl_decrypt_inbound';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -418,6 +426,9 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'rename_role',
   'rename_convention',
   'remove_unused_object',
+  'add_inspection',
+  'ssl_exempt_core',
+  'ssl_decrypt_inbound',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';
@@ -466,9 +477,37 @@ export interface PreviewRule {
   enabled: boolean;
   section: string;
   category: string;
-  fields: Partial<Record<RuleFieldName, string[]>>;
+  fields: Partial<Record<PreviewFieldName, string[]>>;
   status?: RowStatus;
-  changes?: Partial<Record<RuleFieldName | 'name', { added: string[]; removed: string[] }>>;
+  changes?: Partial<Record<PreviewFieldName | 'name' | 'action', { added: string[]; removed: string[] }>>;
+}
+
+/** Rule fields in a preview: the match fields plus the attached inspection policies. */
+export type PreviewFieldName = RuleFieldName | 'ips_policy' | 'file_policy';
+
+// ---- phase 6: tier -> inspection profile (mirrors app/api/recommendations.py) ----
+
+export type InspectionTier = 'GOLD' | 'SILVER' | 'BRONZE';
+
+export interface InspectionProfile {
+  tier: InspectionTier;
+  ips_policy: string | null;
+  file_policy: string | null;
+  configured: boolean;
+  min_level: number;
+  file_required: boolean;
+}
+
+export interface InspectionPolicyChoice {
+  name: string;
+  level: number | null;
+}
+
+export interface InspectionCatalog {
+  profiles: InspectionProfile[];
+  intrusion_policies: InspectionPolicyChoice[];
+  file_policies: InspectionPolicyChoice[];
+  snapshot_id: number | null;
 }
 
 export interface PreviewObject {
@@ -502,6 +541,10 @@ export interface RecommendationPreview {
   routes?: number;
   hits?: { hit_count: number | null; last_hit: string | null };
   map?: { before: MapChangeEdge[]; after: MapChangeEdge[] };
+  // phase 6: destination tier, systems concerned, rules that reach them over TLS
+  tier?: string;
+  systems?: string[];
+  rules?: { policy: string; index: number; name: string; id: string }[];
 }
 
 export interface PlanOp {

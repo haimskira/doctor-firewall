@@ -3,6 +3,23 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-028 — Directory sign-in: own TACACS+ client, ldap3 for LDAP
+TACACS+ (RFC 8907, PAP + authorization) is a small, well-specified protocol and the only
+Python client is unmaintained since 2019, so the client is implemented here (~200 lines,
+tested against a fake server). LDAP uses `ldap3` (pure Python, mature). Local accounts never
+consult a directory (break-glass); directory accounts have no local password. When the
+directory manages roles they are replaced at every sign-in and an account without a mapped
+role is refused; otherwise roles stay local and an administrator pre-creates the account.
+
+### D-027 — Inspection: IPS / file executable, decryption advisory
+Attaching an intrusion / file policy to an access rule is a normal executable plan
+(`set_inspection`, drift-checked on action and policy ids). Decryption rules are proposals only:
+known-key decryption needs server certificates and keys the system does not hold, and the
+decryption-rule API differs from access rules. Tier -> policy mapping is configurable
+(*Inspection profiles*), defaulting to Cisco's built-in intrusion policies; strength is judged
+by name or base policy, and unknown custom policies are not second-guessed. A rule given an
+intrusion policy without a variable set gets the FMC's built-in `Default-Set`.
+
 ### D-026 — Assets with components
 The asset table was flat (one row per network). Assets are now first-class: an asset is a whole
 system, a single server, a single user or a user segment, carries the doctrine classification

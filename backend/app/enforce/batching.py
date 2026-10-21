@@ -28,6 +28,7 @@ KIND_ORDER = (
     "merge_rules",
     "tighten_source",
     "tighten_ports",
+    "add_inspection",
     "rename_role",
     "rename_convention",
     "remove_shadowed_rule",

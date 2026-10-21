@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 
 import { api, errorCode } from '../api/client';
-import { ALL_ROLES } from '../api/types';
-import type { Role, User } from '../api/types';
+import { ALL_ROLES, AUTH_PROVIDERS } from '../api/types';
+import type { AuthProviderName, Role, User } from '../api/types';
 import { Alert, DateTime, Ltr } from '../components/common';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -46,6 +46,8 @@ export function UsersPage() {
   const [message, setMessage] = useState<Message>(null);
   const [form, setForm] = useState({ username: '', display_name: '', password: '' });
   const [roles, setRoles] = useState<Role[]>(['viewer']);
+  const [provider, setProvider] = useState<AuthProviderName>('local');
+  const local = provider === 'local';
   const [resetFor, setResetFor] = useState<User | null>(null);
   const [resetValue, setResetValue] = useState('');
 
@@ -69,10 +71,12 @@ export function UsersPage() {
         username: form.username.trim(),
         display_name: form.display_name.trim(),
         roles,
-        temporary_password: form.password,
+        auth_provider: provider,
+        ...(local ? { temporary_password: form.password } : {}),
       });
       setForm({ username: '', display_name: '', password: '' });
       setRoles(['viewer']);
+      setProvider('local');
       setMessage({ kind: 'success', text: t('users.saved') });
       reload();
     } catch (err: unknown) {
@@ -117,6 +121,7 @@ export function UsersPage() {
             <tr>
               <th>{t('users.username')}</th>
               <th>{t('users.displayName')}</th>
+              <th>{t('users.provider')}</th>
               <th>{t('users.roles')}</th>
               <th>{t('users.active')}</th>
               <th>{t('users.lastLogin')}</th>
@@ -133,6 +138,7 @@ export function UsersPage() {
                   )}
                 </td>
                 <td>{user.display_name}</td>
+                <td>{t(`users.provider.${user.auth_provider}`)}</td>
                 <td>
                   <RolePicker
                     idPrefix={`u${String(user.id)}`}
@@ -154,16 +160,18 @@ export function UsersPage() {
                   >
                     {user.is_active ? t('users.deactivate') : t('users.activate')}
                   </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => {
-                      setResetFor(user);
-                      setResetValue('');
-                    }}
-                  >
-                    {t('users.resetPassword')}
-                  </button>
+                  {user.auth_provider === 'local' && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        setResetFor(user);
+                        setResetValue('');
+                      }}
+                    >
+                      {t('users.resetPassword')}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -233,27 +241,45 @@ export function UsersPage() {
             />
           </label>
           <label>
-            {t('users.tempPassword')}
-            <input
-              type="password"
-              dir="ltr"
-              autoComplete="new-password"
-              maxLength={128}
-              value={form.password}
+            {t('users.provider')}
+            <select
+              value={provider}
               onChange={(e) => {
-                setForm({ ...form, password: e.target.value });
+                const next = AUTH_PROVIDERS.find((p) => p === e.target.value);
+                if (next !== undefined) setProvider(next);
               }}
-            />
+            >
+              {AUTH_PROVIDERS.map((p) => (
+                <option key={p} value={p}>
+                  {t(`users.provider.${p}`)}
+                </option>
+              ))}
+            </select>
           </label>
+          {local && (
+            <label>
+              {t('users.tempPassword')}
+              <input
+                type="password"
+                dir="ltr"
+                autoComplete="new-password"
+                maxLength={128}
+                value={form.password}
+                onChange={(e) => {
+                  setForm({ ...form, password: e.target.value });
+                }}
+              />
+            </label>
+          )}
           <RolePicker idPrefix="new" value={roles} onChange={setRoles} />
           <button
             type="submit"
-            disabled={form.username === '' || form.password === '' || roles.length === 0}
+            disabled={form.username === '' || (local && form.password === '') || roles.length === 0}
           >
             {t('common.create')}
           </button>
         </form>
-        <p className="muted small">{t('password.rules')}</p>
+        <p className="muted small">{local ? t('password.rules') : t('users.directoryHelp')}</p>
       </section>
     </div>
   );

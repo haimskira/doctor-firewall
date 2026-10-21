@@ -30,6 +30,8 @@ Baseline: OWASP ASVS / Top 10, CWE Top 25, deny-by-default in every layer.
 | `db_app_password` | `infra/secrets/` | api, worker |
 | `redis_password` | `infra/secrets/` | redis, api, worker, scheduler |
 | `master_keyring` | `infra/secrets/` | api, worker (AES-GCM + audit HMAC) |
+| `ldap_bind_password` | `infra/secrets/` (empty unless LDAP is used) | api — LDAP service account |
+| `tacacs_secret` | `infra/secrets/` (empty unless TACACS+ is used) | api — TACACS+ shared secret |
 
 Created once by `scripts/init-secrets.*` (never overwritten, never printed). The directory
 is `0700 root`; files are `0644` so the unprivileged container users can read their
@@ -51,6 +53,8 @@ per-file Docker secret mounts, while no other host user can traverse the directo
 ## TLS material
 
 * FMC trust store: `infra/trust/fmc-ca.pem` (internal CA of the FMC certificate).
+* Directory trust store: `infra/trust/ldap-ca.pem` (CA of the domain controllers; LDAPS /
+  StartTLS only, certificate and host name verified) — see [authentication.md](authentication.md).
 * UI: `infra/certs/ui/ui.pem` + `ui.key` from the organisation's PKI; until then a
   self-signed default from `scripts/gen-certs --ui <host>`. Mounted per file.
 
