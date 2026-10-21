@@ -42,7 +42,14 @@ log "Pushing to $REPO"
 for component in "${RUNTIME_COMPONENTS[@]}"; do
     image="$(registry_image "$REPO" "$component" "$VERSION")"
     docker tag "doctor-firewall/$component:$VERSION" "$image"
-    docker push -q "$image" >/dev/null || die "push failed for $image — are you logged in (docker login)?"
+    # Registry timeouts happen; retry before giving up (a push is idempotent).
+    pushed=""
+    for attempt in 1 2 3; do
+        if docker push -q "$image" >/dev/null; then pushed=1; break; fi
+        log "push of $image failed (attempt $attempt), retrying"
+        sleep $((attempt * 10))
+    done
+    [[ -n "$pushed" ]] || die "push failed for $image — network, or not logged in (docker login)?"
     digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || echo "?")"
     ok "$image  ($digest)"
 done
