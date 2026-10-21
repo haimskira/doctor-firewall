@@ -13,13 +13,14 @@ from typing import Any
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
+from app.analysis.assets import effective_assets
 from app.analysis.basic import FindingRow
 from app.analysis.connectivity import MapBuilder
 from app.analysis.expand import Resolver, RuleSpace, rule_spaces
 from app.analysis.score import ACE_HEAVY, PERMIT_ACTIONS, AssetIndex, RuleFacts, score_rule
 from app.analysis.shadow import analyse_order
 from app.core.config import Settings
-from app.models.assets import Asset, ClusterSetting, RuleScore
+from app.models.assets import ClusterSetting, RuleScore
 from app.models.inventory import Cluster, ClusterPolicy, Finding, Policy, Rule, RuleRef, Snapshot
 
 ORDERED_KINDS = ("access", "prefilter", "decryption")  # first-match rule lists
@@ -29,10 +30,7 @@ ACE_WARNING_RATIO = 0.8
 
 def load_assets(session: Session) -> AssetIndex:
     return AssetIndex(
-        [
-            (a.network, a.system, a.tier, a.user_type)
-            for a in session.scalars(select(Asset).where(Asset.confirmed.is_(True)))
-        ]
+        [(a.network, a.system, a.tier, a.user_type) for a in effective_assets(session)]
     )
 
 

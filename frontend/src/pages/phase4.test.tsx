@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectivityMap, DashboardData, Me, Snapshot } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
-import { elementsFor } from '../components/Graph';
+import { columnGap, elementsFor, RISK_COLOURS } from '../components/Graph';
 import { MapChange } from '../components/mapParts';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
@@ -16,29 +16,45 @@ import { HomePage } from './HomePage';
 import { MapPage } from './MapPage';
 
 // jsdom has no canvas: a fake Cytoscape records what the page gives it.
-type TapHandler = (event: { target: { id: () => string } }) => void;
+type TapHandler = (event: ReturnType<typeof target>) => void;
 const fake = vi.hoisted(() => ({
   added: [] as unknown[],
-  handlers: new Map<string, (event: { target: { id: () => string } }) => void>(),
+  handlers: new Map<string, TapHandler>(),
   instances: 0,
 }));
-vi.mock('cytoscape', () => ({
-  default: vi.fn(() => {
-    fake.instances += 1;
-    const elements = { remove: vi.fn() };
-    return {
-      on: (_event: string, selector: string, handler: TapHandler) => {
-        fake.handlers.set(selector, handler);
-      },
-      elements: () => elements,
-      add: (items: unknown[]) => {
-        fake.added = items;
-      },
-      fit: vi.fn(),
-      destroy: vi.fn(),
-    };
-  }),
-}));
+vi.mock('cytoscape', () => {
+  // A chainable collection: every method returns the collection itself.
+  const collection: Record<string, () => unknown> = Object.fromEntries(
+    ['remove', 'removeClass', 'addClass', 'difference', 'union'].map((m) => [m, () => collection]),
+  );
+  return {
+    default: vi.fn(() => {
+      fake.instances += 1;
+      return {
+        // Handlers are registered as (event, selector, handler) or (event, handler).
+        on: (event: string, selector: string | TapHandler, handler?: TapHandler) => {
+          if (typeof selector === 'string' && handler !== undefined) fake.handlers.set(`${event}:${selector}`, handler);
+        },
+        elements: () => collection,
+        batch: (fn: () => void) => {
+          fn();
+        },
+        add: (items: unknown[]) => {
+          fake.added = items;
+        },
+        fit: vi.fn(),
+        resize: vi.fn(),
+        destroy: vi.fn(),
+      };
+    }),
+  };
+});
+
+/** A tapped element as Cytoscape passes it to handlers. */
+function target(id: string, node: boolean) {
+  const self = { id: () => id, isNode: () => node, connectedNodes: () => self, closedNeighborhood: () => self, union: () => self, addClass: () => self };
+  return { target: self };
+}
 
 const ME: Me = {
   id: 1, username: 'v', display_name: 'V', roles: ['viewer'], permissions: ['policy:read'], language: 'en',
@@ -110,9 +126,18 @@ describe('Graph layout', () => {
     const rtl = elementsFor(nodes, edges, true);
     expect(x(rtl, 'GOLD|SQL-FIN')).toBe(-goldX);
     const red = ltr.find((e) => e.data.id === 'BRONZE|DEV->GOLD|SQL-FIN');
-    expect(red?.data['colour']).toBe('#d64545');
+    expect(red?.data['colour']).toBe(RISK_COLOURS.red);
     expect(red?.data.source).toBe('BRONZE|DEV');
     expect(ltr.find((e) => e.data.id === 'ANY')?.classes).toBe('special');
+  });
+
+  it('fits the column distance to the canvas width within readable bounds', () => {
+    expect(columnGap(1200, 7)).toBe(166);
+    expect(columnGap(600, 7)).toBe(135);
+    expect(columnGap(3000, 3)).toBe(250);
+    expect(columnGap(0, 5)).toBe(250);
+    const nodes = [{ id: 'ANY', label: 'Any', tier: null }, { id: 'GOLD|X', label: 'X', tier: 'GOLD' }];
+    expect(elementsFor(nodes, [], false, undefined, 140).find((e) => e.data.id === 'GOLD|X')?.position?.x).toBe(140);
   });
 });
 
@@ -143,11 +168,11 @@ describe('MapPage', () => {
     );
     // Tap in the graph.
     act(() => {
-      fake.handlers.get('edge')?.({ target: { id: () => 'ANY->GOLD|SQL-FIN' } });
+      fake.handlers.get('tap:edge')?.(target('ANY->GOLD|SQL-FIN', false));
     });
     expect(screen.getByRole('heading', { name: 'Any → SQL-FIN' })).toBeInTheDocument();
     act(() => {
-      fake.handlers.get('node.system, node.special')?.({ target: { id: () => 'GOLD|SQL-FIN' } });
+      fake.handlers.get('tap:node.system, node.special')?.(target('GOLD|SQL-FIN', true));
     });
     expect(screen.getByText('10.20.5.0/24')).toBeInTheDocument();
 

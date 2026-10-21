@@ -32,6 +32,7 @@ services:
 
   fmc-mock:
     image: doctor-firewall/fmc-mock:dev
+    pull_policy: never
     build:
       context: ..
       dockerfile: infra/docker/fmc-mock.Dockerfile

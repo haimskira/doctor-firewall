@@ -240,6 +240,7 @@ export const TIERS: readonly Tier[] = ['CORE', 'GOLD', 'SILVER', 'BRONZE', 'USER
 
 export interface Asset {
   id: number;
+  group_id: number | null;
   network: string;
   system: string;
   tier: Tier;
@@ -250,6 +251,22 @@ export interface Asset {
   source: 'manual' | 'csv' | 'bootstrap';
   confirmed: boolean;
   updated_by: string;
+}
+
+export type AssetKind = 'system' | 'server' | 'user' | 'user_segment';
+export const ASSET_KINDS: readonly AssetKind[] = ['system', 'server', 'user', 'user_segment'];
+
+/** An asset (system, server, user or user segment) with its components. */
+export interface AssetGroup {
+  id: number;
+  name: string;
+  kind: AssetKind;
+  tier: Tier;
+  user_type: string | null;
+  owner: string;
+  description: string;
+  updated_by: string;
+  components: Asset[];
 }
 
 export interface ClusterLimits {

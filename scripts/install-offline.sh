@@ -30,16 +30,21 @@ ok "bundle contents verified"
 read_manifest() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$DIR/manifest.json" "$1"; }
 VERSION="$(read_manifest version)"
 BUNDLE_SHA="$(read_manifest git_commit)"
-HEAD_SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD)"
+# The code comes from the bundle's source.tar.gz (no git on the offline server) or a checkout.
+if [[ -f "$ROOT/.df-commit" ]]; then
+    HEAD_SHA="$(tr -d '[:space:]' < "$ROOT/.df-commit")"
+else
+    HEAD_SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+fi
 [[ "$BUNDLE_SHA" == "$HEAD_SHA" ]] \
-    || die "bundle built from commit $BUNDLE_SHA but this checkout is $HEAD_SHA — git checkout $BUNDLE_SHA first"
+    || die "bundle built from commit $BUNDLE_SHA but the code here is $HEAD_SHA — extract the bundle's source.tar.gz here first"
 ok "bundle $VERSION matches checkout $HEAD_SHA (Trivy DB: $(read_manifest trivy_db_downloaded_at))"
 
 log "Loading images"
 gunzip -c "$DIR/images.tar.gz" | docker load -q
 log "Updating vendor/ (offline scanning)"
 mkdir -p "$VENDOR"
-rm -rf "$VENDOR/wheels" "$VENDOR/npm-cache" "$VENDOR/trivy-cache"
+rm -rf "$VENDOR/trivy-cache"
 cp -r "$DIR/vendor/." "$VENDOR/"
 
 log "Configuration"
@@ -49,6 +54,8 @@ if [[ ! -f "$INFRA/.env" ]]; then
     ok "created infra/.env from the example — review it"
 fi
 sed -i "s/^DF_VERSION=.*/DF_VERSION=$VERSION/" "$INFRA/.env"
+# Loaded images carry the local names: no registry references on the offline server.
+sed -i -E "s/^(DF_IMAGE_(API|WEB|POSTGRES|REDIS))=.*/\1=/" "$INFRA/.env"
 init_secret_dir "$INFRA/secrets"
 CA_FILE="$(grep -E '^DF_FMC_CA_FILE=' "$INFRA/.env" | cut -d= -f2-)"
 [[ -s "$INFRA/${CA_FILE#./}" ]] || die "FMC trust store ${CA_FILE} not found — see infra/trust/README.md"

@@ -33,6 +33,7 @@ from typing import Any
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
+from app.analysis.assets import effective_assets
 from app.analysis.connectivity import NodeMapper, edges_for, rule_risk, worst
 from app.analysis.expand import Leaves, Resolver, ace_estimate, build_space, literal_leaves
 from app.analysis.naming import (
@@ -48,7 +49,7 @@ from app.analysis.semantic import load_assets
 from app.analysis.shadow import verdict
 from app.analysis.space import AddressSet, MatchSpace, PortSet
 from app.enforce.plan import PlanBuilder, identity
-from app.models.assets import Asset, RuleScore
+from app.models.assets import RuleScore
 from app.models.inventory import (
     ClusterPolicy,
     FwObject,
@@ -215,7 +216,7 @@ class Estate:
         self.resolver = Resolver.load(session, snapshot_id)
         self.assets: AssetIndex = load_assets(session)
         self.mapper = NodeMapper(self.assets)
-        self.asset_rows = list(session.scalars(select(Asset).where(Asset.confirmed.is_(True))))
+        self.asset_rows = effective_assets(session)
         self.conventions: dict[str, Convention] = {
             c.kind: Convention(c.kind, c.template, c.letter_case)
             for c in session.scalars(

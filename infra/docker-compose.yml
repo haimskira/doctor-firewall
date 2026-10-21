@@ -23,6 +23,9 @@ x-backend-env: &backend-env
   DF_FMC_CA_BUNDLE: /etc/doctor-firewall/trust/fmc-ca.pem
 
 x-hardening: &hardening
+  # The production server has no internet: never pull. A missing image is an install error,
+  # not something to fetch (images arrive in the offline bundle, scripts/install-offline).
+  pull_policy: never
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -44,6 +47,7 @@ services:
   postgres:
     # Derived image (infra/docker/postgres.Dockerfile): starts as "postgres", no gosu.
     image: ${DF_IMAGE_POSTGRES:-doctor-firewall/postgres:${DF_VERSION:?set DF_VERSION in .env}}
+    pull_policy: never
     restart: unless-stopped
     read_only: true
     tmpfs: ["/var/run/postgresql:uid=999,gid=999,mode=2775", "/tmp:size=64m,mode=1777"]

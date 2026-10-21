@@ -609,8 +609,9 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             b.data.hitcounts[(policy["id"], d["id"])] = [
                 {
                     "type": "HitCount",
+                    # About one rule in five never hit (dead), as in a typical estate.
                     "hitCount": (
-                        rng.choice([0, 0, 0, rng.randint(1, 10_000_000)]) if active else 0
+                        (0 if rng.random() < 0.2 else rng.randint(1, 10_000_000)) if active else 0
                     ),
                     "firstHitTimeStamp": " ",
                     "lastHitTimeStamp": "2026-10-01T10:00:00Z" if active else " ",

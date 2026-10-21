@@ -1,9 +1,17 @@
-# Operations — deploy through Docker Hub
+# Operations — Docker Hub to an offline server
 
-Development happens on Windows (Docker Desktop). Production is a Linux server (Ubuntu 24.04,
-Docker 29 + compose plugin) **with internet access**: it pulls the images from a registry
-(Docker Hub) and the compose files / scripts from Git. The air-gapped path with an offline
-bundle still exists — see [operations-offline.md](operations-offline.md).
+Three machines, in this order:
+
+| Machine | Network | Role |
+|---|---|---|
+| Development (Windows, Docker Desktop) | internet | CI gate, build, scan, **publish** to Docker Hub |
+| Staging Linux (Ubuntu 24.04, Docker 29) | internet | **pull** the published images and **export** a transfer bundle |
+| Production server (Ubuntu 24.04, Docker 29) | **no internet**, reaches only the FMC | **install** from the bundle and run |
+
+The production server never needs the internet — not to install, start, restart, upgrade or scan:
+every image is loaded from the bundle, compose is set to `pull_policy: never` for every service
+(a missing image fails loudly instead of trying a registry), fonts and icons are inside the web
+image, and the vulnerability DB for offline scans travels with the bundle.
 
 ## 1. Publish (development machine)
 
@@ -32,7 +40,48 @@ passwords, the master keyring, TLS keys and the FMC trust store are files mounte
 `infra/secrets`, `infra/certs` and `infra/trust` on the server. Repositories may stay public or
 be made private on Docker Hub (then `docker login` on the server too).
 
-## 2. Install / upgrade (production server, root)
+## 2. Export a bundle (staging Linux with internet)
+
+```bash
+git clone https://github.com/haimskira/doctor-firewall.git && cd doctor-firewall   # first time
+git fetch && git checkout <commit printed by publish>
+DF_IMAGE_REPO=haim1418/doctor-firewall scripts/export-images.sh 0.5.0
+```
+
+`export-images.sh` pulls the four images, refuses to continue if they were built from a different
+commit than the checkout, re-tags them to local names (`doctor-firewall/<component>:<ver>`),
+downloads the Trivy scanner and its vulnerability DB, scans the images offline (fixable HIGH /
+CRITICAL fail) and writes `dist/doctor-firewall-bundle-<ver>-<sha>.tar` + `.sha256` with:
+
+| File | Content |
+|---|---|
+| `images.tar.gz` | api, web, postgres, redis, trivy |
+| `source.tar.gz` | the code at that commit (compose files, scripts, docs) + `.df-commit` |
+| `vendor/trivy-cache` | vulnerability DB (date recorded in the manifest) |
+| `manifest.json`, `SHA256SUMS` | version, commit, image ids; checksums of everything |
+
+Carry both files (`.tar` and `.tar.sha256`) to the production server on approved media.
+
+## 3. Install / upgrade (offline production server, root)
+
+```bash
+mkdir -p /opt/doctor-firewall && cd /opt/doctor-firewall
+B=/media/doctor-firewall-bundle-0.5.0-<sha>.tar
+(cd "$(dirname "$B")" && sha256sum -c "$(basename "$B").sha256")
+tar -xOf "$B" --wildcards '*/source.tar.gz' | tar -xz        # the code of that commit
+# first time: FMC CA -> infra/trust/fmc-ca.pem ; UI cert -> infra/certs/ui/ui.pem + ui.key
+sudo scripts/install-offline.sh "$B"
+```
+
+`install-offline.sh` verifies both checksum layers, refuses a bundle whose commit differs from
+the extracted code (`.df-commit`), loads the images, refreshes `vendor/trivy-cache`, writes
+`DF_VERSION` and clears any registry image names in `infra/.env`, creates missing secrets (never
+overwrites), checks the trust store and UI certificate, runs the migrations and starts the stack.
+Upgrades: the same commands with the new bundle — `infra/.env`, `infra/secrets`, `infra/certs`,
+`infra/trust` and the data volumes are not in the source archive and are kept.
+Day-2 commands and backups: [operations-offline.md](operations-offline.md).
+
+## Alternative: production server with internet
 
 ```bash
 git clone https://github.com/haimskira/doctor-firewall.git /opt/doctor-firewall   # first time
@@ -53,13 +102,12 @@ keeps the CI gate and the scan in one place.
 
 ## Runtime network
 
-Internet access on the server is used to pull images and code. The running application still
-talks **only to the FMC** (and its own containers); no telemetry, update checks or CDNs —
-fonts and icons are bundled into the web image.
+The running application talks **only to the FMC** (and its own containers); no telemetry, update
+checks or CDNs. This holds in both installation modes.
 
 ## Day-2
 
-Upgrade = publish a new version, then on the server `git checkout <commit>` and
-`install-online.sh <new version>` (migrations run automatically). Rollback = the same with the
-previous version and commit (migrations are forward-compatible within a minor version; take a
-backup before upgrades — see [operations-offline.md](operations-offline.md#backups)).
+Upgrade = publish a new version, export a new bundle and install it (or `install-online.sh` on an
+internet-connected server); migrations run automatically. Rollback = install the previous bundle
+(migrations are forward-compatible within a minor version; take a backup before upgrades — see
+[operations-offline.md](operations-offline.md#backups)).

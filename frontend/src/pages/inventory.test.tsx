@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Me, RuleRow, Snapshot } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
+import { clearObjectHoverCache } from '../components/ObjectHover';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
 import type { Recorded } from '../test/fetchMock';
@@ -290,7 +291,8 @@ describe('policy dependencies', () => {
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1200);
   });
 
-  it('switches the rulebase to a NAT policy and shows labelled translation fields', async () => {
+  it('offers no NAT, opens an unlinked decryption policy from its tab, and explains objects on hover', async () => {
+    clearObjectHoverCache();
     const calls = setup('/rules', <Route path="/rules" element={<RulebasePage />} />, (req) => {
       if (req.url === '/api/snapshots/7/clusters') {
         return {
@@ -306,31 +308,67 @@ describe('policy dependencies', () => {
           }],
         };
       }
-      if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
-        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', default_action: 'BLOCK', groups: [], categories: [], total: 1, offset: 0, rows: [rule(1)] } };
+      if (req.url === '/api/snapshots/7/policies') {
+        return {
+          status: 200,
+          body: [
+            { id: 'd1', kind: 'decryption', name: 'DECRYPT-DC', default_action: '', rule_count: 1, links: [], attrs: {}, clusters: [] },
+            { id: 'n1', kind: 'nat', name: 'NAT-CL01', default_action: '', rule_count: 1, links: [], attrs: {}, clusters: ['FTD-CL01'] },
+          ],
+        };
       }
-      if (req.url.startsWith('/api/snapshots/7/policies/n1/rules')) {
-        const nat = rule(1, {
-          name: 'AUTO NAT 1', section: 'AUTO', category: '', action: 'STATIC', rule_type: 'AUTO',
-          refs: {
-            nat_orig_src: [{ id: 'h1', name: 'H_DMZ_WEB', kind: 'host', literal: null }],
-            nat_trans_sport: [{ id: null, name: '', kind: null, literal: 'TCP/443' }],
-          },
+      if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) {
+        const r = rule(1, { refs: { dst_net: [{ id: 'g1', name: 'GRP_SRV_GOLD', kind: 'network_group', literal: null }] } });
+        return { status: 200, body: { policy_fmc_id: 'p1', policy_kind: 'access', policy_name: 'ACP', default_action: 'BLOCK', groups: [], categories: [], total: 1, offset: 0, rows: [r] } };
+      }
+      if (req.url.startsWith('/api/snapshots/7/policies/d1/rules')) {
+        const dec = rule(1, {
+          name: 'KNOWN_KEY_GOLD', section: 'Default', category: '', action: 'DECRYPT_KNOWN_KEY',
+          refs: { dst_net: [{ id: 'g1', name: 'GRP_SRV_GOLD', kind: 'network_group', literal: null }] },
         });
-        return { status: 200, body: { policy_fmc_id: 'n1', policy_kind: 'nat', policy_name: 'NAT-CL01', default_action: '', groups: [{ section: 'AUTO', category: '', start: 0, count: 1, first_index: 1, last_index: 1 }], categories: [], total: 1, offset: 0, rows: [nat] } };
+        return { status: 200, body: { policy_fmc_id: 'd1', policy_kind: 'decryption', policy_name: 'DECRYPT-DC', default_action: '', groups: [], categories: [], total: 1, offset: 0, rows: [dec] } };
+      }
+      if (req.url === '/api/snapshots/7/objects/g1') {
+        return {
+          status: 200,
+          body: {
+            object: { id: 'g1', name: 'GRP_SRV_GOLD', kind: 'network_group', fmc_type: 'NetworkGroup', value: null, stub: false, rule_refs: 4, member_of: 1 },
+            attrs: {},
+            members: [{ id: 'h1', name: 'H_GOLD_DB1', kind: 'host', literal: null }, { id: null, name: '', kind: null, literal: '10.20.9.9/32' }],
+            member_of: [{ group_id: 'g9', group_name: 'GRP_DC_ALL', child_id: 'g1', depth: 1 }],
+            used_by: [],
+            used_by_total: 4,
+          },
+        };
       }
       return undefined;
     });
     const picker = await screen.findByLabelText('Policy');
-    // Intrusion policies carry no rules and are not offered.
+    // NAT is not part of this deployment's editor; intrusion policies carry no rules.
+    expect(within(picker).queryByText(/NAT/)).not.toBeInTheDocument();
     expect(within(picker).queryByText(/IPS/)).not.toBeInTheDocument();
-    await userEvent.selectOptions(picker, 'n1');
-    expect(await screen.findByText('AUTO NAT 1')).toBeInTheDocument();
-    expect(screen.getByText('original source:')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'H_DMZ_WEB' })).toBeInTheDocument();
-    expect(screen.getByText('TCP/443')).toBeInTheDocument();
-    expect(screen.getByText('Match')).toBeInTheDocument();
-    expect(calls.some((c) => c.url.startsWith('/api/snapshots/7/policies/n1/rules'))).toBe(true);
+    expect(screen.queryByRole('tab', { name: 'NAT' })).not.toBeInTheDocument();
+
+    // Hovering an object shows its members and the groups it belongs to.
+    const chip = await screen.findByRole('link', { name: 'GRP_SRV_GOLD' });
+    await userEvent.hover(chip);
+    const card = await screen.findByRole('tooltip');
+    expect(within(card).getByText('H_GOLD_DB1')).toBeInTheDocument();
+    expect(within(card).getByText('10.20.9.9/32')).toBeInTheDocument();
+    expect(within(card).getByText('GRP_DC_ALL')).toBeInTheDocument();
+    expect(within(card).getByText('Used by 4 rule(s)')).toBeInTheDocument();
+    await userEvent.unhover(chip);
+    await waitFor(() => {
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+
+    // Decryption is not linked to the cluster in the API, yet its tab opens the policy.
+    const tab = await screen.findByRole('tab', { name: 'Decryption (SSL)' });
+    expect(tab).toBeEnabled();
+    await userEvent.click(tab);
+    expect(await screen.findByText('KNOWN_KEY_GOLD')).toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/snapshots/7/policies/d1/rules'))).toBe(true);
+    expect(calls.filter((c) => c.url === '/api/snapshots/7/objects/g1')).toHaveLength(1); // cached
   });
 
   it('lists every policy type with the clusters it governs', async () => {

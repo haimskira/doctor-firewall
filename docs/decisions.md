@@ -3,6 +3,21 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-026 — Assets with components
+The asset table was flat (one row per network). Assets are now first-class: an asset is a whole
+system, a single server, a single user or a user segment, carries the doctrine classification
+(tier, user type, owner), and holds components — each with a name, address / subnet / range,
+role, ports and notes. Components inherit the asset's classification; the analysis and the map
+see one node per asset (`TIER|ASSET`). Migration 0008 groups existing confirmed entries by
+(system, tier); stand-alone entries and unconfirmed suggestions keep working. The CSV format
+gains two optional columns, `asset` and `asset_kind`.
+
+### D-025 — Offline production fed from the registry
+Production has no internet. A staging Linux with internet pulls the images published to Docker
+Hub, verifies their commit label, re-tags them to local names and exports a bundle that also
+carries the source at that commit and the Trivy DB. Compose uses `pull_policy: never` on every
+service so nothing on the server can ever reach for a registry.
+
 ### D-024 — Rollback by recorded undo, not FMC rollback requests
 Every write records the inverse operation (the full original object for a PUT, a DELETE for a
 create, a re-create with mapped ids for a delete). On any failure the writer undoes in reverse

@@ -71,5 +71,10 @@ system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or
   Default Action footer, recommendation tags.
 * Recommendations, connectivity map, naming convention and the inventory screens use the same
   cards, tables, inputs and buttons.
-* Deliberately absent until the feature exists: Deploy, Add Rule, Save — no button that does
-  nothing. *Deploy* arrives with phase 5.
+* **Policy Editor** also explains objects on hover / focus (value, members, which groups contain
+  it); NAT is not shown (not used in this estate); Decryption and Identity open even when they
+  are not linked from the access policy.
+* **Connectivity map:** tier-tinted pill nodes in light column bands, soft curved edges, focus on
+  hover / tap fades everything not connected.
+* **Assets:** list / detail — assets with kind icons and tier chips, components table inside.
+* Deliberately absent until the feature exists: Add Rule, Save — no button that does nothing.

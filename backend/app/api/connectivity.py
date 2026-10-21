@@ -10,13 +10,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.analysis.assets import effective_assets
 from app.analysis.connectivity import ANY, RISK_ORDER, SERVER_TIERS, UNCLASSIFIED, node_tier
 from app.analysis.space import AddressSet
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
 from app.fmc import normalize
-from app.models.assets import Asset
 from app.models.inventory import ClusterPolicy, Snapshot
 from app.models.map import MapEdge
 
@@ -113,7 +113,7 @@ def connectivity_map(
     # Node networks from the current (confirmed) asset table.
     networks: dict[str, list[str]] = defaultdict(list)
     user_types: dict[str, str | None] = {}
-    for a in db.scalars(select(Asset).where(Asset.confirmed.is_(True)).order_by(Asset.network)):
+    for a in effective_assets(db):
         nid = f"{a.tier}|{a.system}"
         networks[nid].append(a.network)
         user_types.setdefault(nid, a.user_type)

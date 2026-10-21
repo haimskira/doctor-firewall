@@ -135,3 +135,44 @@ scan_runtime_images() {
         ok "$image"
     done
 }
+
+# ---- offline bundles (scripts/make-bundle.sh, scripts/export-images.sh) ----
+
+# write_source_archive <out.tar.gz> <commit> — the code at HEAD plus .df-commit, so the
+# offline server needs no git (and no network) to know which commit it runs.
+write_source_archive() {
+    local out="$1" sha="$2" tmp
+    tmp="$(mktemp -d)"
+    git -C "$ROOT_HOST" archive --format=tar HEAD > "$tmp/source.tar"
+    printf '%s\n' "$sha" > "$tmp/.df-commit"
+    tar -rf "$tmp/source.tar" -C "$tmp" .df-commit
+    gzip -6 -c "$tmp/source.tar" > "$out"
+    rm -rf "$tmp"
+}
+
+# write_bundle_manifest <dir> <version> <commit> <trivy db date> <origin> <image...>
+write_bundle_manifest() {
+    local dir="$1" version="$2" sha="$3" trivy_date="$4" origin="$5"
+    shift 5
+    "$PYTHON" - "$(host_path "$dir")/manifest.json" "$version" "$sha" "$trivy_date" "$origin" "$@" <<'PY'
+import datetime, json, subprocess, sys
+out, version, sha, trivy_date, origin, *images = sys.argv[1:]
+ids = {img: subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", img],
+                           capture_output=True, text=True, check=True).stdout.strip() for img in images}
+json.dump({"version": version, "git_commit": sha, "origin": origin,
+           "created_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+           "images": ids, "trivy_db_downloaded_at": trivy_date}, open(out, "w"), indent=2)
+PY
+}
+
+# seal_bundle <name> — checksums inside, tar, checksum of the tar, clean up.
+seal_bundle() {
+    local name="$1" out="$ROOT/dist/$1"
+    (cd "$out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+    tar -C "$ROOT/dist" -cf "$ROOT/dist/$name.tar" "$name"
+    (cd "$ROOT/dist" && sha256sum "$name.tar" > "$name.tar.sha256")
+    rm -rf "$out"
+    ok "dist/$name.tar ($(du -h "$ROOT/dist/$name.tar" | cut -f1))"
+    ok "dist/$name.tar.sha256"
+    log "Carry both files to the offline server — see docs/operations.md (offline server)"
+}

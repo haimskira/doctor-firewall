@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import type { RefItem, Severity, Snapshot } from '../api/types';
 import { useI18n } from '../i18n/I18nProvider';
 import { Ltr } from './common';
+import { ObjectHover } from './ObjectHover';
 
 /** An object reference (link to its explorer page) or an inline literal (flagged). */
 export function RefChip({ item, snapshotId }: { item: RefItem; snapshotId: number }) {
@@ -17,12 +18,14 @@ export function RefChip({ item, snapshotId }: { item: RefItem; snapshotId: numbe
   }
   if (item.id === null) return null;
   return (
-    <Link
-      className={`chip obj kind-${item.kind ?? 'other'}`}
-      to={`/objects/${encodeURIComponent(item.id)}?snapshot=${String(snapshotId)}`}
-    >
-      <Ltr>{item.name}</Ltr>
-    </Link>
+    <ObjectHover snapshotId={snapshotId} objectId={item.id}>
+      <Link
+        className={`chip obj kind-${item.kind ?? 'other'}`}
+        to={`/objects/${encodeURIComponent(item.id)}?snapshot=${String(snapshotId)}`}
+      >
+        <Ltr>{item.name}</Ltr>
+      </Link>
+    </ObjectHover>
   );
 }
 

@@ -51,19 +51,6 @@ IMAGES=("doctor-firewall/api:$VERSION" "doctor-firewall/web:$VERSION" "doctor-fi
 docker save "${IMAGES[@]}" | gzip -6 > "$OUT/images.tar.gz"
 cp -r "$VENDOR/wheels" "$VENDOR/npm-cache" "$VENDOR/trivy-cache" "$OUT/vendor/"
 
-"$PYTHON" - "$ROOT_HOST/dist/$NAME/manifest.json" "$VERSION" "$SHA" "$(cat "$VENDOR/trivy-cache/DOWNLOADED_AT" 2>/dev/null || echo unknown)" "${IMAGES[@]}" <<'PY'
-import json, subprocess, sys, datetime
-out, version, sha, trivy_date, *images = sys.argv[1:]
-ids = {img: subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", img],
-                           capture_output=True, text=True, check=True).stdout.strip() for img in images}
-json.dump({"version": version, "git_commit": sha,
-           "created_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
-           "images": ids, "trivy_db_downloaded_at": trivy_date}, open(out, "w"), indent=2)
-PY
-(cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
-tar -C "$ROOT/dist" -cf "$ROOT/dist/$NAME.tar" "$NAME"
-(cd "$ROOT/dist" && sha256sum "$NAME.tar" > "$NAME.tar.sha256")
-rm -rf "$OUT"
-ok "dist/$NAME.tar ($(du -h "$ROOT/dist/$NAME.tar" | cut -f1))"
-ok "dist/$NAME.tar.sha256"
-log "Transfer both files to the server, git pull commit $SHA there, then run scripts/install-offline.sh"
+write_source_archive "$OUT/source.tar.gz" "$SHA"
+write_bundle_manifest "$OUT" "$VERSION" "$SHA" "$(cat "$VENDOR/trivy-cache/DOWNLOADED_AT" 2>/dev/null || echo unknown)" "build:$SHA" "${IMAGES[@]}"
+seal_bundle "$NAME"

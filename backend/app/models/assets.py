@@ -28,8 +28,43 @@ from app.db.base import Base
 TIERS = ("CORE", "GOLD", "SILVER", "BRONZE", "USERS")
 
 
+ASSET_KINDS = ("system", "server", "user", "user_segment")
+
+
+class AssetGroup(Base):
+    """An asset: a whole system, a single server, a single user or a user segment.
+
+    It owns its classification (tier, user type); its components (``Asset`` rows) carry the
+    addresses, ports and roles. For the analysis a component inside an asset *is* that asset:
+    it takes the asset's name and tier (see :func:`app.analysis.assets.effective_assets`).
+    """
+
+    __tablename__ = "asset_groups"
+    __table_args__ = (
+        CheckConstraint("tier IN ('CORE','GOLD','SILVER','BRONZE','USERS')", name="tier_known"),
+        CheckConstraint("kind IN ('system','server','user','user_segment')", name="kind_known"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="system")
+    tier: Mapped[str] = mapped_column(String(8), nullable=False)
+    user_type: Mapped[str | None] = mapped_column(String(16))
+    owner: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Asset(Base):
-    """An address block classified against the doctrine (the ground truth for analysis)."""
+    """An address block classified against the doctrine (the ground truth for analysis).
+
+    Inside an asset (``group_id``) it is one of the asset's components (``system`` = the
+    component's name, ``system_type`` = its role); on its own it is a stand-alone entry
+    (legacy rows and bootstrap suggestions waiting to be assigned).
+    """
 
     __tablename__ = "assets"
     __table_args__ = (
@@ -38,6 +73,9 @@ class Asset(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("asset_groups.id", ondelete="CASCADE"), index=True
+    )
     # Canonical CIDR ("10.20.5.0/24", hosts as /32) or range ("a-b").
     network: Mapped[str] = mapped_column(String(96), unique=True, nullable=False)
     system: Mapped[str] = mapped_column(String(128), nullable=False)

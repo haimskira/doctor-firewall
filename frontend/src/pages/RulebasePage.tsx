@@ -4,8 +4,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api, errorCode } from '../api/client';
-import { RULE_POLICY_KINDS } from '../api/types';
-import type { Cluster, PolicyKind, RefItem, RuleFieldName, RuleGroup, RuleRow, RulesPage } from '../api/types';
+import type { Cluster, PolicyInfo, PolicyKind, RefItem, RuleFieldName, RuleGroup, RuleRow, RulesPage } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import {
   AllowIcon,
@@ -39,7 +38,8 @@ const HEADER_HEIGHT = 60;
 const CELL_LIMIT = 2;
 
 /** The FMC policy flow, in evaluation order. */
-const FLOW: readonly PolicyKind[] = ['prefilter', 'decryption', 'identity', 'access', 'nat'];
+/** The FMC policy flow, in evaluation order (NAT is not part of this deployment's editor). */
+const FLOW: readonly PolicyKind[] = ['prefilter', 'decryption', 'identity', 'access'];
 
 const SECTION_LABELS = new Map<string, MessageKey>(Object.entries({
   Mandatory: 'section.mandatory',
@@ -123,7 +123,15 @@ export function RulebasePage() {
   const withPolicy = (clusters.data ?? []).filter((c) => c.policies.length > 0);
   const cluster = withPolicy.find((c) => c.fmc_id === clusterParam) ?? withPolicy[0] ?? null;
   // Rule-bearing policies governing the cluster (access, prefilter, NAT, ...).
-  const choices = (cluster?.policies ?? []).filter((p) => RULE_POLICY_KINDS.includes(p.kind));
+  // Policies of the cluster, plus decryption / identity policies the FMC API does not link to a
+  // cluster explicitly (D-012): those tabs open the snapshot's policy of that kind.
+  const inventory = useApi<PolicyInfo[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/policies`);
+  const linked = (cluster?.policies ?? []).filter((p) => FLOW.includes(p.kind));
+  const unlinked = (inventory.data ?? [])
+    .filter((p) => (p.kind === 'decryption' || p.kind === 'identity') && !linked.some((l) => l.id === p.id))
+    .filter((p) => !linked.some((l) => l.kind === p.kind))
+    .map((p) => ({ id: p.id, name: p.name, kind: p.kind, via: 'snapshot', rule_count: p.rule_count }));
+  const choices = [...linked, ...unlinked];
   // ``?policy=`` also opens policies not linked to any cluster (e.g. from the Policies page).
   const policyId = policyParam ?? choices.find((p) => p.kind === 'access')?.id ?? choices[0]?.id ?? null;
   const targeted = (clusters.data ?? []).filter((c) => c.policies.some((p) => p.id === policyId)).length;

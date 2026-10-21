@@ -6,7 +6,8 @@ job) and `backend/app/api/connectivity.py` (`GET /api/snapshots/{id}/map`).
 
 ## Nodes and edges
 
-* **Nodes** are the systems of the confirmed asset table (`TIER|SYSTEM`), grouped in columns by
+* **Nodes** are the assets of the confirmed asset table (`TIER|ASSET`; an asset's components
+  share its node; stand-alone entries use their system name), grouped in columns by
   tier — users on the start side, then BRONZE → SILVER → GOLD → CORE (mirrored in Hebrew). Two
   special nodes: **Any** (a rule side without addresses) and **Not in the asset table**
   (addresses no asset covers, FQDNs, SGTs, dynamic objects, users).

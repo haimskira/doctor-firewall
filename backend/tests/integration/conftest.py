@@ -84,7 +84,7 @@ def clean(owner_engine: Engine) -> None:
     with owner_engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE users, fmc_connections, assets, cluster_settings, "
+                "TRUNCATE users, fmc_connections, assets, asset_groups, cluster_settings, "
                 "recommendation_decisions, naming_conventions RESTART IDENTITY CASCADE"
             )
         )

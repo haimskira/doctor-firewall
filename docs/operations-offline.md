@@ -2,17 +2,21 @@
 
 ## Delivery model
 
+The standard path is Docker Hub → staging Linux → bundle → offline server, described in
+[operations.md](operations.md). A bundle can also be built without a registry, on the
+development machine (below).
+
 | What | How it reaches the server |
 |---|---|
-| Code, compose files, scripts, docs | `git pull` from the internal Git remote |
-| Docker images, vendored wheels/npm cache, Trivy DB | offline bundle (`dist/*.tar` + `.sha256`) on approved media / `scp` — **never in Git** |
+| Code, compose files, scripts, docs | `source.tar.gz` inside the bundle (or `git pull` from an internal Git remote) |
+| Docker images, Trivy DB | offline bundle (`dist/*.tar` + `.sha256`) on approved media / `scp` — **never in Git** |
 | Secrets | generated on the server (`init-secrets`), never transferred |
 | FMC CA / UI certificate | provided by the PKI team, copied into `infra/trust/` and `infra/certs/ui/` |
 
 A bundle records the commit it was built from; `install-offline.sh` refuses to install it
-on a checkout at a different commit, so code and images can never drift apart.
+next to code from a different commit, so code and images can never drift apart.
 
-## Build a bundle (development machine, internet allowed)
+## Build a bundle without a registry (development machine, internet allowed)
 
 ```bash
 scripts/vendor.sh                 # refresh wheels, npm cache, Trivy DB, base images
@@ -26,8 +30,9 @@ scanned for all severities by the CI gate.
 ## Install / upgrade (offline server, root)
 
 ```bash
-git pull && git checkout <commit>
-sudo scripts/install-offline.sh /media/doctor-firewall-bundle-0.2.0-<sha>.tar
+cd /opt/doctor-firewall
+tar -xOf /media/doctor-firewall-bundle-0.5.0-<sha>.tar --wildcards '*/source.tar.gz' | tar -xz
+sudo scripts/install-offline.sh /media/doctor-firewall-bundle-0.5.0-<sha>.tar
 ```
 
 Migrations run automatically (`migrate` service) before `api`/`worker` start. Data volumes
