@@ -26,8 +26,16 @@ log "Pulling $REPO:*-$VERSION"
 for component in "${RUNTIME_COMPONENTS[@]}"; do
     image="$(registry_image "$REPO" "$component" "$VERSION")"
     docker pull -q "$image" >/dev/null || die "cannot pull $image"
-    revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")"
-    [[ "$revision" == "$SHA" ]] || die "$image was built from $revision but this checkout is $SHA — git checkout $revision"
+    if [[ "$component" == "redis" ]]; then
+        # Re-tagged upstream image (no build of ours, no revision label): must be the pinned one.
+        docker pull -q "$REDIS_IMAGE" >/dev/null
+        [[ "$(docker image inspect --format '{{.Id}}' "$image")" == \
+           "$(docker image inspect --format '{{.Id}}' "$REDIS_IMAGE")" ]] \
+            || die "$image is not the pinned $REDIS_IMAGE"
+    else
+        revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")"
+        [[ "$revision" == "$SHA" ]] || die "$image was built from ${revision:-<no label>} but this checkout is $SHA — git checkout $revision"
+    fi
     # Local names on the offline server: compose needs no registry settings there.
     docker tag "$image" "doctor-firewall/$component:$VERSION"
 done
