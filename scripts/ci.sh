@@ -69,10 +69,22 @@ if [[ -n "$OFFLINE" ]]; then
         --scanners vuln --exit-code 1 --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
         --skip-dirs /repo/vendor --skip-dirs /repo/frontend/node_modules /repo
 else
-    docker run --rm doctor-firewall/api-test:ci sh -c \
-        'pip-audit --strict --progress-spinner off --cache-dir /tmp/pip-audit --disable-pip --require-hashes -r requirements.txt -r requirements-dev.txt'
-    docker run --rm -v "$(host_path "$ROOT/frontend"):/src:ro" -w /src "$NODE_IMAGE" \
-        npm audit --audit-level=low --package-lock-only
+    # Online lookups (~100 requests): a dropped DNS answer must not fail the gate, while a
+    # finding fails every attempt — so the whole scan is retried, never skipped.
+    retry_scan() {
+        local attempt
+        for attempt in 1 2 3; do
+            "$@" && return 0
+            [[ $attempt -lt 3 ]] && log "scan failed (attempt $attempt/3), retrying"
+        done
+        return 1
+    }
+    retry_scan docker run --rm doctor-firewall/api-test:ci sh -c \
+        'pip-audit --strict --progress-spinner off --cache-dir /tmp/pip-audit --disable-pip --require-hashes -r requirements.txt -r requirements-dev.txt' \
+        || die "Python dependency scan failed"
+    retry_scan docker run --rm -v "$(host_path "$ROOT/frontend"):/src:ro" -w /src "$NODE_IMAGE" \
+        npm audit --audit-level=low --package-lock-only \
+        || die "npm dependency scan failed"
 fi
 ok "no known vulnerable dependencies"
 
