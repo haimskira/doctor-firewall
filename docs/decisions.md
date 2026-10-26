@@ -3,6 +3,15 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-029 — Runtime routes through the FMC device CLI, verified per device
+The configuration API has no routing table; the read-only `operational/commands` endpoint runs
+`show route` on the device (FMC 7.4.1+). Its text is parsed as data (every field validated).
+Because FMC 10.0.1 is reported to return another device's answer to concurrent CLI requests,
+the requests are sequential and an answer is kept only when its connected routes are exactly
+interfaces of the device asked. Failures only mark the cluster (`unsupported` / `unavailable` /
+`mismatch`) — the snapshot never fails for it. Only dynamic protocols are stored; connected and
+static routes keep coming from the configuration.
+
 ### D-028 — Directory sign-in: own TACACS+ client, ldap3 for LDAP
 TACACS+ (RFC 8907, PAP + authorization) is a small, well-specified protocol and the only
 Python client is unmaintained since 2019, so the client is implemented here (~200 lines,

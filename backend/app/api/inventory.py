@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Annotated, Any
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import Select, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
+from app.analysis import routing
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
@@ -251,6 +253,26 @@ class NetworkOut(BaseModel):
     interfaces: list[dict[str, Any]]
     routes: list[dict[str, Any]]
     bgp: list[dict[str, Any]]
+    # Runtime routing table of this cluster: status (ok / unsupported / unavailable / mismatch /
+    # disabled), number of dynamic routes, device asked; None for snapshots before B-001.
+    runtime: dict[str, Any] | None = None
+
+
+class RouteMatch(BaseModel):
+    kind: str
+    protocol: str
+    network: str
+    interface: str
+    zone: str | None
+    gateway: str | None
+    distance: int
+
+
+class RouteLookupOut(BaseModel):
+    ip: str
+    best: RouteMatch | None
+    matches: list[RouteMatch]
+    runtime_status: str | None  # without "ok" dynamic routes are not part of the answer
 
 
 # ------------------------------------------------------------------ helpers
@@ -971,6 +993,8 @@ def cluster_network(snapshot_id: int, cluster_id: FmcIdPath, db: DbDep, _: Reade
             "gateway": r.gateway,
             "gateway_is_literal": r.gateway_is_literal,
             "metric": r.metric,
+            "protocol": r.protocol,
+            "distance": r.distance,
         }
         for r in db.scalars(
             select(Route)
@@ -984,4 +1008,91 @@ def cluster_network(snapshot_id: int, cluster_id: FmcIdPath, db: DbDep, _: Reade
             select(Bgp).where(Bgp.snapshot_id == snapshot_id, Bgp.cluster_fmc_id == cluster_id)
         )
     ]
-    return NetworkOut(interfaces=interfaces, routes=routes, bgp=bgp)
+    return NetworkOut(
+        interfaces=interfaces,
+        routes=routes,
+        bgp=bgp,
+        runtime=_runtime_status(db, snapshot_id, cluster_id),
+    )
+
+
+def _runtime_status(db: Session, snapshot_id: int, cluster_id: str) -> dict[str, Any] | None:
+    snap = db.get(Snapshot, snapshot_id)
+    runtime = (snap.stats or {}).get("runtime_routes") if snap is not None else None
+    value = runtime.get(cluster_id) if isinstance(runtime, dict) else None
+    return value if isinstance(value, dict) else None
+
+
+@router.get(
+    "/snapshots/{snapshot_id}/clusters/{cluster_id}/route-lookup", response_model=RouteLookupOut
+)
+def route_lookup(
+    snapshot_id: int,
+    cluster_id: FmcIdPath,
+    ip: Annotated[str, Query(min_length=7, max_length=15, pattern=r"^[0-9.]+$")],
+    db: DbDep,
+    _: ReaderDep,
+) -> RouteLookupOut:
+    """Route, interface and zone the cluster uses for an IPv4 address (longest prefix)."""
+    try:
+        address = str(ipaddress.IPv4Address(ip))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_ip") from exc
+    exists = db.scalar(
+        select(Cluster.id).where(Cluster.snapshot_id == snapshot_id, Cluster.fmc_id == cluster_id)
+    )
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    zone_names = dict(
+        db.execute(
+            select(FwObject.fmc_id, FwObject.name).where(
+                FwObject.snapshot_id == snapshot_id, FwObject.kind == "zone"
+            )
+        ).all()
+    )
+    zones: dict[str, str | None] = {}
+    for name, ifname, zone_id in db.execute(
+        select(Interface.name, Interface.ifname, Interface.zone_fmc_id).where(
+            Interface.snapshot_id == snapshot_id, Interface.cluster_fmc_id == cluster_id
+        )
+    ).all():
+        for key in (name, ifname):
+            if key:
+                zones[key] = zone_names.get(zone_id or "")
+    candidates = [
+        routing.Candidate(
+            kind=r.kind,
+            protocol=r.protocol or r.kind,
+            network=r.network,
+            interface=r.interface,
+            gateway=r.gateway,
+            distance=routing.distance_of(r.kind, r.metric, r.distance),
+        )
+        for r in db.scalars(
+            select(Route).where(
+                Route.snapshot_id == snapshot_id,
+                Route.cluster_fmc_id == cluster_id,
+                Route.network.is_not(None),
+            )
+        )
+        if r.network is not None and ":" not in r.network
+    ]
+    matches = [
+        RouteMatch(
+            kind=c.kind,
+            protocol=c.protocol,
+            network=c.network,
+            interface=c.interface,
+            zone=zones.get(c.interface),
+            gateway=c.gateway,
+            distance=c.distance,
+        )
+        for c in routing.lookup(address, candidates)
+    ]
+    runtime = _runtime_status(db, snapshot_id, cluster_id)
+    return RouteLookupOut(
+        ip=address,
+        best=matches[0] if matches else None,
+        matches=matches[:20],
+        runtime_status=str(runtime.get("status")) if runtime else None,
+    )

@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from fmc_mock.cli import show_route
 from fmc_mock.resources import CONFIG, _error
 from fmc_mock.seed import FmcData
 
@@ -393,6 +394,33 @@ def build_write_router(
 
     counter = itertools.count(1)
 
+    @router.get(CONFIG + "/devices/devicerecords/{device_id}/operational/commands")
+    async def commands(request: Request, domain: str, device_id: str) -> Response:
+        """Read-only device CLI (FMC 7.4.1+): only ``show route`` is offered here."""
+        if (resp := guard(request, domain)) is not None:
+            return resp
+        if not any(d["id"] == device_id for d in data.devices):
+            return _error(404, "Device not found")
+        command = request.query_params.get("command", "")
+        if fault("cli_unsupported") or command != "show route":
+            return _error(400, f"The command '{command[:40]}' is not supported.")
+        if fault("device_down"):
+            return _error(
+                500, "SFTunnelException: Cannot establish a connection with the threat defense"
+            )
+        source = device_id
+        if fault("cli_mixup"):  # the FMC answering with another device's output
+            source = next((d for d in data.interfaces if d != device_id), device_id)
+        output = show_route(
+            data.interfaces.get(source, {}), data.static_routes.get(source, []), all_objects()
+        )
+        return JSONResponse(
+            {
+                "items": [{"type": "Command", "commandInput": command, "commandOutput": output}],
+                "paging": {"offset": 0, "limit": 1, "count": 1, "pages": 1},
+            }
+        )
+
     @router.get(CONFIG + "/deployment/deployabledevices")
     async def deployable(request: Request, domain: str) -> Response:
         if (resp := guard(request, domain)) is not None:
@@ -481,7 +509,12 @@ def build_write_router(
             return _error(400, "object expected")
         state.faults.clear()
         state.faults.update(
-            {k: v for k, v in body.items() if k in ("deploy_fail", "fail_write_on")}
+            {
+                k: v
+                for k, v in body.items()
+                if k
+                in ("deploy_fail", "fail_write_on", "cli_unsupported", "device_down", "cli_mixup")
+            }
         )
         return JSONResponse({"faults": state.faults, "writes": state.writes})
 

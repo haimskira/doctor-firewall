@@ -764,6 +764,25 @@ export const en = {
   'users.directoryHelp': 'The password is checked by the directory. When the directory maps groups or attributes to roles, the roles shown here are replaced at every sign-in.',
   'error.password_required': 'A local account needs a temporary password.',
   'error.password_not_allowed': 'Directory accounts have no local password.',
+
+  // ---- B-001: runtime routing table ----
+  'clusters.distance': 'Distance',
+  'clusters.routeKind.static': 'Static',
+  'clusters.routeKind.connected': 'Connected',
+  'clusters.routeKind.dynamic': 'Dynamic',
+  'clusters.runtime.none': 'This snapshot has no runtime routing table (taken before it was collected).',
+  'clusters.runtime.ok': 'Live routing table from {device}: {count} dynamic routes (BGP / OSPF / EIGRP …) in addition to the configuration.',
+  'clusters.runtime.unsupported': 'This FMC does not offer "show route" through its API (FMC 7.4.1 or later): only configured routes are shown.',
+  'clusters.runtime.unavailable': 'The device did not answer "show route" (not connected to the FMC?): only configured routes are shown.',
+  'clusters.runtime.mismatch': 'The routing table returned did not match this device\'s interfaces and was discarded: only configured routes are shown.',
+  'clusters.runtime.disabled': 'Runtime routing table collection is turned off (DF_COLLECT_RUNTIME_ROUTES).',
+  'clusters.lookup': 'Route lookup',
+  'clusters.lookupIp': 'IPv4 address',
+  'clusters.lookupGo': 'Find',
+  'clusters.lookupNone': 'No route covers this address.',
+  'clusters.lookupResult': 'Zone {zone} · interface {iface} · route {network} via {via}',
+  'clusters.lookupConfigOnly': 'Based on configured routes only (no live routing table for this snapshot).',
+  'error.invalid_ip': 'Not a valid IPv4 address.',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1528,4 +1547,23 @@ export const he: Record<MessageKey, string> = {
   'users.directoryHelp': 'הסיסמה נבדקת מול השירות המרכזי. כשהשירות ממפה קבוצות או מאפיינים לתפקידים, התפקידים שמוצגים כאן מוחלפים בכל התחברות.',
   'error.password_required': 'חשבון מקומי דורש סיסמה זמנית.',
   'error.password_not_allowed': 'לחשבונות מהשירות המרכזי אין סיסמה מקומית.',
+
+  // ---- B-001: runtime routing table ----
+  'clusters.distance': 'Distance',
+  'clusters.routeKind.static': 'סטטי',
+  'clusters.routeKind.connected': 'מחובר',
+  'clusters.routeKind.dynamic': 'דינמי',
+  'clusters.runtime.none': 'בצילום המצב הזה אין טבלת ניתוב חיה (נלקח לפני שנאספה).',
+  'clusters.runtime.ok': 'טבלת ניתוב חיה מ-{device}: {count} ניתובים דינמיים (BGP / OSPF / EIGRP …) בנוסף לקונפיגורציה.',
+  'clusters.runtime.unsupported': 'ה-FMC הזה לא מאפשר "show route" דרך ה-API (נדרש FMC 7.4.1 ומעלה): מוצגים רק ניתובים מהקונפיגורציה.',
+  'clusters.runtime.unavailable': 'המכשיר לא ענה ל-"show route" (לא מחובר ל-FMC?): מוצגים רק ניתובים מהקונפיגורציה.',
+  'clusters.runtime.mismatch': 'טבלת הניתוב שהתקבלה לא תאמה לממשקים של המכשיר ונפסלה: מוצגים רק ניתובים מהקונפיגורציה.',
+  'clusters.runtime.disabled': 'איסוף טבלת הניתוב החיה כבוי (DF_COLLECT_RUNTIME_ROUTES).',
+  'clusters.lookup': 'חיפוש ניתוב',
+  'clusters.lookupIp': 'כתובת IPv4',
+  'clusters.lookupGo': 'חיפוש',
+  'clusters.lookupNone': 'אין ניתוב שמכסה את הכתובת הזו.',
+  'clusters.lookupResult': 'Zone {zone} · ממשק {iface} · ניתוב {network} דרך {via}',
+  'clusters.lookupConfigOnly': 'מבוסס על ניתובים מהקונפיגורציה בלבד (אין טבלת ניתוב חיה לצילום הזה).',
+  'error.invalid_ip': 'כתובת IPv4 לא תקינה.',
 };

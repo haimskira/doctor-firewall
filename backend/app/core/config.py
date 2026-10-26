@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     deploy_timeout_seconds: int = Field(default=1800, ge=60, le=6 * 3600)
     write_lock_ttl_seconds: int = Field(default=2 * 3600, ge=300, le=24 * 3600)
 
+    # Runtime routing table ("show route" through the FMC, read-only; FMC 7.4.1+). Off: only
+    # connected and static routes from the configuration are known.
+    collect_runtime_routes: bool = True
+
     # Sessions.
     session_idle_minutes: int = Field(default=30, ge=5, le=240)
     session_absolute_hours: int = Field(default=8, ge=1, le=24)

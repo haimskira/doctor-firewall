@@ -25,6 +25,7 @@ from app.fmc.records import (
     RuleRecord,
     StaticRouteRecord,
 )
+from app.fmc.showroute import RuntimeRoute
 from app.models.inventory import (
     Bgp,
     Cluster,
@@ -422,6 +423,39 @@ def replace_connected_routes(session: Session, snapshot_id: int, cluster_id: str
         )
     if rows:
         session.execute(insert(Route), rows)
+
+
+def replace_dynamic_routes(
+    session: Session, snapshot_id: int, cluster_id: str, routes: Sequence[RuntimeRoute]
+) -> int:
+    """Routes learned by routing protocols (connected, local and static come from config)."""
+    session.execute(
+        delete(Route).where(
+            Route.snapshot_id == snapshot_id,
+            Route.cluster_fmc_id == cluster_id,
+            Route.kind == "dynamic",
+        )
+    )
+    rows = [
+        {
+            "snapshot_id": snapshot_id,
+            "cluster_fmc_id": cluster_id,
+            "kind": "dynamic",
+            "interface": r.interface,
+            "network": r.network,
+            "network_name": "",
+            "gateway": r.gateway,
+            "gateway_is_literal": True,
+            "metric": min(r.metric or 0, 2**31 - 1),
+            "protocol": f"{r.protocol} {r.subtype}".strip(),
+            "distance": r.distance,
+        }
+        for r in routes
+        if r.protocol not in ("connected", "local", "static")
+    ]
+    if rows:
+        session.execute(insert(Route), rows)
+    return len(rows)
 
 
 def replace_bgp(

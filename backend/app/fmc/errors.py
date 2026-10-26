@@ -28,6 +28,10 @@ class FmcProtocolError(FmcError):
 
     code = "unexpected_response"
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status  # HTTP status when the FMC answered with an error code
+
 
 class FmcWriteRejectedError(FmcError):
     """The FMC refused a configuration write (validation, object in use, duplicate name...)."""

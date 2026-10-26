@@ -338,7 +338,9 @@ class FmcSession:
             if response.status_code == 404 and allow_not_found:
                 return None
             if response.status_code != 200:
-                raise FmcProtocolError(f"GET {path} returned HTTP {response.status_code}")
+                raise FmcProtocolError(
+                    f"GET {path} returned HTTP {response.status_code}", response.status_code
+                )
             try:
                 return response.json()
             except ValueError as exc:

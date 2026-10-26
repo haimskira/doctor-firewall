@@ -3,7 +3,7 @@
 Items the product owner asked to handle later. Each entry: what, why, and what is known.
 
 ## B-001 — Collect the device routing table (runtime, incl. BGP-learned routes)
-*Requested 2026-10-20.*
+*Requested 2026-10-20. **Done 2026-10-26** — see [architecture.md](architecture.md#collection-phase-1) ("Runtime routing table").*
 
 **Why:** automatic rule opening derives zone and network from source/destination IPs. Today only
 connected networks (from interfaces) and static routes are known; routes learned via BGP/OSPF are

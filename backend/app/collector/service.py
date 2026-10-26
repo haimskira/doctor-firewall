@@ -17,19 +17,21 @@ Guarantees:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.collector import store
+from app.fmc import showroute
 from app.fmc.adapters import FmcAdapter
 from app.fmc.client import FmcSession
-from app.fmc.errors import FmcError
+from app.fmc.errors import FmcError, FmcProtocolError
 from app.fmc.records import (
     AssignmentRecord,
     DeviceRecord,
@@ -37,7 +39,7 @@ from app.fmc.records import (
     PolicyKind,
     PolicyRecord,
 )
-from app.models.inventory import Policy, Snapshot
+from app.models.inventory import Interface, Policy, Snapshot
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +54,9 @@ class ConfigChangedError(CollectionError):
     code = "config_changed"
 
 
+MAX_CLI_OUTPUT = 20_000_000  # characters; a larger answer is not parsed
+
+
 @dataclass
 class Stats:
     objects: int = 0
@@ -64,6 +69,8 @@ class Stats:
     stubs: int = 0
     pages: int = 0
     by_resource: dict[str, int] = field(default_factory=dict)
+    # cluster id -> {"status": ok|unsupported|unavailable|mismatch|disabled, "routes", "device"}
+    runtime_routes: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +84,7 @@ class Stats:
             "stub_objects": self.stubs,
             "pages": self.pages,
             "by_resource": self.by_resource,
+            "runtime_routes": self.runtime_routes,
         }
 
 
@@ -88,8 +96,10 @@ class Collector:
         fmc: FmcSession,
         adapter: FmcAdapter,
         sessions: sessionmaker[Session],
+        collect_runtime_routes: bool = True,
     ) -> None:
         self.snapshot_id = snapshot_id
+        self.collect_runtime_routes = collect_runtime_routes
         self.fmc = fmc
         self.adapter = adapter
         self.sessions = sessions
@@ -153,6 +163,9 @@ class Collector:
         await self._policies(clusters, assignments)
         for cluster in clusters:
             await self._cluster_network(cluster)
+        # One device at a time (never concurrent): the FMC may mix up concurrent CLI answers.
+        for cluster in clusters:
+            await self._runtime_routes(cluster)
         with self.sessions.begin() as session:
             self.stats.stubs = store.add_stub_objects(
                 session, self.snapshot_id, self.adapter.kind_of
@@ -377,6 +390,82 @@ class Collector:
             store.replace_bgp(session, self.snapshot_id, cluster_id, bgp)
             store.advance(session, self.snapshot_id, key, 0, done=True)
         self.stats.routes += sum(max(1, len(r.networks)) for r in routes)
+
+    async def _runtime_routes(self, cluster: dict[str, Any]) -> None:
+        """The live IPv4 routing table of the cluster (dynamic routes), via ``show route``.
+
+        Read-only CLI output through the FMC. Each answer is checked against the device's
+        configured interfaces before it is trusted; any failure only marks the cluster's
+        status — the snapshot itself never fails because of it.
+        """
+        cluster_id: str = cluster["fmc_id"]
+        if not self.collect_runtime_routes:
+            self.stats.runtime_routes[cluster_id] = {"status": "disabled", "routes": 0}
+            return
+        key = f"runtime-routes:{cluster_id}"
+        with self.sessions() as session:
+            if store.checkpoint(session, self.snapshot_id, key).done:
+                return
+            session.commit()
+        outcome: dict[str, Any] = {"status": "unavailable", "routes": 0}
+        for member in cluster["members"]:
+            result = await self._show_route(member["id"])
+            if isinstance(result, str):
+                outcome = {"status": result, "routes": 0, "device": member["name"]}
+                if result == "unsupported":
+                    break  # same FMC for every device: do not ask again
+                continue
+            if not self._matches_device(member["id"], result.routes):
+                outcome = {"status": "mismatch", "routes": 0, "device": member["name"]}
+                continue
+            with self.sessions.begin() as session:
+                count = store.replace_dynamic_routes(
+                    session, self.snapshot_id, cluster_id, result.routes
+                )
+                store.advance(session, self.snapshot_id, key, 0, done=True)
+            outcome = {
+                "status": "ok",
+                "routes": count,
+                "skipped_lines": result.skipped,
+                "device": member["name"],
+            }
+            self.stats.routes += count
+            break
+        self.stats.runtime_routes[cluster_id] = outcome
+
+    async def _show_route(self, device_id: str) -> showroute.ParseResult | str:
+        path = self._path(f"/devices/devicerecords/{device_id}/operational/commands")
+        try:
+            raw = await self.fmc.get_json(path, {"command": "show route"})
+        except FmcProtocolError as exc:
+            # 400: command not offered by this FMC version; 500: device not reachable.
+            return "unsupported" if exc.status in (400, 404, 405) else "unavailable"
+        items = raw.get("items") if isinstance(raw, dict) else None
+        first = items[0] if isinstance(items, list) and items else None
+        output = first.get("commandOutput") if isinstance(first, dict) else None
+        if not isinstance(output, str) or len(output) > MAX_CLI_OUTPUT:
+            return "unavailable"
+        return showroute.parse(output)
+
+    def _matches_device(self, device_id: str, routes: list[showroute.RuntimeRoute]) -> bool:
+        """Every connected route must be an interface of *this* device (guards against an
+        answer that belongs to another device) and the table must not be empty."""
+        connected = {(r.interface, r.network) for r in routes if r.protocol == "connected"}
+        if not connected:
+            return False
+        with self.sessions() as session:
+            configured = {
+                (ifname, str(ipaddress.ip_interface(ipv4).network))
+                for ifname, ipv4 in session.execute(
+                    select(Interface.ifname, Interface.ipv4).where(
+                        Interface.snapshot_id == self.snapshot_id,
+                        Interface.device_fmc_id == device_id,
+                        Interface.ipv4.is_not(None),
+                    )
+                ).all()
+                if ifname and ipv4
+            }
+        return connected <= configured
 
 
 def build_clusters(

@@ -627,3 +627,4 @@ ul.asset-items { list-style: none; margin: 0; padding: 0; display: flex; flex-di
 .asset-title h2 { margin: 0; }
 .component-form { display: grid; grid-template-columns: 1.2fr 1.2fr 0.8fr 1fr auto; gap: 0.5rem; align-items: center; }
 @media (max-width: 900px) { .component-form { grid-template-columns: 1fr 1fr; } }
+.warn-text { color: var(--warn); }

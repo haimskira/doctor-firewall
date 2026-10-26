@@ -69,6 +69,7 @@ All containers run as non-root from the first process, `read_only` root FS,
 | Limits: 300 GET/min/IP, 10 connections/IP | done: token bucket (default 240/min) + concurrency cap (4) + 429 backoff with `Retry-After` |
 | 1 write at a time, 2 MB payload | Redis write lock per FMC + sequential writes (phase 5); mock enforces |
 | Writes: GET → merge → PUT; dependency ordering | done: GET + `expect` drift check → full PUT; ordered plans (bulk insert not used: one rule per POST keeps undo exact) |
+| Device CLI (`operational/commands`, `show route`) | done: runtime routing table, sequential, answer verified per device (B-001) |
 | Deploy as async job, poll until DEPLOYED, rollback, ticket ids | done: `deploymentrequests` + `job/taskstatuses` polling; rollback by recorded undo + redeploy; ticket id in the audit trail (FMC change-management tickets: to verify) |
 
 ## Roadmap
@@ -97,6 +98,7 @@ worker: run_collection
     hit counts per unit), prefilter, decryption, identity, NAT (manual + auto)
   per cluster (primary unit): interfaces (4 kinds), IPv4 static routes, BGP
   stub objects for referenced-only ids (applications, …); connected routes from interfaces
+  per cluster, one device at a time: runtime routing table ("show route") -> dynamic routes
   -> "complete" -> RQ "analysis" -> findings -> analyzed_at
 ```
 
@@ -106,9 +108,19 @@ worker: run_collection
   mid-pull), that policy is discarded and the run fails with `config_changed`; resume re-reads it.
 * **Auto-sync**: per connection `sync_interval_minutes` (15–10080); the scheduler checks every 5 min.
 * **Retention**: newest `DF_SNAPSHOT_RETENTION` (default 10) finished snapshots per connection.
-* **Runtime routing table**: the config API provides interfaces, static routes and BGP neighbours;
-  BGP-learned routes (the device's live routing table) are not part of the configuration API and
-  are not collected yet — see the open question in the phase-1 report.
+* **Runtime routing table** (B-001): `GET devices/devicerecords/{id}/operational/commands?command=show route`
+  (read-only device CLI through the FMC, FMC 7.4.1+). Requests are strictly sequential — FMC
+  10.0.1 is reported to mix up concurrent CLI answers — and every answer is accepted only if its
+  connected routes are interfaces of *that* device. Routes learned by BGP / OSPF / EIGRP / IS-IS
+  … are stored as `dynamic` routes (protocol, distance, next hop; BGP next hops resolved to the
+  interface through the connected routes); connected and static routes keep coming from the
+  configuration. Per-cluster status in `snapshot.stats.runtime_routes`: `ok`, `unsupported`
+  (FMC without the command), `unavailable` (device not reachable), `mismatch` (answer discarded),
+  `disabled` (`DF_COLLECT_RUNTIME_ROUTES=false`) — none of them fails the snapshot. IPv4 global
+  table only (no IPv6 `show route`, no VRFs); the command has no paging, so a very large table
+  may be truncated by the FMC. Uses: derivation of the networks behind a zone (tighten source)
+  and `GET .../clusters/{id}/route-lookup?ip=` (longest prefix, then distance → route,
+  interface, zone).
 
 ### Payload validation before production
 

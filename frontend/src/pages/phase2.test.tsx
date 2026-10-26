@@ -203,3 +203,36 @@ describe('ClustersPage ACE usage', () => {
     expect(within(row).getByText('unverified default')).toBeInTheDocument();
   });
 });
+
+describe('ClustersPage runtime routes', () => {
+  it('shows dynamic routes and resolves an address to its route and zone', async () => {
+    const calls = setup('/clusters?cluster=c1', <Route path="/clusters" element={<ClustersPage />} />, (req) => {
+      if (req.url === '/api/snapshots/7/clusters') {
+        return { status: 200, body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, ace_total: null, ace_limit: 1000, ace_limit_verified: false, policies: [] }] };
+      }
+      if (req.url === '/api/snapshots/7/clusters/c1/network') {
+        return {
+          status: 200,
+          body: {
+            interfaces: [{ name: 'Ethernet1/1', ifname: 'outside', kind: 'physicalinterfaces', enabled: true, ipv4: '203.0.113.1/24', vlan: null, zone: 'outside' }],
+            routes: [{ kind: 'dynamic', network: '10.50.0.0/16', network_name: '', interface: 'outside', gateway: '203.0.113.254', gateway_is_literal: true, metric: 0, protocol: 'bgp', distance: 20 }],
+            bgp: [],
+            runtime: { status: 'ok', routes: 1, device: 'FTD-01' },
+          },
+        };
+      }
+      if (req.url.startsWith('/api/snapshots/7/clusters/c1/route-lookup')) {
+        const match = { kind: 'dynamic', protocol: 'bgp', network: '10.50.0.0/16', interface: 'outside', zone: 'outside', gateway: '203.0.113.254', distance: 20 };
+        return { status: 200, body: { ip: '10.50.7.7', best: match, matches: [match], runtime_status: 'ok' } };
+      }
+      return undefined;
+    });
+    expect(await screen.findByText(/Live routing table from FTD-01: 1 dynamic routes/)).toBeInTheDocument();
+    expect(screen.getByText('Dynamic')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('IPv4 address'), '10.50.7.7');
+    await user.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByText(/Zone outside · interface outside · route 10.50.0.0\/16 via 203.0.113.254/)).toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/snapshots/7/clusters/c1/route-lookup?ip=10.50.7.7')).toBe(true);
+  });
+});

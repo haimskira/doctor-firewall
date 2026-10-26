@@ -131,7 +131,11 @@ async def run_collection(
             adapter = select_adapter(version)
             mark(sessions, snapshot_id, fmc_version=version, domain_uuid=fmc.domain_uuid)
             stats = await Collector(
-                snapshot_id=snapshot_id, fmc=fmc, adapter=adapter, sessions=sessions
+                snapshot_id=snapshot_id,
+                fmc=fmc,
+                adapter=adapter,
+                sessions=sessions,
+                collect_runtime_routes=settings.collect_runtime_routes,
             ).run()
     except FmcError as exc:
         detail = scrub_text(str(exc))[:500]

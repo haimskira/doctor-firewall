@@ -381,15 +381,43 @@ export interface ClusterNetwork {
     zone: string | null;
   }[];
   routes: {
-    kind: 'static' | 'connected';
+    kind: 'static' | 'connected' | 'dynamic';
     network: string | null;
     network_name: string;
     interface: string;
     gateway: string | null;
     gateway_is_literal: boolean;
     metric: number;
+    protocol: string;
+    distance: number | null;
   }[];
   bgp: { as_number: string | null; router_id: string | null; neighbors: { address: string; remote_as: string }[] }[];
+  runtime: RuntimeRoutesStatus | null;
+}
+
+/** The live routing table of a cluster ("show route" through the FMC). */
+export interface RuntimeRoutesStatus {
+  status: 'ok' | 'unsupported' | 'unavailable' | 'mismatch' | 'disabled';
+  routes: number;
+  device?: string;
+  skipped_lines?: number;
+}
+
+export interface RouteMatch {
+  kind: 'static' | 'connected' | 'dynamic';
+  protocol: string;
+  network: string;
+  interface: string;
+  zone: string | null;
+  gateway: string | null;
+  distance: number;
+}
+
+export interface RouteLookup {
+  ip: string;
+  best: RouteMatch | null;
+  matches: RouteMatch[];
+  runtime_status: RuntimeRoutesStatus['status'] | null;
 }
 
 // ---- phase 3: recommendations and naming convention (mirrors app/api/recommendations.py) ----

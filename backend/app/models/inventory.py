@@ -253,7 +253,7 @@ class Interface(Base):
 class Route(Base):
     __tablename__ = "routes"
     __table_args__ = (
-        CheckConstraint("kind IN ('static','connected')", name="kind_known"),
+        CheckConstraint("kind IN ('static','connected','dynamic')", name="kind_known"),
         Index("ix_routes_cluster", "snapshot_id", "cluster_fmc_id"),
     )
 
@@ -270,6 +270,9 @@ class Route(Base):
     gateway_fmc_id: Mapped[str | None] = mapped_column(String(64))
     gateway_is_literal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     metric: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Dynamic routes (runtime table): protocol ("bgp", "ospf IA" ...) and administrative distance.
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    distance: Mapped[int | None] = mapped_column(Integer)
 
 
 class Bgp(Base):
