@@ -268,7 +268,8 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     net = client.get(f"/api/snapshots/{sid}/clusters/{first['fmc_id']}/network").json()
     assert {i["ifname"] for i in net["interfaces"]} == {"outside", "inside", "dc", "users", "dmz"}
     kinds = {r["kind"] for r in net["routes"]}
-    assert kinds == {"static", "connected"}
+    assert kinds == {"static", "connected", "dynamic"}  # dynamic: runtime table (B-001)
+    assert net["runtime"]["status"] == "ok"
     default = next(r for r in net["routes"] if r["network_name"] == "any-ipv4")
     assert default["network"] == "0.0.0.0/0"
     assert default["gateway"] == "203.0.113.254"
