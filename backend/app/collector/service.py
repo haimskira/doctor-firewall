@@ -367,7 +367,7 @@ class Collector:
                     session,
                     self.snapshot_id,
                     policy_id,
-                    ((h.rule_id, h.hit_count, h.last_hit) for h in hits),
+                    hits,
                 )
                 return len(hits)
 

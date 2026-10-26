@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.collector.signature import rule_signature
 from app.fmc.records import (
     BgpRecord,
+    HitCountRecord,
     InterfaceRecord,
     ObjectKind,
     ObjectRecord,
@@ -184,6 +185,11 @@ def store_rules(
             "rule_type": r.rule_type,
             "fmc_id": r.fmc_id,
             "rule_index": r.rule_index,
+            "modified_at": (
+                datetime.fromisoformat(str(r.attrs["modified_at"]))
+                if r.attrs.get("modified_at")
+                else None
+            ),
             "section": r.section,
             "category": r.category,
             "name": r.name,
@@ -245,14 +251,23 @@ def delete_policy_rules(session: Session, snapshot_id: int, policy_id: str) -> N
 
 
 def apply_hitcounts(
-    session: Session, snapshot_id: int, policy_id: str, hits: Iterable[tuple[str, int, str | None]]
+    session: Session, snapshot_id: int, policy_id: str, hits: Iterable[HitCountRecord]
 ) -> None:
     """Add hit counts per rule (summed across the units of an HA pair)."""
-    for rule_id, count, last_hit in hits:
-        last = datetime.fromisoformat(last_hit) if last_hit else None
+    for h in hits:
+        rule_id, count = h.rule_id, h.hit_count
+        last = datetime.fromisoformat(h.last_hit) if h.last_hit else None
         values: dict[str, Any] = {"hit_count": func.coalesce(Rule.hit_count, 0) + count}
         if last is not None:
             values["last_hit"] = func.greatest(func.coalesce(Rule.last_hit, last), last)
+        if h.deploy_known:
+            deployed = datetime.fromisoformat(h.deployed_at) if h.deployed_at else None
+            if deployed is None:
+                values["never_deployed"] = True
+            else:
+                values["deployed_at"] = func.greatest(
+                    func.coalesce(Rule.deployed_at, deployed), deployed
+                )
         session.execute(
             update(Rule)
             .where(

@@ -169,6 +169,8 @@ class HitCountRecord:
     rule_id: str
     hit_count: int
     last_hit: str | None
+    deploy_known: bool = False  # the FMC reports deployment times (10.x)
+    deployed_at: str | None = None  # None with deploy_known: never deployed
 
 
 @dataclass(frozen=True)

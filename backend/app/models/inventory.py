@@ -169,6 +169,10 @@ class Rule(Base):
     send_events: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hit_count: Mapped[int | None] = mapped_column(BigInteger)
     last_hit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Hit-count evidence: when the rule last changed (counters restart) and reached a device.
+    modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deployed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    never_deployed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     signature: Mapped[str] = mapped_column(String(64), nullable=False)
     attrs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 

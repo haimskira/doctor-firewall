@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -90,6 +90,7 @@ class RuleMetadata(_M):
     ruleIndex: int | None = Field(default=None, ge=1)  # noqa: N815
     section: Annotated[str, Field(max_length=32)] = "Default"
     category: Name = "--Undefined--"
+    timestamp: int | None = Field(default=None, ge=0)  # last change, epoch milliseconds
 
 
 RuleAction = Literal[
@@ -194,6 +195,8 @@ class HitCountModel(_M):
     rule: RefModel
     hitCount: int = Field(ge=0)  # noqa: N815
     lastHitTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
+    # When the rule reached the device; blank: never deployed. Absent on older FMCs.
+    lastDeployedTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
 
 
 class StaticIpv4(_M):
@@ -481,6 +484,9 @@ def map_rule(item: Any, position: int) -> RuleRecord:
         attrs["description"] = normalize.text(m.description)
     if m.urls is not None and m.urls.urlCategoriesWithReputation:
         attrs["url_categories"] = len(m.urls.urlCategoriesWithReputation)
+    if m.metadata.timestamp:
+        changed = datetime.fromtimestamp(m.metadata.timestamp / 1000, UTC)
+        attrs["modified_at"] = changed.isoformat()
     return RuleRecord(
         fmc_id=m.id,
         rule_index=m.metadata.ruleIndex or position,
@@ -580,7 +586,11 @@ def _timestamp(value: str | None) -> str | None:
 def map_hitcount(item: Any) -> HitCountRecord:
     m = _validate(HitCountModel, item, "hitcount")
     return HitCountRecord(
-        rule_id=m.rule.id, hit_count=m.hitCount, last_hit=_timestamp(m.lastHitTimeStamp)
+        rule_id=m.rule.id,
+        hit_count=m.hitCount,
+        last_hit=_timestamp(m.lastHitTimeStamp),
+        deploy_known=m.lastDeployedTimeStamp is not None,
+        deployed_at=_timestamp(m.lastDeployedTimeStamp),
     )
 
 

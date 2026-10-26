@@ -619,6 +619,7 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                     ),
                     "firstHitTimeStamp": " ",
                     "lastHitTimeStamp": "2026-10-01T10:00:00Z" if active else " ",
+                    "lastDeployedTimeStamp": "2026-01-15T08:00:00Z",
                     "rule": {"id": r["id"], "name": r["name"], "type": "AccessRule"},
                     "metadata": {"policy": _ref(policy), "device": _ref(d)},
                 }

@@ -39,8 +39,13 @@ def _rule_ref(rs: RuleSpace) -> dict[str, Any]:
 
 
 def _is_dead(rule: Rule, now: datetime, window: timedelta) -> bool:
+    """Unused for the whole observation window — only when the counters can prove it."""
     if rule.hit_count is None or not rule.enabled:
         return False  # hit counts not collected for this rule: no evidence
+    if rule.never_deployed:
+        return False  # never reached a device: its counters say nothing yet
+    if rule.modified_at is not None and rule.modified_at > now - window:
+        return False  # changed recently: the device restarted its counters
     if rule.hit_count == 0:
         return True
     return rule.last_hit is not None and rule.last_hit < now - window
