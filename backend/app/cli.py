@@ -4,6 +4,7 @@ Commands:
   create-user      create a local user (password read interactively or from stdin)
   rotate-secrets   re-encrypt stored credentials with the keyring's active key
   verify-audit     verify the audit hash chain (exit code 1 on failure)
+  reset-data       delete every snapshot and everything derived from it (fresh start)
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import argparse
 import getpass
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 
 from app.audit.chain import AuditEvent
 from app.auth.passwords import PasswordPolicyError, check_policy, hash_password
@@ -20,7 +21,11 @@ from app.auth.rbac import Role
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import get_sessionmaker
+from app.models.assets import Asset, AssetGroup, ClusterSetting
+from app.models.enforce import Changeset
 from app.models.fmc import FmcConnection
+from app.models.inventory import Snapshot
+from app.models.recommendations import RecommendationDecision
 from app.models.user import User
 from app.runtime import get_audit, get_secretbox
 
@@ -114,6 +119,39 @@ def cmd_verify_audit(_: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_reset_data(args: argparse.Namespace) -> int:
+    """A fresh start against the same FMCs: snapshots (with their inventory, findings, scores,
+    map and recommendations), changesets, decisions and — unless kept — the asset table and the
+    per-cluster settings are deleted. Users, FMC connections, naming conventions, inspection
+    profiles and the audit log (a tamper-evident chain) stay."""
+    if not args.yes:
+        print("refusing without --yes (this deletes every snapshot and changeset)", file=sys.stderr)
+        return 2
+    counts: dict[str, int] = {}
+    with get_sessionmaker()() as session:
+        tables: list[tuple[str, type[object]]] = [
+            ("changesets", Changeset),
+            ("recommendation_decisions", RecommendationDecision),
+            ("snapshots", Snapshot),
+        ]
+        if not args.keep_assets:
+            tables += [
+                ("assets", Asset),
+                ("asset_groups", AssetGroup),
+                ("cluster_settings", ClusterSetting),
+            ]
+        for name, model in tables:
+            counts[name] = session.scalar(select(func.count()).select_from(model)) or 0
+            session.execute(delete(model))
+        get_audit().record(
+            session,
+            AuditEvent(actor=CLI_ACTOR, action="data.reset", outcome="success", details=counts),
+        )
+        session.commit()
+    print("deleted: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -145,6 +183,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify-audit", help="verify the audit hash chain")
     verify.set_defaults(func=cmd_verify_audit)
+
+    reset = sub.add_parser("reset-data", help="delete all snapshots and derived data")
+    reset.add_argument("--yes", action="store_true", help="confirm the deletion")
+    reset.add_argument("--keep-assets", action="store_true", help="keep the asset table")
+    reset.set_defaults(func=cmd_reset_data)
     return parser
 
 

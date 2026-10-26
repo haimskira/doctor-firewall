@@ -402,10 +402,11 @@ class Writer:
             raise BatchError("unexpected_response", "rule without ruleIndex")
         meta = source.get("metadata") or {}
         params: dict[str, str | int] = {"insertAfter": index}
-        if meta.get("section"):
-            params["section"] = str(meta["section"]).lower()
+        # The FMC refuses section and category together: a category implies its section.
         if meta.get("category") and meta["category"] != "--Undefined--":
             params["category"] = str(meta["category"])
+        elif meta.get("section"):
+            params["section"] = str(meta["section"]).lower()
         body = self._clean(source)
         body["name"] = op["name"]
         self.apply_fields(body, op.get("set", {}))

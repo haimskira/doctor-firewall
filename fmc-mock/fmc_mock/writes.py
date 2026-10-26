@@ -340,6 +340,8 @@ def build_write_router(
                 if (bad := check(body, rules, None)) is not None:
                     return bad
                 params = request.query_params
+                if "section" in params and "category" in params:
+                    return _error(400, "query parameter section and category are not allowed together")
                 try:
                     if "insertAfter" in params:
                         position = int(params["insertAfter"])

@@ -351,15 +351,16 @@ class FmcSession:
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = None,
+        body: dict[str, Any] | list[dict[str, Any]] | None = None,
         params: dict[str, str | int] | None = None,
     ) -> Any:
-        """Authenticated configuration write (POST / PUT / DELETE).
+        """Authenticated configuration write (POST / PUT / DELETE; a list body is a bulk write).
 
         Only :mod:`app.enforce.executor` calls this, for an approved batch, under the
         cross-worker write lock. A 4xx answer raises :class:`FmcWriteRejectedError` with the
         FMC's own description (never retried — the caller rolls back); 429 is retried by
-        ``_send`` (one write at a time per FMC).
+        ``_send`` (one write at a time per FMC). The lab tools (``app.tools.lab_*``) use it to
+        build test data in a lab FMC.
         """
         if method not in ("POST", "PUT", "DELETE"):
             raise ValueError("write_json is for POST, PUT and DELETE")
