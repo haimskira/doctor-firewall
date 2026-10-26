@@ -63,16 +63,23 @@ export function ClustersPage() {
                   </td>
                   <td>{c.model}</td>
                   <td>
-                    {c.policies.map((p) => (
-                      <div key={p.id} className="small">
-                        <span className="muted">{t(`kind.${p.kind}`)}:</span>{' '}
-                        <Link
-                          to={`/rules?snapshot=${String(snapshotId)}&cluster=${encodeURIComponent(c.fmc_id)}&policy=${encodeURIComponent(p.id)}`}
-                        >
-                          <Ltr>{p.name}</Ltr>
-                        </Link>
-                      </div>
-                    ))}
+                    {c.policies.map((p) =>
+                      p.kind === 'unknown' ? (
+                        // A linked setting the collector does not read (logging, platform, ...).
+                        <div key={p.id} className="small muted">
+                          {t('kind.unknown')}: <Ltr>{p.via === 'assignment' ? p.id : p.via.replace(/PolicySetting$/, '')}</Ltr>
+                        </div>
+                      ) : (
+                        <div key={p.id} className="small">
+                          <span className="muted">{t(`kind.${p.kind}`)}:</span>{' '}
+                          <Link
+                            to={`/rules?snapshot=${String(snapshotId)}&cluster=${encodeURIComponent(c.fmc_id)}&policy=${encodeURIComponent(p.id)}`}
+                          >
+                            <Ltr>{p.name}</Ltr>
+                          </Link>
+                        </div>
+                      ),
+                    )}
                   </td>
                   <td>{c.rule_count}</td>
                   <td>

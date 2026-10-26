@@ -47,12 +47,10 @@ export function I18nProvider({
     document.documentElement.dir = dir;
   }, [language, dir]);
 
-  const t = useCallback<Translate>(
-    // Both indexes are closed TypeScript unions (Language, MessageKey), not user input.
-    // eslint-disable-next-line security/detect-object-injection
-    (key, vars) => interpolate(CATALOGS[language][key], vars),
-    [language],
-  );
+  // Looked up through a Map: a key the server sends that no catalogue knows (e.g. a new kind)
+  // shows the key itself instead of breaking the page.
+  const catalog = useMemo(() => new Map<string, string>(Object.entries(CATALOGS[language === 'en' ? 'en' : 'he'])), [language]);
+  const t = useCallback<Translate>((key, vars) => interpolate(catalog.get(key) ?? key, vars), [catalog]);
 
   const tError = useCallback(
     (code: string) => {

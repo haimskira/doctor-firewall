@@ -192,7 +192,7 @@ describe('ClustersPage ACE usage', () => {
   it('shows usage against an unverified limit', async () => {
     setup('/clusters', <Route path="/clusters" element={<ClustersPage />} />, (req) => {
       if (req.url === '/api/snapshots/7/clusters') {
-        return { status: 200, body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, ace_total: 900, ace_limit: 1000, ace_limit_verified: false, policies: [] }] };
+        return { status: 200, body: [{ fmc_id: 'c1', name: 'FTD-CL01', kind: 'ha_pair', sw_version: '7.7.13', model: 'x', members: [], policy_fmc_id: 'p1', policy_name: 'ACP', rule_count: 1, ace_total: 900, ace_limit: 1000, ace_limit_verified: false, policies: [{ id: 'l1', name: 'l1', kind: 'unknown', via: 'loggingPolicySetting', rule_count: 0 }] }] };
       }
       return undefined;
     });
@@ -201,6 +201,8 @@ describe('ClustersPage ACE usage', () => {
     if (row === null) return;
     expect(within(row).getByText('90%')).toBeInTheDocument();
     expect(within(row).getByText('unverified default')).toBeInTheDocument();
+    // A linked setting of a kind the collector does not read (seen on a real FMC) renders.
+    expect(within(row).getByText('logging')).toBeInTheDocument();
   });
 });
 

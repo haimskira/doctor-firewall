@@ -144,7 +144,7 @@ export interface ClusterMember {
   role: string;
 }
 
-export type PolicyKind = 'access' | 'prefilter' | 'decryption' | 'identity' | 'nat' | 'intrusion' | 'file' | 'dns';
+export type PolicyKind = 'access' | 'prefilter' | 'decryption' | 'identity' | 'nat' | 'intrusion' | 'file' | 'dns' | 'unknown';
 export const RULE_POLICY_KINDS: readonly PolicyKind[] = ['access', 'prefilter', 'decryption', 'identity', 'nat'];
 
 export interface GoverningPolicy {

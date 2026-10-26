@@ -21,6 +21,7 @@ import type { RefObject, SyntheticEvent } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { api } from '../api/client';
+import { ErrorBoundary } from './ErrorBoundary';
 import type { FindingsPage, Me, Permission, Snapshot } from '../api/types';
 import { applyTheme, effectiveTheme, useAuth, useMe } from '../auth/AuthProvider';
 import { useApi } from '../hooks';
@@ -373,7 +374,9 @@ export function Layout() {
       </nav>
 
       <main className="fmc-main">
-        <Outlet />
+        <ErrorBoundary key={pathname} message={t('error.page')} retry={t('error.retry')}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );
