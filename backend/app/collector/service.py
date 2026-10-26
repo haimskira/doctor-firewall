@@ -71,6 +71,8 @@ class Stats:
     by_resource: dict[str, int] = field(default_factory=dict)
     # cluster id -> {"status": ok|unsupported|unavailable|mismatch|disabled, "routes", "device"}
     runtime_routes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Resources the FMC refused because their feature is off (resource -> reason).
+    unavailable: dict[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +87,7 @@ class Stats:
             "pages": self.pages,
             "by_resource": self.by_resource,
             "runtime_routes": self.runtime_routes,
+            "unavailable": self.unavailable,
         }
 
 
@@ -139,6 +142,19 @@ class Collector:
             cp = store.checkpoint(session, self.snapshot_id, key)
             store.advance(session, self.snapshot_id, key, cp.next_offset, done=True)
 
+    async def _device_resource(self, path: str, name: str) -> list[dict[str, Any]]:
+        """A device sub-resource; one the model does not support (405) or whose feature is off
+        (422) is empty and noted, not an error."""
+        try:
+            return await self._fetch_all(path, optional=True)
+        except FmcProtocolError as exc:
+            if exc.status not in (405, 422):
+                raise
+            self.stats.unavailable[name] = (
+                "not_supported" if exc.status == 405 else "feature_disabled"
+            )
+            return []
+
     async def _fetch_all(self, path: str, *, optional: bool = False) -> list[dict[str, Any]]:
         """Small resources: read every page into memory (no checkpoint needed)."""
         items: list[dict[str, Any]] = []
@@ -188,9 +204,18 @@ class Collector:
                 self.stats.objects += stored
                 return stored
 
-            await self._paged(
-                f"objects:{resource}", self._path(f"/object/{resource}"), handle, optional=True
-            )
+            try:
+                await self._paged(
+                    f"objects:{resource}", self._path(f"/object/{resource}"), handle, optional=True
+                )
+            except FmcProtocolError as exc:
+                # 422: the feature behind the resource is not enabled on this FMC (e.g. ISE
+                # security group tags without ISE). Nothing to collect; anything else fails.
+                if exc.status != 422:
+                    raise
+                self.stats.unavailable[resource] = "feature_disabled"
+                with self.sessions.begin() as session:
+                    store.advance(session, self.snapshot_id, f"objects:{resource}", 0, done=True)
 
     async def _topology(self) -> tuple[list[dict[str, Any]], list[AssignmentRecord]]:
         devices = [
@@ -366,19 +391,21 @@ class Collector:
         interfaces = {
             kind: [
                 self.adapter.map_interface(kind, i)
-                for i in await self._fetch_all(self._path(f"{dev}/{kind}"), optional=True)
+                for i in await self._device_resource(self._path(f"{dev}/{kind}"), kind)
             ]
             for kind in self.adapter.INTERFACE_RESOURCES
         }
         routes = [
             self.adapter.map_static_route(i)
-            for i in await self._fetch_all(
-                self._path(f"{dev}/routing/ipv4staticroutes"), optional=True
+            for i in await self._device_resource(
+                self._path(f"{dev}/routing/ipv4staticroutes"), "ipv4staticroutes"
             )
         ]
         bgp = self.adapter.map_bgp(
-            await self._fetch_all(self._path(f"{dev}/routing/bgpgeneralsettings"), optional=True),
-            await self._fetch_all(self._path(f"{dev}/routing/bgp"), optional=True),
+            await self._device_resource(
+                self._path(f"{dev}/routing/bgpgeneralsettings"), "bgpgeneralsettings"
+            ),
+            await self._device_resource(self._path(f"{dev}/routing/bgp"), "bgp"),
         )
         with self.sessions.begin() as session:
             for kind, records in interfaces.items():
@@ -415,7 +442,8 @@ class Collector:
                 if result == "unsupported":
                     break  # same FMC for every device: do not ask again
                 continue
-            if not self._matches_device(member["id"], result.routes):
+            check = self._check_device(cluster_id, result.routes)
+            if check == "mismatch":
                 outcome = {"status": "mismatch", "routes": 0, "device": member["name"]}
                 continue
             with self.sessions.begin() as session:
@@ -425,6 +453,7 @@ class Collector:
                 store.advance(session, self.snapshot_id, key, 0, done=True)
             outcome = {
                 "status": "ok",
+                "verified": check == "ok",
                 "routes": count,
                 "skipped_lines": result.skipped,
                 "device": member["name"],
@@ -447,25 +476,34 @@ class Collector:
             return "unavailable"
         return showroute.parse(output)
 
-    def _matches_device(self, device_id: str, routes: list[showroute.RuntimeRoute]) -> bool:
-        """Every connected route must be an interface of *this* device (guards against an
-        answer that belongs to another device) and the table must not be empty."""
-        connected = {(r.interface, r.network) for r in routes if r.protocol == "connected"}
+    def _check_device(self, cluster_id: str, routes: list[showroute.RuntimeRoute]) -> str:
+        """Is this answer the routing table of a unit of *this* cluster? (guards against an
+        answer that belongs to another device). Interfaces are compared with the cluster's (an HA
+        pair's interfaces are configured once). ``mismatch``: a connected route contradicts the
+        static interface addresses; ``ok``: at least one connected route confirms them;
+        ``unverified``: nothing to compare (e.g. DHCP / failover-only interfaces)."""
+        connected = [(r.interface, r.network) for r in routes if r.protocol == "connected"]
         if not connected:
-            return False
+            return "mismatch"  # an empty table is not a usable answer (try the other unit)
         with self.sessions() as session:
             configured = {
-                (ifname, str(ipaddress.ip_interface(ipv4).network))
+                ifname: str(ipaddress.ip_interface(ipv4).network)
                 for ifname, ipv4 in session.execute(
                     select(Interface.ifname, Interface.ipv4).where(
                         Interface.snapshot_id == self.snapshot_id,
-                        Interface.device_fmc_id == device_id,
+                        Interface.cluster_fmc_id == cluster_id,
                         Interface.ipv4.is_not(None),
                     )
                 ).all()
                 if ifname and ipv4
             }
-        return connected <= configured
+        networks = set(configured.values())
+        for iface, network in connected:
+            if iface in configured and configured[iface] != network:
+                return "mismatch"
+            if network in networks and configured.get(iface) != network:
+                return "mismatch"
+        return "ok" if any(iface in configured for iface, _ in connected) else "unverified"
 
 
 def build_clusters(

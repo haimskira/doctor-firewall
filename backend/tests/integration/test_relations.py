@@ -57,6 +57,22 @@ def test_relations_map_and_fixes(client: TestClient, admin: dict[str, str]) -> N
     assert depth["H_CHAIN_X"] == -6
     assert client.get(f"/api/snapshots/{sid}/objects/nope/relations").status_code == 404
 
+    # The explorer's lazy tree: one level at a time, paged, with counts to expand further.
+    level3 = by_label["GRP_CHAIN_3"]["id"]
+    down = client.get(f"/api/snapshots/{sid}/objects/{level3}/tree?direction=down").json()
+    assert {n["name"] for n in down["nodes"]} == {"GRP_CHAIN_2", "H_CHAIN_X"}
+    chain2 = next(n for n in down["nodes"] if n["name"] == "GRP_CHAIN_2")
+    assert (chain2["members"], chain2["member_of"]) == (1, 1)
+    up = client.get(f"/api/snapshots/{sid}/objects/{host}/tree?direction=up&limit=1").json()
+    assert (up["total"], len(up["nodes"])) == (2, 1)  # GRP_CHAIN_1 and GRP_CHAIN_3
+    assert up["nodes"][0]["rule_refs"] == 0
+    more = client.get(f"/api/snapshots/{sid}/objects/{host}/tree?direction=up&offset=1").json()
+    assert {up["nodes"][0]["name"], more["nodes"][0]["name"]} == {"GRP_CHAIN_1", "GRP_CHAIN_3"}
+    assert (
+        client.get(f"/api/snapshots/{sid}/objects/{host}/tree?direction=sideways").status_code
+        == 422
+    )
+
     # The fixes: executable, behaviour-preserving, applied through the normal approval flow.
     ref = flow.find("remove_redundant_reference", "CHAIN_RULE")
     member = flow.find("remove_redundant_member", "GRP_CHAIN_3")

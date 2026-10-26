@@ -16,7 +16,13 @@ MAX_TEXT = 1024
 
 
 def host(value: str) -> str:
-    """``10.0.0.1`` -> ``10.0.0.1/32`` (IPv6 -> /128)."""
+    """``10.0.0.1`` -> ``10.0.0.1/32`` (IPv6 -> /128).
+
+    Some built-in FMC host objects carry a prefix (``any-ipv6`` is a Host with ``::/0``):
+    those are kept as the network they describe.
+    """
+    if "/" in value:
+        return network(value)
     addr = ipaddress.ip_address(value.strip())
     return f"{addr}/{addr.max_prefixlen}"
 

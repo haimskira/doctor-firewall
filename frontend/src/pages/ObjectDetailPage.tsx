@@ -1,16 +1,14 @@
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 
 import type { ObjectDetail, ObjectRelations } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import { RefChip } from '../components/inventory';
-import { RelationsMap } from '../components/RelationsMap';
 import { useApi, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
 /** Impact analysis for one object: what it contains, what contains it, who uses it. */
 export function ObjectDetailPage() {
-  const { t, tError, dir } = useI18n();
-  const navigate = useNavigate();
+  const { t, tError } = useI18n();
   const { objectId = '' } = useParams();
   const { snapshotId, error: snapError } = useSnapshotSelection();
   const detail = useApi<ObjectDetail>(
@@ -44,46 +42,30 @@ export function ObjectDetailPage() {
             )}
             {d.object.stub && <p className="muted">{t('objects.stub')}</p>}
           </section>
-          {relations.data !== null && (
-            <section className="card">
-              <div className="row spread">
-                <h2>{t('relations.title')}</h2>
-                <span className="muted small">{t('relations.legend')}</span>
-              </div>
-              {relations.data.issues.length > 0 && (
-                <div className="alert alert-info" role="note">
-                  <strong>{t('relations.issues', { count: relations.data.issues.length })}</strong>
-                  <ul className="plain-list small">
-                    {relations.data.issues.map((issue) => (
-                      <li key={`${issue.kind}-${issue.where_id}-${issue.removed}`}>
-                        {t(`relations.issue.${issue.kind}`, {
-                          where: issue.where_name,
-                          removed: issue.removed,
-                          kept: issue.kept,
-                        })}{' '}
-                        {issue.recommendation_id !== null && (
-                          <Link
-                            to={`/recommendations?snapshot=${String(snapshotId)}&rec=${String(issue.recommendation_id)}`}
-                          >
-                            {t('relations.fix')}
-                          </Link>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {relations.data.truncated && <p className="muted small">{t('relations.truncated')}</p>}
-              <RelationsMap
-                relations={relations.data}
-                rtl={dir === 'rtl'}
-                label={t('relations.title')}
-                onOpenObject={(id) => {
-                  void navigate(`/objects/${encodeURIComponent(id)}?snapshot=${String(snapshotId)}`);
-                }}
-              />
-            </section>
-          )}
+          <section className="card">
+            <div className="row spread">
+              <h2>{t('relations.title')}</h2>
+              <Link to={`/objects/explore?snapshot=${String(snapshotId)}&object=${encodeURIComponent(d.object.id)}`}>
+                {t('explorer.openHere')}
+              </Link>
+            </div>
+            {(relations.data?.issues ?? []).length === 0 ? (
+              <p className="muted small">{t('explorer.noIssues')}</p>
+            ) : (
+              <ul className="plain-list small">
+                {(relations.data?.issues ?? []).map((issue) => (
+                  <li key={`${issue.kind}-${issue.where_id}-${issue.removed}`}>
+                    {t(`relations.issue.${issue.kind}`, { where: issue.where_name, removed: issue.removed, kept: issue.kept })}{' '}
+                    {issue.recommendation_id !== null && (
+                      <Link to={`/recommendations?snapshot=${String(snapshotId)}&rec=${String(issue.recommendation_id)}`}>
+                        {t('relations.fix')}
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
           {d.members.length > 0 && (
             <section className="card">

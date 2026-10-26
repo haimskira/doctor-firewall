@@ -82,8 +82,11 @@ system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or
   canvas views (Cytoscape) read the tokens and redraw when the theme changes.
 * **Connectivity flows:** Sankey of sources → destinations split by risk, with insight panels
   (riskiest connections, busiest destinations, top services); the graph remains as a second mode.
-* **Relations map** (object page): members ← object → chain of containing groups → rules, overlaps
-  under it, redundant links in red, each issue linked to the recommendation that fixes it.
+* **Object explorer** (Objects flyout): search · tree · details, each column scrolling on its own.
+  The tree shows the groups holding the object level by level and its members, loading one level
+  when it is opened and paging large levels (100 at a time), with rule-reference counts and cycle
+  marks; the detail panel lists the rules using the node grouped by the level they go through,
+  redundant links with their fix, and overlapping objects. The object page links to it.
 * **Inspection profiles** (Policies flyout): tier → intrusion / file policy table; recommendation
   tag *Inspection* (purple) and an Allow ← Trust action diff in previews.
 * Deliberately absent until the feature exists: Add Rule, Save — no button that does nothing.

@@ -130,6 +130,26 @@ failure: the error names the resource, the item id and the offending fields (nev
 sanitised payloads (accessrules `expanded=true`, networkgroups, hitcounts, ipv4staticroutes) can be
 added as adapter test fixtures to lock the behaviour in.
 
+**Validated against a real FMC 10.1.0 (build 160) lab** with an FTDv 7.7.13 HA pair. What the
+real system does differently from the documentation / first mock, now handled and covered by tests:
+
+| Real behaviour | Handling |
+|---|---|
+| An empty collection answers `"limit": 0` | accepted (paging) |
+| Built-in `any-ipv6` is a **Host** whose value is `::/0` | a host value with a prefix is kept as that network |
+| Built-in objects (`any-ipv4`, `IPv4-Private-*`, `SSH`, `HTTPS`, …) carry `metadata.readOnly` (SYSTEM) | marked read-only: never deleted, renamed or edited; when merging duplicates the built-in survives |
+| `isesecuritygrouptags` answers 422 when ISE is not configured | the resource is recorded as `unavailable: feature_disabled`, the pull continues |
+| `vlaninterfaces` answers 405 on FTDv | device resources a model does not support are empty (`not_supported`) |
+| `show route` works through `operational/commands`; the HA failover link (`HAlink`) is not an interface of the configuration | the per-device check compares with the cluster's static interfaces; nothing to compare → accepted as `verified: false` |
+| A BLOCK rule refuses `logEnd` | (lab tool) blocking rules log at the beginning |
+
+A lab FMC with a self-signed certificate is reached with full verification: its certificate is the
+trust anchor (`infra/trust/extra-ca.pem` → the dev trust bundle) and its name (`firepower`, the
+certificate's CN) resolves through `infra/docker-compose.local.yml` (`extra_hosts`). Both files are
+site-local and not in Git. `python -m app.tools.lab_seed` builds the doctrine lab scenario in such
+an FMC (objects, groups, 16 rules with deliberate problems; `--dry-run`, `--cleanup`; writes only
+with `--yes-write-to-lab`, never deploys).
+
 ## Policy dependencies
 
 | Kind | FMC resource | Rules | How it is tied to a cluster |

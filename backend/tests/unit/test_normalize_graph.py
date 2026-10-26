@@ -24,6 +24,7 @@ from app.fmc.records import Ref, RuleField
     [
         (normalize.host, " 10.0.0.1 ", "10.0.0.1/32"),
         (normalize.host, "fd00::1", "fd00::1/128"),
+        (normalize.host, "::/0", "::/0"),  # built-in "any-ipv6" is a Host with a prefix
         (normalize.network, "10.20.5.77/24", "10.20.5.0/24"),
         (normalize.address, "10.0.0.1", "10.0.0.1/32"),
         (normalize.address, "10.0.0.0/8", "10.0.0.0/8"),

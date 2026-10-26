@@ -61,7 +61,7 @@ def page(request: Request, items: list[Json]) -> Response:
         body["items"] = [dict(i) if expanded else _summary(i, base) for i in chunk]
     paging: Json = {
         "offset": offset,
-        "limit": limit,
+        "limit": limit if items else 0,  # as the FMC reports an empty collection
         "count": len(items),
         "pages": math.ceil(len(items) / limit) if items else 0,
     }
@@ -117,7 +117,19 @@ def build_router(data: FmcData, domain_uuid: str, token_ok: Callable[[Request], 
         "urls",
         "urlgroups",
     ):
+        if resource == "isesecuritygrouptags":
+            continue  # below: refused while ISE is disabled
         collection(f"/object/{resource}", partial(_objects_of, data, resource))
+
+    @router.get(CONFIG + "/object/isesecuritygrouptags", name="list:/object/isesecuritygrouptags")
+    async def _ise_tags(request: Request, domain: str) -> Response:
+        if (resp := guard(request, domain)) is not None:
+            return resp
+        if "ise" in data.disabled:
+            return _error(
+                422, "Request cannot be processed because Identity Service Engine is disabled"
+            )
+        return page(request, _objects_of(data, "isesecuritygrouptags"))
 
     collection("/object/variablesets", lambda: data.variable_sets)
     collection("/devices/devicerecords", lambda: data.devices)

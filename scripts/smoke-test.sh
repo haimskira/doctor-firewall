@@ -11,6 +11,8 @@ BASE="https://localhost:${DF_HTTPS_PORT:-8443}"
 CA="$INFRA_HOST/certs/dev-ca.pem"
 COMPOSE=(docker compose --project-directory "$INFRA_HOST" -f "$INFRA_HOST/docker-compose.yml"
          -f "$INFRA_HOST/docker-compose.dev.yml" --env-file "$INFRA_HOST/.env")
+# Optional site-local override (not in Git), e.g. extra_hosts for a lab FMC.
+[[ -f "$INFRA/docker-compose.local.yml" ]] && COMPOSE+=(-f "$INFRA_HOST/docker-compose.local.yml")
 [[ -s "$INFRA/certs/dev-ca.pem" ]] || die "dev CA not found — run scripts/dev-up.sh first"
 
 JAR="$(mktemp)"; trap 'rm -f "$JAR"' EXIT

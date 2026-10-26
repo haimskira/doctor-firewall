@@ -94,6 +94,7 @@ const NAV: NavGroup[] = [
         icon: CubeIcon,
         children: [
           { to: '/objects', label: 'shell.objectManagement', permission: 'policy:read' },
+          { to: '/objects/explore', label: 'nav.explorer', permission: 'policy:read' },
           { to: '/assets', label: 'nav.assets', permission: 'policy:read' },
         ],
       },

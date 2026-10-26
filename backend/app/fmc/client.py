@@ -118,7 +118,7 @@ class TokenBucket:
 class _Paging(BaseModel):
     model_config = ConfigDict(extra="ignore")
     offset: int = Field(ge=0)
-    limit: int = Field(ge=1, le=MAX_PAGE_SIZE)
+    limit: int = Field(ge=0, le=MAX_PAGE_SIZE)  # the FMC reports limit 0 for an empty collection
     count: int = Field(ge=0, le=50_000_000)
 
 

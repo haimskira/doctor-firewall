@@ -18,6 +18,7 @@ import { MapPage } from './pages/MapPage';
 import { InspectionPage } from './pages/InspectionPage';
 import { NamingPage } from './pages/NamingPage';
 import { ObjectDetailPage } from './pages/ObjectDetailPage';
+import { ObjectExplorerPage } from './pages/ObjectExplorerPage';
 import { ObjectsPage } from './pages/ObjectsPage';
 import { PoliciesPage } from './pages/PoliciesPage';
 import { RecommendationsPage } from './pages/RecommendationsPage';
@@ -61,6 +62,7 @@ export function App() {
             ['policies', <PoliciesPage key="p" />],
             ['rules', <RulebasePage key="r" />],
             ['objects', <ObjectsPage key="o" />],
+            ['objects/explore', <ObjectExplorerPage key="x" />],
             ['objects/:objectId', <ObjectDetailPage key="d" />],
             ['findings', <FindingsPage key="f" />],
             ['scores', <ScoresPage key="q" />],

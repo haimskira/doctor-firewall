@@ -158,7 +158,7 @@ def recommend_redundant_members(estate: Estate) -> list[Draft]:
     for group in sorted(estate.objects.values(), key=lambda o: o.name):
         members = estate.members.get(group.fmc_id, [])
         nested = [m for m in members if m.object_id is not None and estate.members.get(m.object_id)]
-        if group.stub or not nested:
+        if group.fixed or not nested:
             continue
         keep = []
         why: list[dict[str, Any]] = []

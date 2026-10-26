@@ -147,6 +147,7 @@ class ObjectModel(_M):
     objectType: Annotated[str, Field(max_length=32)] | None = None  # noqa: N815
     url: ShortText | None = None
     interfaceMode: Annotated[str, Field(max_length=32)] | None = None  # noqa: N815
+    metadata: dict[str, Any] | None = None
     objects: list[RefModel] = Field(default_factory=list, max_length=100_000)
     literals: list[LiteralModel] = Field(default_factory=list, max_length=100_000)
 
@@ -390,6 +391,10 @@ def map_object(resource: str, item: Any) -> ObjectRecord:
         attrs["description"] = normalize.text(m.description)
     if m.overridable:
         attrs["overridable"] = True
+    read_only = (m.metadata or {}).get("readOnly")
+    if isinstance(read_only, dict) and read_only.get("state") is True:
+        # Built-in objects (any-ipv6, IPv4-Private-..., SSH...): the FMC refuses to change them.
+        attrs["read_only"] = str(read_only.get("reason") or "SYSTEM")[:32]
     members: list[Ref] = []
     try:
         match kind:

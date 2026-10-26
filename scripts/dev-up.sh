@@ -6,6 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 COMPOSE=(docker compose --project-directory "$INFRA_HOST" -f "$INFRA_HOST/docker-compose.yml"
          -f "$INFRA_HOST/docker-compose.dev.yml" --env-file "$INFRA_HOST/.env")
+# Optional site-local override (not in Git), e.g. extra_hosts for a lab FMC.
+[[ -f "$INFRA/docker-compose.local.yml" ]] && COMPOSE+=(-f "$INFRA_HOST/docker-compose.local.yml")
 
 if [[ "${1:-}" == "--down" ]]; then
     "${COMPOSE[@]}" down
@@ -19,7 +21,7 @@ if [[ ! -f "$INFRA/.env" ]]; then
     sed -i.bak -e 's/^DF_VERSION=.*/DF_VERSION=dev/' \
                -e 's/^DF_HTTPS_BIND=.*/DF_HTTPS_BIND=127.0.0.1/' \
                -e 's/^DF_HTTPS_PORT=.*/DF_HTTPS_PORT=8443/' \
-               -e 's|^DF_FMC_CA_FILE=.*|DF_FMC_CA_FILE=./certs/dev-ca.pem|' "$INFRA/.env"
+               -e 's|^DF_FMC_CA_FILE=.*|DF_FMC_CA_FILE=./certs/dev-trust.pem|' "$INFRA/.env"
     rm -f "$INFRA/.env.bak"
     ok "created infra/.env for development"
 fi
@@ -29,6 +31,14 @@ docker tag "$REDIS_IMAGE" doctor-firewall/redis:dev
 log "Building images (offline)"
 "${COMPOSE[@]}" build --quiet
 DF_VERSION=dev "$ROOT/scripts/gen-certs.sh" --dev
+# FMC trust store for development: the mock's CA plus any local extra (e.g. a lab FMC's
+# self-signed certificate in infra/trust/extra-ca.pem, not in Git).
+if [[ -f "$INFRA/certs/dev-ca.pem" ]]; then
+    cat "$INFRA/certs/dev-ca.pem" > "$INFRA/certs/dev-trust.pem"
+    [[ -f "$INFRA/trust/extra-ca.pem" ]] && cat "$INFRA/trust/extra-ca.pem" >> "$INFRA/certs/dev-trust.pem"
+    sed -i.bak -e 's|^DF_FMC_CA_FILE=./certs/dev-ca.pem$|DF_FMC_CA_FILE=./certs/dev-trust.pem|' "$INFRA/.env"
+    rm -f "$INFRA/.env.bak"
+fi
 
 log "Starting stack"
 "${COMPOSE[@]}" up -d --wait

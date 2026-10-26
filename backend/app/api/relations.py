@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, literal, select
 from sqlalchemy.orm import Session
@@ -298,6 +298,8 @@ def object_relations(snapshot_id: int, object_id: FmcIdPath, db: DbDep, _: Reade
         ).all():
             if fid in nodes or value is None or found >= MAX_OVERLAPS:
                 continue
+            if value.endswith("/0"):
+                continue  # "any" objects contain every address: no information
             other = AddressSet.build([value])
             if not mine.intersects(other):
                 continue
@@ -324,3 +326,114 @@ def object_relations(snapshot_id: int, object_id: FmcIdPath, db: DbDep, _: Reade
         issues=issues,
         truncated=truncated,
     )
+
+
+# ------------------------------------------------------------------ lazy tree (explorer)
+
+
+class TreeNode(BaseModel):
+    id: str | None  # None for an inline literal member
+    name: str
+    kind: str
+    value: str | None
+    members: int  # direct members (groups)
+    member_of: int  # groups holding it directly
+    rule_refs: int  # rule fields referencing it directly
+    read_only: bool
+
+
+class TreePage(BaseModel):
+    parent: str
+    direction: str
+    total: int
+    offset: int
+    nodes: list[TreeNode]
+
+
+@router.get("/snapshots/{snapshot_id}/objects/{object_id}/tree", response_model=TreePage)
+def object_tree(
+    snapshot_id: int,
+    object_id: FmcIdPath,
+    db: DbDep,
+    _: ReaderDep,
+    direction: Annotated[str, Query(pattern="^(up|down)$")] = "down",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> TreePage:
+    """One level of the tree around an object, paged: its members (``down``) or the groups
+    holding it (``up``), each with the counts needed to decide whether to expand further."""
+    exists = db.scalar(
+        select(FwObject.id).where(FwObject.snapshot_id == snapshot_id, FwObject.fmc_id == object_id)
+    )
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    if direction == "down":
+        link = select(
+            GroupMember.member_fmc_id.label("oid"),
+            GroupMember.member_name.label("name"),
+            GroupMember.literal.label("literal"),
+            GroupMember.id.label("pos"),
+        ).where(GroupMember.snapshot_id == snapshot_id, GroupMember.group_fmc_id == object_id)
+    else:
+        link = select(
+            GroupMember.group_fmc_id.label("oid"),
+            literal("").label("name"),
+            literal(None).label("literal"),
+            GroupMember.id.label("pos"),
+        ).where(GroupMember.snapshot_id == snapshot_id, GroupMember.member_fmc_id == object_id)
+    rows = link.subquery()
+    total = db.scalar(select(func.count()).select_from(rows)) or 0
+    members = (
+        select(func.count(GroupMember.id))
+        .where(GroupMember.snapshot_id == snapshot_id, GroupMember.group_fmc_id == FwObject.fmc_id)
+        .scalar_subquery()
+    )
+    member_of = (
+        select(func.count(GroupMember.id))
+        .where(GroupMember.snapshot_id == snapshot_id, GroupMember.member_fmc_id == FwObject.fmc_id)
+        .scalar_subquery()
+    )
+    refs = (
+        select(func.count(RuleRef.id))
+        .where(RuleRef.snapshot_id == snapshot_id, RuleRef.object_fmc_id == FwObject.fmc_id)
+        .scalar_subquery()
+    )
+    query = (
+        select(rows.c.oid, rows.c.name, rows.c.literal, FwObject, members, member_of, refs)
+        .outerjoin(
+            FwObject,
+            (FwObject.snapshot_id == snapshot_id) & (FwObject.fmc_id == rows.c.oid),
+        )
+        .order_by(FwObject.name.nulls_last(), rows.c.pos)
+        .offset(offset)
+        .limit(limit)
+    )
+    nodes = []
+    for oid, name, lit, obj, n_members, n_parents, n_refs in db.execute(query).all():
+        if obj is None:
+            nodes.append(
+                TreeNode(
+                    id=None if oid is None else str(oid),
+                    name=str(lit or name or oid or "?"),
+                    kind="literal" if oid is None else "unknown",
+                    value=str(lit) if lit is not None else None,
+                    members=0,
+                    member_of=0,
+                    rule_refs=0,
+                    read_only=False,
+                )
+            )
+            continue
+        nodes.append(
+            TreeNode(
+                id=obj.fmc_id,
+                name=obj.name,
+                kind=obj.kind,
+                value=obj.value,
+                members=n_members or 0,
+                member_of=n_parents or 0,
+                rule_refs=n_refs or 0,
+                read_only=bool((obj.attrs or {}).get("read_only")),
+            )
+        )
+    return TreePage(parent=object_id, direction=direction, total=total, offset=offset, nodes=nodes)

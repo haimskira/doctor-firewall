@@ -223,6 +223,8 @@ def build_write_router(
                 pos = next((i for i, o in enumerate(items) if o["id"] == object_id), None)
                 if pos is None:
                     return _error(404, "Object not found")
+                if ((items[pos].get("metadata") or {}).get("readOnly") or {}).get("state"):
+                    return _error(400, "System objects cannot be modified or deleted")
                 body = object_body(resource, await request.json(), object_id)
                 if isinstance(body, Response):
                     return body
@@ -240,6 +242,8 @@ def build_write_router(
                 pos = next((i for i, o in enumerate(items) if o["id"] == object_id), None)
                 if pos is None:
                     return _error(404, "Object not found")
+                if ((items[pos].get("metadata") or {}).get("readOnly") or {}).get("state"):
+                    return _error(400, "System objects cannot be modified or deleted")
                 if fail_write(items[pos]["name"]):
                     return _error(400, "Injected failure")
                 if in_use(object_id):
@@ -409,8 +413,13 @@ def build_write_router(
                 500, "SFTunnelException: Cannot establish a connection with the threat defense"
             )
         source = device_id
-        if fault("cli_mixup"):  # the FMC answering with another device's output
-            source = next((d for d in data.interfaces if d != device_id), device_id)
+        if fault("cli_mixup"):  # the FMC answering with a device of ANOTHER cluster
+            own = {device_id}
+            for pair in data.ha_pairs:
+                units = {pair["primary"]["id"], pair["secondary"]["id"]}
+                if device_id in units:
+                    own |= units
+            source = next((d for d in data.interfaces if d not in own), device_id)
         output = show_route(
             data.interfaces.get(source, {}), data.static_routes.get(source, []), all_objects()
         )
@@ -508,6 +517,9 @@ def build_write_router(
         if not isinstance(body, dict):
             return _error(400, "object expected")
         state.faults.clear()
+        data.disabled.clear()
+        if body.get("ise_disabled"):
+            data.disabled.add("ise")
         state.faults.update(
             {
                 k: v

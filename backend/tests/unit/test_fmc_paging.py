@@ -91,6 +91,23 @@ def test_malformed_page_rejected() -> None:
         asyncio.run(run())
 
 
+def test_empty_collection_as_the_real_fmc_reports_it() -> None:
+    # FMC 10.1 answers an empty collection with no items and "limit": 0 (seen on a lab FMC).
+    good = _mock()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/object/portobjectgroups"):
+            empty = {"links": {}, "paging": {"offset": 0, "limit": 0, "count": 0, "pages": 0}}
+            return httpx.Response(200, json=empty)
+        return await good.handle_async_request(request)
+
+    async def run() -> list[Any]:
+        async with _session(httpx.MockTransport(handler)) as fmc:
+            return [page async for page in fmc.iter_pages(f"{BASE}/object/portobjectgroups")]
+
+    assert asyncio.run(run()) == []
+
+
 def test_retry_after_is_honoured_then_succeeds() -> None:
     good = _mock()
     calls = {"n": 0}

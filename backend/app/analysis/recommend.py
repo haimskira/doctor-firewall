@@ -176,6 +176,12 @@ class Obj:
     kind: str
     value: str | None
     stub: bool
+    read_only: bool = False  # built-in FMC object: never deleted, renamed or edited
+
+    @property
+    def fixed(self) -> bool:
+        """Not ours to change (stub or built-in)."""
+        return self.stub or self.read_only
 
 
 # ------------------------------------------------------------------ estate
@@ -188,10 +194,15 @@ class Estate:
         self.session = session
         self.snapshot_id = snapshot_id
         self.objects: dict[str, Obj] = {
-            fid: Obj(fid, name, kind, value, stub)
-            for fid, name, kind, value, stub in session.execute(
+            fid: Obj(fid, name, kind, value, stub, bool((attrs or {}).get("read_only")))
+            for fid, name, kind, value, stub, attrs in session.execute(
                 select(
-                    FwObject.fmc_id, FwObject.name, FwObject.kind, FwObject.value, FwObject.stub
+                    FwObject.fmc_id,
+                    FwObject.name,
+                    FwObject.kind,
+                    FwObject.value,
+                    FwObject.stub,
+                    FwObject.attrs,
                 ).where(FwObject.snapshot_id == snapshot_id)
             ).all()
         }
@@ -1269,7 +1280,7 @@ def _keep_order(estate: Estate, o: Obj) -> tuple[int, int, int, int, str]:
     convention = estate.conventions.get(o.kind)
     compliant = 0 if convention is not None and convention.complies(o.name) else 1
     return (
-        0 if routes else 1,
+        0 if o.read_only or routes else 1,  # a built-in object can only be the survivor
         -(len(rules) + len(parents) + routes),
         compliant,
         len(o.name),
@@ -1356,7 +1367,7 @@ def _reachable(estate: Estate, start: str) -> set[str]:
 def recommend_object_merges(estate: Estate) -> list[Draft]:
     drafts: list[Draft] = []
     for (kind, value), objs in sorted(estate.by_value.items()):
-        if len(objs) > 1 and kind not in GROUP_KINDS:
+        if len(objs) > 1 and kind not in GROUP_KINDS and sum(o.read_only for o in objs) < 2:
             drafts.append(
                 _merge_objects_draft(
                     estate, "merge_duplicate_objects", "one_name_per_value", objs, f"value {value}"
@@ -1373,7 +1384,7 @@ def recommend_object_merges(estate: Estate) -> list[Draft]:
         if values:
             by_leaves[(o.kind, values)].append(o)
     for (_kind, _values), objs in sorted(by_leaves.items(), key=lambda kv: kv[1][0].name):
-        if len(objs) < 2:
+        if len(objs) < 2 or sum(o.read_only for o in objs) > 1:
             continue
         ids = {o.fmc_id for o in objs}
         if any(_reachable(estate, o.fmc_id) & ids for o in objs):
@@ -1389,7 +1400,7 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
     convention = estate.conventions.get("network_group")
     taken = {o.name for o in estate.objects.values()}
     for o in sorted(estate.objects.values(), key=lambda x: x.name):
-        if o.kind != "network_group" or o.stub or not estate.rule_users.get(o.fmc_id):
+        if o.kind != "network_group" or o.fixed or not estate.rule_users.get(o.fmc_id):
             continue
         parts: dict[str, list[Ref]] = defaultdict(list)
         splittable = True
@@ -1513,7 +1524,7 @@ def recommend_renames(estate: Estate) -> tuple[list[Draft], dict[str, dict[str, 
     taken = {o.name for o in estate.objects.values()}
     renamed: set[str] = set()
     for o in sorted(estate.objects.values(), key=lambda x: x.name):
-        if o.stub or o.kind != "network_group" or not _IPV4_IN_NAME.search(o.name):
+        if o.fixed or o.kind != "network_group" or not _IPV4_IN_NAME.search(o.name):
             continue
         facts = estate.asset_facts(estate.resolver.leaves(o.fmc_id))
         convention = estate.conventions.get(o.kind)
@@ -1534,7 +1545,7 @@ def recommend_renames(estate: Estate) -> tuple[list[Draft], dict[str, dict[str, 
             continue
         counts = {"compliant": 0, "noncompliant": 0, "proposed": 0}
         for o in sorted(estate.objects.values(), key=lambda x: x.name):
-            if o.kind != kind or o.stub:
+            if o.kind != kind or o.fixed:
                 continue
             if convention.complies(o.name):
                 counts["compliant"] += 1
@@ -1710,7 +1721,7 @@ def recommend_literals(estate: Estate) -> list[Draft]:
 def recommend_unused(estate: Estate) -> list[Draft]:
     drafts = []
     for o in sorted(estate.objects.values(), key=lambda x: (x.kind, x.name)):
-        if o.stub:
+        if o.fixed:
             continue
         rules, parents, routes = estate.object_refs(o.fmc_id)
         if rules or parents or routes or o.fmc_id in estate.zone_users:

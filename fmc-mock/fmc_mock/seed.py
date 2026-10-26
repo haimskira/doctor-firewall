@@ -35,6 +35,8 @@ class FmcData:
     objects: dict[str, list[Json]] = field(default_factory=dict)  # FMC resource name -> items
     # Not firewall objects (the collector does not pull them); used by rule writes.
     variable_sets: list[Json] = field(default_factory=list)
+    # Features switched off on this FMC (e.g. "ise": no ISE, its object types answer 422).
+    disabled: set[str] = field(default_factory=set)
     devices: list[Json] = field(default_factory=list)
     ha_pairs: list[Json] = field(default_factory=list)
     policies: list[Json] = field(default_factory=list)
@@ -777,6 +779,24 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                 "category": "--Undefined--",
                 "ruleIndex": len(chain_rules) + 1,
             },
+        }
+    )
+
+    # Built-in objects as the FMC ships them: read-only (metadata.readOnly SYSTEM); "any-ipv6"
+    # is a Host whose value is a prefix.
+    system = {"readOnly": {"state": True, "reason": "SYSTEM"}}
+    for item in b.data.objects.get("protocolportobjects", []):
+        if item["name"] in ("HTTPS", "HTTP", "SSH", "RDP", "LDAP", "KERBEROS"):
+            item["metadata"] = dict(system)
+    b.data.objects.setdefault("hosts", []).append(
+        {
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, "fmc-mock/system/any-ipv6")),
+            "name": "any-ipv6",
+            "type": "Host",
+            "value": "::/0",
+            "overridable": False,
+            "description": " ",
+            "metadata": dict(system),
         }
     )
 
