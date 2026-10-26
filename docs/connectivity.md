@@ -24,8 +24,11 @@ job) and `backend/app/api/connectivity.py` (`GET /api/snapshots/{id}/map`).
 | yellow — may be risky | works but deviates from the ideal | GOLD / SILVER without IPS or file policy, GOLD with many sources, any or wide service, any / broad source or destination, several destination tiers |
 | green — compliant | — | none of the above |
 
-An edge takes the worst colour of its rules; the panel lists the reasons ("why this colour") and
-the rules, each linking to the policy editor.
+An edge also records how many of its rules (and hits) carry each colour (`risk_rules`,
+`risk_hits`). The **flow** view draws every connection split into its red / yellow / green
+parts, so a connection with one dangerous rule among a hundred compliant ones is not painted
+entirely red; the **graph** view keeps the worst colour per edge. The panel lists the reasons
+("why this colour") and the rules, each linking to the policy editor.
 
 ## Views and filters
 
@@ -50,7 +53,14 @@ source, removing a dead rule removes its edges.
 
 ## Rendering
 
-Cytoscape.js 3.34.3 (MIT, no dependencies, bundled — no CDN) with a deterministic preset layout.
+**Flows (default)** — a Sankey diagram drawn in SVG by our own code (no extra dependency): sources
+on one side, destinations on the other (mirrored in Hebrew), nodes coloured by tier, band width
+by rules or hits (toggle), bands split by risk colour; the 16 largest nodes per side are shown and
+the rest folded into "+N more". Hover focuses a node or band, click opens the connection panel.
+Next to it: riskiest connections, busiest destinations, top services. Colours come from the theme
+tokens, so light and dark modes need no special handling.
+
+**Graph** — Cytoscape.js 3.34.3 (MIT, no dependencies, bundled — no CDN) with a deterministic preset layout.
 Cytoscape normally injects an inline `<style>`; the strict CSP (`style-src 'self'`) blocks it, so
 the UI places a placeholder element that suppresses the injection and ships the rule in
 `styles.css`. A table of the same edges is always shown under the graph (keyboard / screen

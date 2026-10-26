@@ -24,6 +24,8 @@ KIND_ORDER = (
     "split_group",
     "merge_groups",
     "merge_duplicate_objects",
+    "remove_redundant_member",
+    "remove_redundant_reference",
     "split_rule",
     "merge_rules",
     "tighten_source",

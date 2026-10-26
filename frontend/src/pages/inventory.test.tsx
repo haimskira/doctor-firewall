@@ -24,7 +24,7 @@ const ME: Me = {
   permissions: ['policy:read', 'collect:run', 'changeset:write'],
   language: 'en',
   auth_provider: 'local', must_change_password: false,
-  csrf_token: 'csrf-1',
+  theme: 'system', csrf_token: 'csrf-1',
 };
 
 const SNAP: Snapshot = {

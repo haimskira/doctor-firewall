@@ -726,6 +726,60 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
         "type": "VariableSet",
     }
     b.data.variable_sets.append({**variables, "description": "Default Variable Set"})
+
+    # Relations scenario (fixed ids: the random stream above stays unchanged): a host inside a
+    # chain of 8 nested groups, held again directly by level 3, and one rule that references
+    # level 8, level 4 and the host itself (redundant references).
+    def fixed(name: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"fmc-mock/relations/{name}"))
+
+    chain_host = {
+        "id": fixed("H_CHAIN_X"),
+        "name": "H_CHAIN_X",
+        "type": "Host",
+        "value": "10.20.5.77",
+        "overridable": False,
+        "description": " ",
+    }
+    b.data.objects.setdefault("hosts", []).append(chain_host)
+    levels: list[Json] = []
+    below = chain_host
+    for level in range(1, 9):
+        members = [below] + ([chain_host] if level == 3 else [])
+        group = {
+            "id": fixed(f"GRP_CHAIN_{level}"),
+            "name": f"GRP_CHAIN_{level}",
+            "type": "NetworkGroup",
+            "objects": [_ref(m) for m in members],
+            "overridable": False,
+            "description": " ",
+        }
+        b.data.objects.setdefault("networkgroups", []).append(group)
+        levels.append(group)
+        below = group
+    first_policy = next(iter(b.data.rules))
+    chain_rules = b.data.rules[first_policy]
+    chain_rules.append(
+        {
+            "id": fixed("CHAIN_RULE"),
+            "type": "AccessRule",
+            "name": "CHAIN_RULE",
+            "enabled": True,
+            "action": "ALLOW",
+            "logBegin": False,
+            "logEnd": True,
+            "sendEventsToFMC": True,
+            "destinationNetworks": {
+                "objects": [_ref(levels[7]), _ref(levels[3]), _ref(chain_host)]
+            },
+            "metadata": {
+                "section": "Default",
+                "category": "--Undefined--",
+                "ruleIndex": len(chain_rules) + 1,
+            },
+        }
+    )
+
     # As the FMC returns them: inspection only on Allow rules, always with a variable set.
     for rules in b.data.rules.values():
         for item in rules:

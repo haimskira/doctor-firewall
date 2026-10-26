@@ -35,6 +35,8 @@ Every recommendation carries:
 | `rename_role` | a network group named by address (`GRP_10.30.0.0`) whose members map to one system / tier | the convention name, else `GRP_<ROLE>` | label only |
 | `rename_convention` | an object or access rule not matching the admin convention, when every token resolves | the computed name; collisions get `_2`, `_3`… (`name_disambiguated`) | label only |
 | `literal_to_object` | an inline address / port value in rules | the existing object with that value, or a new convention-named object | unchanged |
+| `remove_redundant_reference` | a rule field references a group and also an object / group already inside it (any depth) | update the rule: drop the inner reference (membership-based: same matched traffic) | — |
+| `remove_redundant_member` | a group holds a member directly and again through one of its nested groups | update the group: drop the direct copy | — |
 | `remove_unused_object` | an object referenced by no collected rule, group, route or interface | delete | `external_references`: it may be used by configuration that is not collected |
 
 Priorities (0–100, higher first): shadowed 75 (conflict 85), tighten source 55+, dead 60,

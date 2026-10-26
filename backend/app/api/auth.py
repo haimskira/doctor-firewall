@@ -45,6 +45,7 @@ def _me(user: User, csrf_token: str) -> MeResponse:
         roles=sorted(roles),
         permissions=sorted(p.value for p in permissions_for(roles)),
         language="en" if user.language == "en" else "he",
+        theme="light" if user.theme == "light" else "dark" if user.theme == "dark" else "system",
         must_change_password=user.must_change_password,
         csrf_token=csrf_token,
     )
@@ -217,6 +218,9 @@ def update_preferences(
     user = db.get(User, principal.user_id)
     if user is None:  # pragma: no cover - guarded by get_principal
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not_authenticated")
-    user.language = body.language
+    if body.language is not None:
+        user.language = body.language
+    if body.theme is not None:
+        user.theme = body.theme
     db.commit()
     return _me(user, principal.csrf_token)

@@ -77,6 +77,13 @@ system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or
 * **Connectivity map:** tier-tinted pill nodes in light column bands, soft curved edges, focus on
   hover / tap fades everything not connected.
 * **Assets:** list / detail — assets with kind icons and tier chips, components table inside.
+* **Theme:** light / dark / as the system — Settings or the sun / moon button in the top bar, stored
+  per user on the server (no browser storage). Every colour is a CSS token redefined for dark;
+  canvas views (Cytoscape) read the tokens and redraw when the theme changes.
+* **Connectivity flows:** Sankey of sources → destinations split by risk, with insight panels
+  (riskiest connections, busiest destinations, top services); the graph remains as a second mode.
+* **Relations map** (object page): members ← object → chain of containing groups → rules, overlaps
+  under it, redundant links in red, each issue linked to the recommendation that fixes it.
 * **Inspection profiles** (Policies flyout): tier → intrusion / file policy table; recommendation
   tag *Inspection* (purple) and an Allow ← Trust action diff in previews.
 * Deliberately absent until the feature exists: Add Rule, Save — no button that does nothing.

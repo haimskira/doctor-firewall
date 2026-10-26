@@ -16,7 +16,7 @@ import { RulebasePage } from './RulebasePage';
 function me(permissions: Permission[]): Me {
   return {
     id: 1, username: 'opt', display_name: 'Opt', roles: ['optimizer'], permissions, language: 'en',
-    auth_provider: 'local', must_change_password: false, csrf_token: 'csrf-3',
+    auth_provider: 'local', must_change_password: false, theme: 'system', csrf_token: 'csrf-3',
   };
 }
 const SNAP = {

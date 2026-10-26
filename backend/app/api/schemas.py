@@ -36,8 +36,12 @@ class ChangePasswordRequest(StrictModel):
     new_password: Password
 
 
+Theme = Literal["system", "light", "dark"]
+
+
 class PreferencesRequest(StrictModel):
-    language: Language
+    language: Language | None = None
+    theme: Theme | None = None
 
 
 class MeResponse(BaseModel):
@@ -48,6 +52,7 @@ class MeResponse(BaseModel):
     roles: list[Role]
     permissions: list[str]
     language: Language
+    theme: Theme
     must_change_password: bool
     csrf_token: str
 

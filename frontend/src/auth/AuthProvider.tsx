@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 
 import { ApiError, api, setCsrfToken } from '../api/client';
-import type { Language, Me, Permission } from '../api/types';
+import type { Language, Me, Permission, Theme } from '../api/types';
 import { useI18n } from '../i18n/I18nProvider';
 
 type AuthState =
@@ -21,6 +21,20 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null);
 
+/** The theme lives on <html data-theme>; "system" leaves it to prefers-color-scheme. */
+export function applyTheme(theme: Theme | null): void {
+  const root = document.documentElement;
+  if (theme === null || theme === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', theme);
+}
+
+/** The theme actually shown (resolves "system" through the OS setting). */
+export function effectiveTheme(theme: Theme): 'light' | 'dark' {
+  if (theme !== 'system') return theme;
+  if (typeof window.matchMedia !== 'function') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: 'loading' });
   const { setLanguage } = useI18n();
@@ -29,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (me: Me) => {
       setCsrfToken(me.csrf_token);
       setLanguage(me.language satisfies Language);
+      applyTheme(me.theme);
       setState({ status: 'authenticated', me });
     },
     [setLanguage],
@@ -66,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await api<undefined>('/api/auth/logout', 'POST');
     } finally {
       setCsrfToken(null);
+      applyTheme(null);
       setState({ status: 'anonymous' });
     }
   }, []);

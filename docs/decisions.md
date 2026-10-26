@@ -3,6 +3,13 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-030 — Flow view drawn in-house; theme stored per user
+The connectivity flow (Sankey) view is ~250 lines of our own layout + SVG rather than d3-sankey:
+one dependency less (supply chain), exact RTL mirroring, and colours straight from the CSS theme
+tokens. The colour theme (system / light / dark) is a user preference on the server, like the
+language — the UI never uses browser storage. Cytoscape nodes get an explicit width (its "label"
+sizing is measured once and cached; a label measured before the font is ready stayed at width 0).
+
 ### D-029 — Runtime routes through the FMC device CLI, verified per device
 The configuration API has no routing table; the read-only `operational/commands` endpoint runs
 `show route` on the device (FMC 7.4.1+). Its text is parsed as data (every field validated).

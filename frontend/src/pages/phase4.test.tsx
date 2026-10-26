@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectivityMap, DashboardData, Me, Snapshot } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
+import { layoutFlows, riskParts } from '../components/FlowSankey';
 import { columnGap, elementsFor, RISK_COLOURS } from '../components/Graph';
 import { MapChange } from '../components/mapParts';
 import { I18nProvider } from '../i18n/I18nProvider';
@@ -44,6 +45,7 @@ vi.mock('cytoscape', () => {
         },
         fit: vi.fn(),
         resize: vi.fn(),
+        style: vi.fn(),
         destroy: vi.fn(),
       };
     }),
@@ -58,7 +60,7 @@ function target(id: string, node: boolean) {
 
 const ME: Me = {
   id: 1, username: 'v', display_name: 'V', roles: ['viewer'], permissions: ['policy:read'], language: 'en',
-  auth_provider: 'local', must_change_password: false, csrf_token: 'c',
+  auth_provider: 'local', must_change_password: false, theme: 'system', csrf_token: 'c',
 };
 const SNAP = {
   id: 7, connection_id: 1, connection_name: 'FMC', status: 'complete', requested_by: 'x', created_at: '2026-10-20T10:00:00Z',
@@ -76,10 +78,12 @@ const MAP: ConnectivityMap = {
       id: 'BRONZE|DEV->GOLD|SQL-FIN', src: 'BRONZE|DEV', dst: 'GOLD|SQL-FIN', risk: 'red', rule_count: 2, hits: 1500, min_score: 25,
       reasons: ['tier_skip', 'gold_without_ips'], services: ['SVC_TCP1433'],
       rules: [{ id: 'r9', name: 'TEMP_DEV_TO_DB', index: 9, risk: 'red', score: 25, policy_id: 'p1' }],
+      risk_rules: { red: 1, green: 1 }, risk_hits: { red: 1000, green: 500 },
     },
     {
       id: 'ANY->GOLD|SQL-FIN', src: 'ANY', dst: 'GOLD|SQL-FIN', risk: 'yellow', rule_count: 1, hits: 0, min_score: 60,
       reasons: ['any_source'], services: ['HTTPS'], rules: [{ id: 'r3', name: 'WEB', index: 3, risk: 'yellow', score: 60, policy_id: 'p1' }],
+      risk_rules: { yellow: 1 }, risk_hits: {},
     },
   ],
   total_edges: 2,
@@ -143,7 +147,7 @@ describe('Graph layout', () => {
 
 describe('MapPage', () => {
   it('renders the graph and list, filters by address and risk, and explains a connection', async () => {
-    const calls = setup('/map', <Route path="/map" element={<MapPage />} />, (req) => {
+    const calls = setup('/map?mode=graph', <Route path="/map" element={<MapPage />} />, (req) => {
       if (req.url.startsWith('/api/snapshots/7/map?')) {
         if (req.url.includes('src=bogus')) return { status: 422, body: { detail: 'invalid_src' } };
         return { status: 200, body: MAP };
@@ -250,5 +254,46 @@ describe('Summary dashboard', () => {
     const conn = screen.getByRole('region', { name: 'Riskiest Connections' });
     expect(within(conn).getByText('DEV')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Lowest-Scored Rules' })).getByText('5')).toBeInTheDocument();
+  });
+});
+
+describe('Flow view', () => {
+  const edges = MAP.edges.map((e) => ({
+    id: e.id, src: e.src, dst: e.dst, ruleCount: e.rule_count, hits: e.hits,
+    riskRules: e.risk_rules, riskHits: e.risk_hits, fallbackRisk: e.risk,
+  }));
+  const nodes = MAP.nodes.map((n) => ({ id: n.id, label: n.label, tier: n.tier }));
+
+  it('splits every connection by risk instead of painting it with the worst rule', () => {
+    const dev = edges.find((e) => e.src === 'BRONZE|DEV');
+    if (dev === undefined) throw new Error('fixture');
+    expect(riskParts(dev, 'rules')).toEqual([['red', 1], ['green', 1]]);
+    expect(riskParts(dev, 'hits')).toEqual([['red', 1000], ['green', 500]]);
+    const any = edges.find((e) => e.src === 'ANY');
+    if (any === undefined) throw new Error('fixture');
+    expect(riskParts(any, 'hits')).toEqual([]); // no hits: nothing to draw by hits
+    const layout = layoutFlows(nodes, edges, 'rules', 900, 400, false, (n) => `+${String(n)}`);
+    expect(layout.sources.map((s) => s.id).sort()).toEqual(['ANY', 'BRONZE|DEV']);
+    expect(layout.targets.map((d) => d.id)).toEqual(['GOLD|SQL-FIN']);
+    expect(layout.bands.map((b) => b.risk).sort()).toEqual(['green', 'red', 'yellow']);
+    const mirrored = layoutFlows(nodes, edges, 'rules', 900, 400, true, (n) => `+${String(n)}`);
+    expect(mirrored.bands[0]?.path).not.toEqual(layout.bands[0]?.path);
+  });
+
+  it('is the default display, with insights, and opens a connection from a flow', async () => {
+    setup('/map', <Route path="/map" element={<MapPage />} />, (req) => {
+      if (req.url.startsWith('/api/snapshots/7/map?')) return { status: 200, body: MAP };
+      return undefined;
+    });
+    expect(await screen.findByRole('img', { name: 'Connection flows by risk' })).toBeInTheDocument();
+    expect(screen.getByText('Riskiest connections')).toBeInTheDocument();
+    expect(screen.getByText('1 risky rules')).toBeInTheDocument();
+    const band = document.querySelector('path.flow-band.risk-red');
+    expect(band).not.toBeNull();
+    if (band === null) return;
+    await userEvent.click(band);
+    expect(await screen.findByText('TEMP_DEV_TO_DB')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Hits' }));
+    expect(document.querySelector('path.flow-band.risk-yellow')).toBeNull(); // the yellow rule has no hits
   });
 });

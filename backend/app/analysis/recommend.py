@@ -1760,7 +1760,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     """Recompute all recommendations of a snapshot (idempotent). Caller commits."""
     session.execute(delete(Recommendation).where(Recommendation.snapshot_id == snapshot_id))
     # Phase-6 inspection builds on this module's primitives (imported here: no cycle).
-    from app.analysis import inspection
+    from app.analysis import inspection, redundancy
 
     estate = Estate(session, snapshot_id)
     drafts: list[Draft] = []
@@ -1774,6 +1774,8 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
         if not rules:
             continue
         drafts += recommend_removals(estate, policy, rules)
+        if policy.kind in ("access", "prefilter"):
+            drafts += redundancy.recommend_redundant_references(estate, policy, rules)
         if policy.kind == "access":
             drafts += recommend_split_rules(estate, policy, rules)
             drafts += recommend_merge_rules(estate, policy, rules)
@@ -1785,6 +1787,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
             ssl.decryption_policy(policy, rules)
     drafts += ssl.drafts()
     drafts += recommend_object_merges(estate)
+    drafts += redundancy.recommend_redundant_members(estate)
     drafts += recommend_split_groups(estate)
     drafts += renames
     drafts += recommend_literals(estate)

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { InspectionCatalog, Me, Permission, RecommendationPreview, User } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
 import { RecommendationPreviewView } from '../components/recommendations';
+import { relationElements } from '../components/RelationsMap';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
 import { InspectionPage } from './InspectionPage';
@@ -14,7 +15,7 @@ import { UsersPage } from './UsersPage';
 function me(permissions: Permission[]): Me {
   return {
     id: 1, username: 'adm', display_name: 'Adm', roles: ['admin'], permissions, language: 'en',
-    auth_provider: 'local', must_change_password: false, csrf_token: 'csrf-6',
+    auth_provider: 'local', must_change_password: false, theme: 'system', csrf_token: 'csrf-6',
   };
 }
 
@@ -160,5 +161,39 @@ describe('UsersPage with directory sign-in', () => {
     expect(calls.find((c) => c.url === '/api/users' && c.method === 'POST')?.body).toEqual({
       username: 'erez', display_name: '', roles: ['viewer'], auth_provider: 'tacacs',
     });
+  });
+});
+
+describe('relations map layout', () => {
+  it('puts members, the object, its group chain and the rules in columns and marks redundant links', () => {
+    const rel = {
+      object: { id: 'x', name: 'H_X', kind: 'host', value: '10.0.0.7' },
+      nodes: [
+        { id: 'x', kind: 'host', label: 'H_X', role: 'self' as const, depth: 0, detail: '' },
+        { id: 'g1', kind: 'network_group', label: 'G1', role: 'ancestor' as const, depth: 1, detail: '' },
+        { id: 'g2', kind: 'network_group', label: 'G2', role: 'ancestor' as const, depth: 2, detail: '' },
+        { id: 'rule:r1', kind: 'rule', label: '#4 R1', role: 'rule' as const, depth: 3, detail: 'ACP' },
+        { id: 'n', kind: 'network', label: 'NET', role: 'overlap' as const, depth: 0, detail: '10.0.0.0/24' },
+      ],
+      edges: [
+        { source: 'x', target: 'g1', kind: 'member' as const, label: '' },
+        { source: 'g1', target: 'g2', kind: 'member' as const, label: '' },
+        { source: 'g2', target: 'rule:r1', kind: 'uses' as const, label: 'dst_net' },
+        { source: 'x', target: 'rule:r1', kind: 'uses' as const, label: 'dst_net' },
+        { source: 'x', target: 'n', kind: 'overlap' as const, label: 'within' },
+      ],
+      issues: [
+        { kind: 'redundant_reference' as const, where_id: 'r1', where_name: '#4 R1', removed: 'H_X', kept: 'G2', recommendation_id: 9 },
+      ],
+      truncated: false,
+    };
+    const els = relationElements(rel, false);
+    const x = (id: string) => els.find((e) => e.data.id === id)?.position?.x ?? NaN;
+    expect(x('x')).toBe(0);
+    expect(x('g1') < x('g2') && x('g2') < x('rule:r1')).toBe(true);
+    expect(els.find((e) => e.data.id === 'n')?.classes).toContain('rel-overlap');
+    const redundant = els.filter((e) => typeof e.classes === 'string' && e.classes.includes('redundant'));
+    expect(redundant.map((e) => `${String(e.data.source)}->${String(e.data.target)}`)).toEqual(['x->rule:r1']);
+    expect(relationElements(rel, true).find((e) => e.data.id === 'g2')?.position?.x).toBe(-x('g2'));
   });
 });

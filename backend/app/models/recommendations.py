@@ -46,6 +46,9 @@ RECOMMENDATION_KINDS = (
     "add_inspection",
     "ssl_exempt_core",
     "ssl_decrypt_inbound",
+    # The same object reachable twice (rule field / group): remove the redundant copy.
+    "remove_redundant_reference",
+    "remove_redundant_member",
 )
 DECISIONS = ("accepted", "dismissed")
 # Object kinds a naming convention can be defined for ("rule" = access rules).

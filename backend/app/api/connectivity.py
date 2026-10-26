@@ -47,6 +47,9 @@ class MapEdgeOut(BaseModel):
     reasons: list[str]
     services: list[str]
     rules: list[dict[str, Any]]
+    # Rules / hits per risk colour (green, yellow, red); empty for snapshots before 0013.
+    risk_rules: dict[str, int]
+    risk_hits: dict[str, int]
 
 
 class MapOut(BaseModel):
@@ -147,6 +150,8 @@ def connectivity_map(
                 "reasons": set(e.reasons),
                 "services": list(e.services),
                 "rules": [{**r, "policy_id": e.policy_fmc_id} for r in e.rules],
+                "risk_rules": dict(e.risk_rules or {}),
+                "risk_hits": dict(e.risk_hits or {}),
             }
             continue
         cur["risk"] = max(cur["risk"], e.risk, key=RISK_ORDER.__getitem__)
@@ -159,6 +164,9 @@ def connectivity_map(
         cur["reasons"] |= set(e.reasons)
         cur["services"] += [x for x in e.services if x not in cur["services"]][:20]
         cur["rules"] += [{**r, "policy_id": e.policy_fmc_id} for r in e.rules][:20]
+        for key, part in (("risk_rules", e.risk_rules), ("risk_hits", e.risk_hits)):
+            for colour, value in (part or {}).items():
+                cur[key][colour] = cur[key].get(colour, 0) + value
 
     counts = {"green": 0, "yellow": 0, "red": 0}
     for v in merged.values():
@@ -182,6 +190,8 @@ def connectivity_map(
             reasons=sorted(v["reasons"]),
             services=v["services"][:20],
             rules=v["rules"][:20],
+            risk_rules=v["risk_rules"],
+            risk_hits=v["risk_hits"],
         )
         for (s, d), v in ordered
     ]

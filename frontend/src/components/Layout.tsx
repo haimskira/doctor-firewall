@@ -7,10 +7,12 @@ import {
   HardDrivesIcon,
   ListIcon,
   MagnifyingGlassIcon,
+  MoonIcon,
   PlugsIcon,
   PulseIcon,
   ShieldCheckIcon,
   ShieldIcon,
+  SunIcon,
   UserGearIcon,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
@@ -18,8 +20,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject, SyntheticEvent } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
-import type { FindingsPage, Permission, Snapshot } from '../api/types';
-import { useAuth, useMe } from '../auth/AuthProvider';
+import { api } from '../api/client';
+import type { FindingsPage, Me, Permission, Snapshot } from '../api/types';
+import { applyTheme, effectiveTheme, useAuth, useMe } from '../auth/AuthProvider';
 import { useApi } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
@@ -264,6 +267,7 @@ export function Layout() {
               )}
             </button>
           )}
+          <ThemeToggle />
           <span className="fmc-top-divider" aria-hidden="true" />
           <div className="fmc-user" ref={userRef}>
             <button
@@ -371,5 +375,31 @@ export function Layout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+/** Light / dark switch in the top bar; the choice is saved with the user's preferences. */
+function ThemeToggle() {
+  const { t } = useI18n();
+  const { state, setMe } = useAuth();
+  if (state.status !== 'authenticated') return null;
+  const current = effectiveTheme(state.me.theme);
+  const next = current === 'dark' ? 'light' : 'dark';
+  const label = t(next === 'dark' ? 'settings.theme.toDark' : 'settings.theme.toLight');
+  return (
+    <button
+      type="button"
+      className="fmc-icon-btn fmc-theme-btn"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        applyTheme(next);
+        void api<Me>('/api/me/preferences', 'PATCH', { theme: next }).then(setMe, () => {
+          applyTheme(state.me.theme);
+        });
+      }}
+    >
+      {current === 'dark' ? <SunIcon size={19} aria-hidden="true" /> : <MoonIcon size={19} aria-hidden="true" />}
+    </button>
   );
 }

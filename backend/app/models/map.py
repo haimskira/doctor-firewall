@@ -34,3 +34,6 @@ class MapEdge(Base):
     reasons: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     rules: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     services: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Per risk colour: how many rules / hits of this connection carry it ({} before 0013).
+    risk_rules: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False, default=dict)
+    risk_hits: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False, default=dict)

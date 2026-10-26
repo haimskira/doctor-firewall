@@ -15,6 +15,7 @@ from app.api import (
     health,
     inventory,
     recommendations,
+    relations,
     users,
 )
 from app.core.config import get_settings
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
         inventory,
         assets,
         recommendations,
+        relations,
         connectivity,
         dashboard,
         changesets,

@@ -21,7 +21,7 @@ function me(roles: Role[], permissions: Permission[], extra: Partial<Me> = {}): 
     permissions,
     language: 'en',
     auth_provider: 'local', must_change_password: false,
-    csrf_token: 'csrf-abc',
+    theme: 'system', csrf_token: 'csrf-abc',
     ...extra,
   };
 }

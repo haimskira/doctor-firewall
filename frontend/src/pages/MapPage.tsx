@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { Cluster, ConnectivityMap, MapEdge, MapNode, MapRisk, MapView } from '../api/types';
 import { Alert, Ltr } from '../components/common';
+import { FlowInsights } from '../components/FlowInsights';
+import { FlowSankey } from '../components/FlowSankey';
+import type { FlowMetric } from '../components/FlowSankey';
 import { Graph } from '../components/Graph';
 import { SnapshotPicker } from '../components/inventory';
 import { RiskBadge, useColumnLabel, useNodeLabel, useReasonLabel } from '../components/mapParts';
@@ -13,6 +16,7 @@ import { useI18n } from '../i18n/I18nProvider';
 const VIEWS: readonly MapView[] = ['assets', 'system', 'users'];
 const RISKS: readonly MapRisk[] = ['red', 'yellow', 'green'];
 const LIST_LIMIT = 200;
+type Mode = 'flows' | 'graph';
 
 /**
  * Connectivity map: three views (assets / system-to-system / users-to-systems), filters by
@@ -28,6 +32,10 @@ export function MapPage() {
   const [bothParam] = useQueryParam('both');
   const setParams = useSetQueryParams();
   const [riskParam, setRisk] = useQueryParam('risk');
+  const [modeParam, setMode] = useQueryParam('mode');
+  const [byParam, setBy] = useQueryParam('by');
+  const mode: Mode = modeParam === 'graph' ? 'graph' : 'flows';
+  const metric: FlowMetric = byParam === 'hits' ? 'hits' : 'rules';
   const view: MapView = VIEWS.find((v) => v === viewParam) ?? 'assets';
   const risks = (riskParam ?? '').split(',').filter((r): r is MapRisk => RISKS.some((x) => x === r));
   const [form, setForm] = useState({ src: src ?? '', dst: dst ?? '', both: bothParam === '1' });
@@ -39,7 +47,7 @@ export function MapPage() {
   if (src !== null) params.set('src', src);
   if (dst !== null) params.set('dst', dst);
   if (bothParam === '1') params.set('both', 'true');
-  for (const r of risks) params.append('risk', r);
+  if (mode === 'graph') for (const r of risks) params.append('risk', r);
   const map = useApi<ConnectivityMap>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/map?${params.toString()}`);
   const data = map.data;
   const nodeLabel = useNodeLabel();
@@ -48,6 +56,51 @@ export function MapPage() {
   const graphNodes = useMemo(
     () => (data?.nodes ?? []).map((n) => ({ id: n.id, tier: n.tier, label: nodeLabel(n.id, n.label) })),
     [data, nodeLabel],
+  );
+  // Colours shown in the flow view (no parameter: all); a plain string keeps memoisation stable.
+  const shownKey = riskParam ?? RISKS.join(',');
+  const flowNodes = useMemo(
+    () => (data?.nodes ?? []).map((n) => ({ id: n.id, tier: n.tier, label: nodeLabel(n.id, n.label) })),
+    [data, nodeLabel],
+  );
+  const flowEdges = useMemo(() => {
+    const visible = new Set(shownKey.split(','));
+    const shownOnly = (parts: Partial<Record<MapRisk, number>>) =>
+      Object.fromEntries(Object.entries(parts).filter(([r]) => visible.has(r)));
+    return (data?.edges ?? []).map((e) => ({
+        id: e.id,
+        src: e.src,
+        dst: e.dst,
+        ruleCount: e.rule_count,
+        hits: e.hits,
+        riskRules: shownOnly(e.risk_rules),
+        riskHits: shownOnly(e.risk_hits),
+        fallbackRisk: e.risk,
+      }));
+  }, [data, shownKey]);
+  // Rules per risk colour over the whole view (the flow legend counts rules, not connections).
+  const ruleCounts = useMemo(() => {
+    const out = new Map<MapRisk, number>();
+    for (const e of data?.edges ?? []) {
+      const parts = Object.entries(e.risk_rules);
+      if (parts.length === 0) out.set(e.risk, (out.get(e.risk) ?? 0) + e.rule_count);
+      for (const [r, n] of parts) {
+        const risk = RISKS.find((x) => x === r);
+        if (risk !== undefined) out.set(risk, (out.get(risk) ?? 0) + n);
+      }
+    }
+    return out;
+  }, [data]);
+  const otherLabel = useCallback((count: number) => t('map.others', { count }), [t]);
+  const describe = useCallback(
+    (b: { src: string; dst: string; risk: MapRisk; value: number }) =>
+      t(metric === 'hits' ? 'map.flowHits' : 'map.flowRules', {
+        from: b.src === '__other__' ? t('map.othersShort') : nodeLabel(b.src),
+        to: b.dst === '__other__' ? t('map.othersShort') : nodeLabel(b.dst),
+        risk: t(`map.risk.${b.risk}`),
+        count: b.value.toLocaleString(),
+      }),
+    [t, metric, nodeLabel],
   );
   const graphEdges = useMemo(
     () => (data?.edges ?? []).map((e) => ({ id: e.id, src: e.src, dst: e.dst, risk: e.risk, weight: e.rule_count })),
@@ -174,10 +227,47 @@ export function MapPage() {
                   }}
                 />
                 <span className="swatch" aria-hidden="true" />
-                {t(`map.risk.${r}`)} ({new Map(Object.entries(data.risk_counts)).get(r) ?? 0})
+                {t(`map.risk.${r}`)} (
+                {mode === 'flows'
+                  ? t('map.rulesCount', { count: (ruleCounts.get(r) ?? 0).toLocaleString() })
+                  : (new Map(Object.entries(data.risk_counts)).get(r) ?? 0)}
+                )
               </label>
             ))}
             <span className="muted small">{t('map.edges', { count: data.total_edges })}</span>
+            <span className="spacer" />
+            <div className="segmented" role="group" aria-label={t('map.mode')}>
+              {(['flows', 'graph'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={mode === m}
+                  className={mode === m ? 'active' : ''}
+                  onClick={() => {
+                    setMode(m === 'flows' ? null : m);
+                  }}
+                >
+                  {t(`map.mode.${m}`)}
+                </button>
+              ))}
+            </div>
+            {mode === 'flows' && (
+              <div className="segmented" role="group" aria-label={t('map.by')}>
+                {(['rules', 'hits'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={metric === m}
+                    className={metric === m ? 'active' : ''}
+                    onClick={() => {
+                      setBy(m === 'rules' ? null : m);
+                    }}
+                  >
+                    {t(`map.by.${m}`)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {data.truncated && (
             <Alert kind="info">{t('map.truncated', { shown: data.edges.length, total: data.total_edges })}</Alert>
@@ -185,7 +275,45 @@ export function MapPage() {
           {data.edges.length === 0 ? (
             <p className="muted">{t('map.none')}</p>
           ) : (
-            <div className="map-layout">
+            <>
+            {mode === 'flows' ? (
+              <section className="card flow-card">
+                <div className="flow-heads muted small" aria-hidden="true">
+                  <span>{t('map.sources')}</span>
+                  <span>{t('map.destinations')}</span>
+                </div>
+                <FlowSankey
+                  nodes={flowNodes}
+                  edges={flowEdges}
+                  metric={metric}
+                  rtl={dir === 'rtl'}
+                  label={t('map.flows')}
+                  selected={selected?.kind === 'edge' ? selected.id : null}
+                  otherLabel={otherLabel}
+                  describe={describe}
+                  onSelectEdge={(id) => {
+                    setSelected({ kind: 'edge', id });
+                  }}
+                  onSelectNode={(id) => {
+                    setSelected({ kind: 'node', id });
+                  }}
+                />
+              </section>
+            ) : null}
+            <div className={mode === 'flows' ? 'map-layout flows' : 'map-layout'}>
+              {mode === 'flows' ? (
+                <FlowInsights
+                  edges={data.edges}
+                  metric={metric}
+                  nodeLabel={(id) => nodeLabel(id)}
+                  onSelectEdge={(id) => {
+                    setSelected({ kind: 'edge', id });
+                  }}
+                  onSelectNode={(id) => {
+                    setSelected({ kind: 'node', id });
+                  }}
+                />
+              ) : (
               <section className="card map-canvas-card">
                 <Graph
                   nodes={graphNodes}
@@ -201,6 +329,7 @@ export function MapPage() {
                   }}
                 />
               </section>
+              )}
               <section className="card map-side" aria-live="polite">
                 {edge !== undefined && snapshotId !== null ? (
                   <EdgeDetail edge={edge} snapshotId={snapshotId} />
@@ -211,6 +340,7 @@ export function MapPage() {
                 )}
               </section>
             </div>
+            </>
           )}
           {data.edges.length > 0 && (
             <section className="card">

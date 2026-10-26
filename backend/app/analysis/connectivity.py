@@ -120,6 +120,8 @@ class _Edge:
     reasons: set[str] = field(default_factory=set)
     rules: list[dict[str, Any]] = field(default_factory=list)
     services: list[str] = field(default_factory=list)
+    risk_rules: dict[str, int] = field(default_factory=dict)
+    risk_hits: dict[str, int] = field(default_factory=dict)
 
 
 class MapBuilder:
@@ -173,6 +175,8 @@ class MapBuilder:
                 if score is not None:
                     edge.min_score = score if edge.min_score is None else min(edge.min_score, score)
                 edge.risk = worst(edge.risk, risk)
+                edge.risk_rules[risk] = edge.risk_rules.get(risk, 0) + 1
+                edge.risk_hits[risk] = edge.risk_hits.get(risk, 0) + (hits or 0)
                 edge.reasons |= codes & (RED_REASONS | YELLOW_REASONS)
                 if len(edge.rules) < SAMPLE:
                     edge.rules.append({**rule, "risk": risk, "score": score})
@@ -198,6 +202,8 @@ class MapBuilder:
                         "reasons": sorted(e.reasons),
                         "rules": e.rules,
                         "services": e.services,
+                        "risk_rules": e.risk_rules,
+                        "risk_hits": e.risk_hits,
                     }
                     for (policy_id, s, d), e in self._edges.items()
                 ],

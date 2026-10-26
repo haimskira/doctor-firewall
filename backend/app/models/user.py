@@ -18,6 +18,7 @@ class User(Base):
             name="roles_known",
         ),
         CheckConstraint("language IN ('he','en')", name="language_known"),
+        CheckConstraint("theme IN ('system','light','dark')", name="theme_known"),
         CheckConstraint("auth_provider IN ('local','ldap','tacacs')", name="auth_provider_known"),
     )
 
@@ -31,6 +32,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     language: Mapped[str] = mapped_column(String(2), nullable=False, default="he")
+    theme: Mapped[str] = mapped_column(String(8), nullable=False, default="system")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

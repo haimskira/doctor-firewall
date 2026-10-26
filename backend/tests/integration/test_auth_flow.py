@@ -78,7 +78,17 @@ def test_csrf_required_for_state_changes(client: TestClient) -> None:
         "/api/me/preferences", json={"language": "en"}, headers={"X-CSRF-Token": csrf}
     )
     assert ok.status_code == 200
-    assert ok.json()["language"] == "en"
+    assert (ok.json()["language"], ok.json()["theme"]) == ("en", "system")
+    dark = client.patch(
+        "/api/me/preferences", json={"theme": "dark"}, headers={"X-CSRF-Token": csrf}
+    )
+    assert (dark.json()["language"], dark.json()["theme"]) == ("en", "dark")
+    assert (
+        client.patch(
+            "/api/me/preferences", json={"theme": "neon"}, headers={"X-CSRF-Token": csrf}
+        ).status_code
+        == 422
+    )
 
 
 def test_unknown_fields_rejected(client: TestClient) -> None:

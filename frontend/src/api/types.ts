@@ -17,6 +17,30 @@ export type Permission =
 export type Language = 'he' | 'en';
 
 export type AuthProviderName = 'local' | 'ldap' | 'tacacs';
+
+/** Everything tying one object into the rulebase (GET .../objects/{id}/relations). */
+export interface ObjectRelations {
+  object: { id: string; name: string; kind: string; value: string | null };
+  nodes: {
+    id: string;
+    kind: string;
+    label: string;
+    role: 'self' | 'ancestor' | 'descendant' | 'rule' | 'overlap';
+    depth: number;
+    detail: string;
+  }[];
+  edges: { source: string; target: string; kind: 'member' | 'uses' | 'overlap'; label: string }[];
+  issues: {
+    kind: 'redundant_reference' | 'redundant_member';
+    where_id: string;
+    where_name: string;
+    removed: string;
+    kept: string;
+    recommendation_id: number | null;
+  }[];
+  truncated: boolean;
+}
+export type Theme = 'system' | 'light' | 'dark';
 export const AUTH_PROVIDERS: readonly AuthProviderName[] = ['local', 'ldap', 'tacacs'];
 
 export interface Me {
@@ -27,6 +51,7 @@ export interface Me {
   roles: Role[];
   permissions: Permission[];
   language: Language;
+  theme: Theme;
   must_change_password: boolean;
   csrf_token: string;
 }
@@ -438,7 +463,9 @@ export type RecommendationKind =
   | 'literal_to_object'
   | 'add_inspection'
   | 'ssl_exempt_core'
-  | 'ssl_decrypt_inbound';
+  | 'ssl_decrypt_inbound'
+  | 'remove_redundant_reference'
+  | 'remove_redundant_member';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -457,6 +484,8 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'add_inspection',
   'ssl_exempt_core',
   'ssl_decrypt_inbound',
+  'remove_redundant_reference',
+  'remove_redundant_member',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';
@@ -670,6 +699,8 @@ export interface MapEdge {
   reasons: string[];
   services: string[];
   rules: MapEdgeRule[];
+  risk_rules: Partial<Record<MapRisk, number>>;
+  risk_hits: Partial<Record<MapRisk, number>>;
 }
 
 export interface ConnectivityMap {
