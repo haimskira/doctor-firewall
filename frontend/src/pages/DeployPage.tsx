@@ -140,6 +140,12 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
   const isAuthor = cs.created_by === me.username;
   const open = cs.status === 'open' || cs.status === 'in_progress';
   const opLabel = useOpLabel();
+  const batchError = (raw: string) => {
+    const [code = '', ...rest] = raw.split(': ');
+    const detail = rest.join(': ').replace(/^drift: /, '');
+    const key = `dep.err.${code}`;
+    return isMessageKey(key) ? t(key, { detail }) : t('dep.error', { error: raw });
+  };
 
   async function act(path: string, confirmText?: string) {
     if (confirmText !== undefined && !window.confirm(confirmText)) return;
@@ -246,7 +252,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
                 )}
               </div>
             </header>
-            {b.error !== null && <Alert kind="error">{t('dep.error', { error: b.error })}</Alert>}
+            {b.error !== null && <Alert kind="error">{batchError(b.error)}</Alert>}
             {running !== undefined && (b.status === 'running' || b.status === 'approved') && running.title.endsWith(` · ${String(b.seq)}`) && (
               <div className="batch-job">
                 <JobProgress job={running} />

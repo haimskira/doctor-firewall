@@ -207,6 +207,32 @@ def test_batch_is_written_verified_and_deployed(client: TestClient, admin: dict[
             s.scalars(select(AuditRecord.action).where(AuditRecord.action.like("changeset.%")))
         )
     assert "changeset.batch_deployed" in actions
+
+    # The snapshot no longer matches the FMC: its recommendations say so, the ones carried out
+    # are marked applied, and no new changeset may be staged from it (lab: changeset #4).
+    page = flow.opt.get(f"/api/snapshots/{flow.sid}/recommendations?limit=500").json()
+    assert page["stale"]["changeset_id"] == cs_id
+    applied = {r["id"] for r in page["rows"] if r["applied"]}
+    assert {split["id"], rename["id"], unused["id"]} <= applied
+    other = flow.find("merge_rules", "WEB_FIN_USERS")
+    flow.opt.put(
+        f"/api/snapshots/{flow.sid}/recommendations/{other['id']}/decision",
+        headers=flow.oh,
+        json={"status": "accepted"},
+    )
+    refused = flow.opt.post(
+        "/api/changesets",
+        headers=flow.oh,
+        json={
+            "snapshot_id": flow.sid,
+            "recommendation_ids": [other["id"]],
+            "title": "from a stale snapshot",
+            "ticket_id": "CHG-5001",
+        },
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "snapshot_stale"
+    assert refused.json()["changeset"] == cs_id
     flow.close()
 
 
@@ -228,6 +254,7 @@ def test_drift_stops_before_any_write(client: TestClient, admin: dict[str, str])
     batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
     assert batch["status"] == "rolled_back"
     assert batch["error"].startswith("drift")
+    assert "drift: drift" not in batch["error"]  # the code is said once
     assert batch["results"] == []  # nothing was written
     assert "MIXED_TIERS_SQL_SILVER" not in flow.rules(policy)
     flow.close()

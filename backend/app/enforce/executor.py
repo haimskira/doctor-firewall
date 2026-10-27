@@ -187,6 +187,15 @@ def _placement(meta: Any) -> dict[str, str | int]:
     return {}
 
 
+def _what(op: dict[str, Any]) -> str:
+    """The rule or object an operation reads, by name (for operators, not API paths)."""
+    found = op.get("expect")
+    expect: dict[str, Any] = found if isinstance(found, dict) else {}
+    if "rule" in op or "copy_from" in op:
+        return f"rule {op.get('rule_name') or expect.get('name') or ''}".strip()
+    return f"object {op.get('object_name') or expect.get('name') or ''}".strip()
+
+
 class _Created(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
@@ -236,10 +245,10 @@ class Writer:
             raise BatchError("unsupported_object_type", fmc_type)
         return self.path(f"/object/{resource}" + (f"/{object_id}" if object_id else ""))
 
-    async def get(self, path: str) -> dict[str, Any]:
+    async def get(self, path: str, what: str | None = None) -> dict[str, Any]:
         item = await self.fmc.get_json(path, allow_not_found=True)
         if item is None:
-            raise BatchError("drift", f"{path} no longer exists")
+            raise BatchError("drift", f"{what or path} no longer exists in the FMC")
         if not isinstance(item, dict):
             raise BatchError("unexpected_response", path)
         return item
@@ -377,7 +386,7 @@ class Writer:
 
     async def update_group(self, op: dict[str, Any]) -> None:
         path = self.object_path(op["type"], op["object"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         record = self.adapter.map_object(OBJECT_RESOURCES[op["type"]], item)
         if item.get("name") != op["expect"]["name"] or sorted(
             _record_identity(m) for m in record.members
@@ -406,7 +415,7 @@ class Writer:
 
     async def rename_object(self, op: dict[str, Any]) -> None:
         path = self.object_path(op["type"], op["object"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         if item.get("name") != op["expect"]["name"]:
             raise BatchError("drift", f"object {op.get('object_name')} was renamed in the FMC")
         body = self._clean(item, keep_id=True)
@@ -427,7 +436,7 @@ class Writer:
 
     async def delete_object(self, op: dict[str, Any]) -> None:
         path = self.object_path(op["type"], op["object"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         if item.get("name") != op["expect"]["name"]:
             raise BatchError("drift", f"object {op.get('object_name')} was renamed in the FMC")
         await self.journaled(
@@ -455,7 +464,7 @@ class Writer:
 
     async def update_rule(self, op: dict[str, Any]) -> None:
         path = self.rule_path(op, op["rule"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         self.check_rule(op, item, op["expect"])
         body = self._clean(item, keep_id=True)
         self.apply_fields(body, op.get("set", {}))
@@ -472,7 +481,7 @@ class Writer:
 
     async def create_rule(self, op: dict[str, Any]) -> None:
         source_path = self.rule_path(op, op["copy_from"])
-        source = await self.get(source_path)
+        source = await self.get(source_path, _what(op))
         self.check_rule(op, source, op["expect"])
         anchor = await self.get(self.rule_path(op, op["insert_after"]))
         index = (anchor.get("metadata") or {}).get("ruleIndex")
@@ -499,7 +508,7 @@ class Writer:
 
     async def delete_rule(self, op: dict[str, Any]) -> None:
         path = self.rule_path(op, op["rule"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         if item.get("name") != op["expect"]["name"]:
             raise BatchError("drift", f"rule {op.get('rule_name')} was renamed in the FMC")
         meta = item.get("metadata") or {}
@@ -557,7 +566,7 @@ class Writer:
         if op.get("policy_kind") != "access":
             raise BatchError("unsupported_rule_kind", str(op.get("policy_kind")))
         path = self.rule_path(op, op["rule"])
-        item = await self.get(path)
+        item = await self.get(path, _what(op))
         expect = op["expect"]
 
         def ref_id(value: Any) -> str | None:
@@ -1003,7 +1012,8 @@ async def execute_batch(
                 )
             except (BatchError, FmcError) as exc:
                 code = exc.code
-                detail = scrub_text(str(exc))[:300]
+                # A BatchError's text already starts with its code: keep the detail only.
+                detail = scrub_text(exc.detail if isinstance(exc, BatchError) else str(exc))[:300]
                 log.error(
                     "batch failed, rolling back",
                     extra={"batch": batch_id, "code": code, "detail": detail},

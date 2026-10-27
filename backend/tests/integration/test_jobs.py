@@ -83,7 +83,9 @@ def test_pull_and_analysis_report_progress_and_end(
     assert _run(id=analysis.id).status == "done"
     assert {"analyze_basic", "analyze_rules", "recommend"} <= {s for s, _ in seen}
 
-    listing = client.get("/api/jobs").json()
+    response = client.get("/api/jobs")
+    assert response.status_code == 200, response.text
+    listing = response.json()
     kinds = [(r["kind"], r["status"]) for r in listing["rows"][:2]]
     assert ("analyze", "done") in kinds
     assert ("collect", "done") in kinds

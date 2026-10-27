@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { api, errorCode } from '../api/client';
 import { RECOMMENDATION_KINDS } from '../api/types';
@@ -94,6 +94,12 @@ export function RecommendationsPage() {
       {notice !== null && <Alert kind="success">{notice}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
 
+      {page.data?.stale != null && (
+        <Alert kind="error">
+          {t('rec.stale', { changeset: page.data.stale.changeset_id, batch: page.data.stale.batch, at: new Date(page.data.stale.at).toLocaleString() })}{' '}
+          <Link to="/snapshots">{t('rec.staleAction')}</Link>
+        </Alert>
+      )}
       {page.data !== null && (
         <>
           <div className="rec-summary" role="group" aria-label={t('rec.col.kind')}>
@@ -266,7 +272,15 @@ function RecRow({ rec, selected, onSelect }: { rec: Recommendation; selected: bo
         <Impact rec={rec} />
       </td>
       <td>{rec.deploy_cost}</td>
-      <td>{rec.decision === null ? t('rec.state.open') : t(`rec.state.${rec.decision.status}`)}</td>
+      <td>
+        {rec.applied === true ? (
+          <span className="badge status-complete">{t('rec.state.applied')}</span>
+        ) : rec.decision === null ? (
+          t('rec.state.open')
+        ) : (
+          t(`rec.state.${rec.decision.status}`)
+        )}
+      </td>
     </tr>
   );
 }

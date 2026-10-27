@@ -20,6 +20,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.enforce.batching import Item, ItemTooLargeError, batch, conflicts
 from app.enforce.executor import rollback_resumable, stale_after_run
+from app.enforce.staleness import stale_since
 from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.inventory import Cluster, ClusterPolicy, Snapshot
@@ -204,6 +205,15 @@ def create_changeset(
     )
     if snap.status != "complete" or latest != snap.id:
         return _conflict("snapshot_outdated", latest=latest)
+    stale = stale_since(db, snap)
+    if stale is not None:
+        # The FMC was changed by this system after the snapshot: plans would drift.
+        return _conflict(
+            "snapshot_stale",
+            changeset=stale["changeset_id"],
+            batch=stale["batch"],
+            at=stale["at"].isoformat(),
+        )
     rows = db.execute(
         select(Recommendation, RecommendationDecision.status)
         .outerjoin(

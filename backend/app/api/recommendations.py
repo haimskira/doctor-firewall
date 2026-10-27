@@ -23,6 +23,7 @@ from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
+from app.enforce.staleness import applied_fingerprints, stale_since
 from app.models.inventory import Policy, Snapshot
 from app.models.recommendations import (
     CONVENTION_KINDS,
@@ -79,6 +80,8 @@ class RecommendationOut(BaseModel):
     # Whether the writer can apply it (phase 5) and, if not, why.
     executable: bool
     blocked: list[str]
+    # A batch deployed after this snapshot already carried it out.
+    applied: bool = False
 
 
 class RecommendationDetail(RecommendationOut):
@@ -92,9 +95,19 @@ class KindSummary(BaseModel):
     ace_delta: int
 
 
+class StaleOut(BaseModel):
+    """This system changed the FMC after the snapshot was taken (see app.enforce.staleness)."""
+
+    changeset_id: int
+    title: str
+    batch: int
+    at: datetime
+
+
 class RecommendationsPage(BaseModel):
     total: int
     offset: int
+    stale: StaleOut | None = None
     summary: dict[str, KindSummary]
     accepted: KindSummary
     rows: list[RecommendationOut]
@@ -164,8 +177,11 @@ def _decision(d: RecommendationDecision | None) -> Decision | None:
     return Decision(status=d.status, note=d.note, decided_by=d.decided_by, decided_at=d.decided_at)
 
 
-def _out(r: Recommendation, d: RecommendationDecision | None) -> RecommendationOut:
+def _out(
+    r: Recommendation, d: RecommendationDecision | None, applied: bool = False
+) -> RecommendationOut:
     return RecommendationOut(
+        applied=applied,
         id=r.id,
         kind=r.kind,
         policy_fmc_id=r.policy_fmc_id,
@@ -238,7 +254,7 @@ def list_recommendations(
     order: SortOrder = None,
 ) -> RecommendationsPage:
     """The recommendation queue: highest priority first, with impact and deploy cost."""
-    _snapshot(db, snapshot_id)
+    snap = _snapshot(db, snapshot_id)
     query = _filtered(snapshot_id, kind, policy, state, q, rule)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     columns: SortColumns = {
@@ -284,12 +300,15 @@ def list_recommendations(
             RecommendationDecision.status == "accepted",
         )
     ).one()
+    stale = stale_since(db, snap)
+    applied = applied_fingerprints(db, snap) if stale is not None else set()
     return RecommendationsPage(
         total=total,
         offset=offset,
+        stale=StaleOut(**stale) if stale is not None else None,
         summary=summary,
         accepted=KindSummary(count=accepted[0], deploy_cost=accepted[1], ace_delta=accepted[2]),
-        rows=[_out(r, d) for r, d in rows],
+        rows=[_out(r, d, r.fingerprint in applied) for r, d in rows],
     )
 
 

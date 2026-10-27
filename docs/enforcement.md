@@ -75,6 +75,21 @@ recommendations cannot enter a changeset.
    redeploy the restored configuration, and end `rolled_back` — or `failed` with the steps that
    could not be undone.
 
+### Stale snapshots
+
+Seen in the lab: a changeset was staged from a snapshot after another changeset from the same
+snapshot had already been deployed — the same recommendations, again. The drift check stopped it
+before any write, but it should not be possible to stage at all:
+
+* a snapshot is **stale** once a batch of this system changed its FMC after it was taken
+  (deployed, or failed leaving steps its rollback could not undo);
+* the recommendations page then says so (which changeset, when) and marks the recommendations a
+  deployed batch already carried out as **applied**;
+* staging a changeset from a stale snapshot is refused (`409 snapshot_stale`): pull again.
+
+Batch errors name what they are about (`rule X`, `object Y`) instead of API paths, once, and the
+deploy page explains each code in plain words.
+
 ### When the FMC goes away mid-batch
 
 Validated in the lab: the connection to the FMC dropped right after a delete was sent. The FMC

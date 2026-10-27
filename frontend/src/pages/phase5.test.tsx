@@ -146,7 +146,7 @@ describe('DeployPage', () => {
     const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
     const batch = within(panel).getByRole('article', { name: 'Batch 1' });
     expect(within(batch).getByText('Rolled back')).toBeInTheDocument();
-    expect(within(batch).getByText('Error: drift: rule MIXED: field dst_net changed in the FMC')).toBeInTheDocument();
+    expect(within(batch).getByText(/Stopped before writing: the FMC no longer matches the snapshot — rule MIXED: field dst_net changed in the FMC/)).toBeInTheDocument();
     expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
   });
 

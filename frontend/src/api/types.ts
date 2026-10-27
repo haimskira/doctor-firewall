@@ -522,6 +522,8 @@ export interface Recommendation {
   decision: RecommendationDecision | null;
   executable: boolean;
   blocked: string[];
+  /** A batch deployed after this snapshot already carried it out. */
+  applied?: boolean;
 }
 
 export type RowStatus = 'unchanged' | 'modified' | 'new' | 'removed';
@@ -632,9 +634,18 @@ export interface KindSummary {
   ace_delta: number;
 }
 
+export interface StaleSnapshot {
+  changeset_id: number;
+  title: string;
+  batch: number;
+  at: string;
+}
+
 export interface RecommendationsPage {
   total: number;
   offset: number;
+  /** This system changed the FMC after the snapshot was taken. */
+  stale?: StaleSnapshot | null;
   summary: Partial<Record<RecommendationKind, KindSummary>>;
   accepted: KindSummary;
   rows: Recommendation[];
