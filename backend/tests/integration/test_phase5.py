@@ -195,7 +195,19 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
             kinds_by_batch.setdefault(item["batch_seq"], []).append(item["kind"])
         assert ["split_rule"] in kinds_by_batch.values()
         assert cs["items"][-1]["kind"] == "remove_unused_object"
-        assert create([split["id"]]).json()["detail"] == "already_staged"
+        refused = create([split["id"]]).json()
+        assert refused["detail"] == "already_staged"
+        assert refused["changesets"] == [{"id": cs["id"], "title": cs["title"]}]
+        # The list says which accepted recommendations are already staged, and where; a new
+        # changeset only takes the others.
+        page = opt.get(f"/api/snapshots/{sid}/recommendations?state=accepted&limit=500").json()
+        assert page["accepted_staged"] == len(cs["items"])
+        assert page["staged_changesets"] == [{"id": cs["id"], "title": cs["title"]}]
+        assert all(r["staged_in"] == cs["id"] for r in page["rows"] if r["id"] == split["id"])
+        free = opt.get(
+            f"/api/snapshots/{sid}/recommendations?state=accepted&unstaged=true&limit=500"
+        ).json()
+        assert split["id"] not in {r["id"] for r in free["rows"]}
 
         # Approvals: never by the author, only by an approver, strictly in order.
         last = cs["batches"][-1]["seq"]

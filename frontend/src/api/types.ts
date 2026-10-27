@@ -526,6 +526,7 @@ export interface Recommendation {
   applied?: boolean;
   /** 'preserves': no flow's verdict changes; 'changes': by design (less access, more inspection). */
   behavior?: 'preserves' | 'changes';
+  staged_in?: number | null;
 }
 
 export type RowStatus = 'unchanged' | 'modified' | 'new' | 'removed';
@@ -650,6 +651,9 @@ export interface RecommendationsPage {
   stale?: StaleSnapshot | null;
   summary: Partial<Record<RecommendationKind, KindSummary>>;
   accepted: KindSummary;
+  /** Accepted recommendations already in an open changeset. */
+  accepted_staged: number;
+  staged_changesets: { id: number; title: string }[];
   rows: Recommendation[];
 }
 

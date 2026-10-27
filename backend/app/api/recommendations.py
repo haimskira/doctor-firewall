@@ -90,6 +90,8 @@ class RecommendationOut(BaseModel):
     applied: bool = False
     # "preserves": no flow's verdict changes (proved per batch); "changes": by design.
     behavior: str = "preserves"
+    # The open changeset it is staged in, if any.
+    staged_in: int | None = None
 
 
 class RecommendationDetail(RecommendationOut):
@@ -118,6 +120,9 @@ class RecommendationsPage(BaseModel):
     stale: StaleOut | None = None
     summary: dict[str, KindSummary]
     accepted: KindSummary
+    # Accepted recommendations already in an open changeset (they are not staged again).
+    accepted_staged: int = 0
+    staged_changesets: list[dict[str, Any]] = []
     rows: list[RecommendationOut]
 
 
@@ -282,6 +287,7 @@ def list_recommendations(
     policy: FmcIdQuery = None,
     state: Annotated[str | None, Query(pattern="^(open|accepted|dismissed)$")] = None,
     rule: FmcIdQuery = None,
+    unstaged: bool = False,
     q: Annotated[str | None, Query(max_length=128)] = None,
     offset: Annotated[int, Query(ge=0, le=10_000_000)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -294,6 +300,17 @@ def list_recommendations(
     """The recommendation queue: highest priority first, with impact and deploy cost."""
     snap = _snapshot(db, snapshot_id)
     query = _filtered(snapshot_id, kind, policy, state, q, rule)
+    open_items = (
+        select(ChangesetItem.fingerprint, Changeset.id, Changeset.title)
+        .join(Changeset, Changeset.id == ChangesetItem.changeset_id)
+        .where(Changeset.status.in_(("open", "in_progress")))
+    )
+    if unstaged:  # what a new changeset may still take
+        query = query.where(
+            Recommendation.fingerprint.not_in(
+                open_items.with_only_columns(ChangesetItem.fingerprint)
+            )
+        )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     columns: SortColumns = {
         "priority": Recommendation.priority,
@@ -340,13 +357,39 @@ def list_recommendations(
     ).one()
     stale = stale_since(db, snap)
     applied = applied_fingerprints(db, snap) if stale is not None else set()
+    staged_by: dict[str, tuple[int, str]] = {
+        f: (cid, title) for f, cid, title in db.execute(open_items)
+    }
+    accepted_fps = set(
+        db.scalars(
+            select(Recommendation.fingerprint)
+            .join(
+                RecommendationDecision,
+                RecommendationDecision.fingerprint == Recommendation.fingerprint,
+            )
+            .where(
+                Recommendation.snapshot_id == snapshot_id,
+                RecommendationDecision.status == "accepted",
+            )
+        )
+    )
+    in_open = [staged_by[f] for f in accepted_fps if f in staged_by]
+    accepted_staged = len(in_open)
+    staged_changesets = [{"id": i, "title": t} for i, t in sorted(set(in_open))]
     return RecommendationsPage(
         total=total,
         offset=offset,
         stale=StaleOut(**stale) if stale is not None else None,
         summary=summary,
         accepted=KindSummary(count=accepted[0], deploy_cost=accepted[1], ace_delta=accepted[2]),
-        rows=[_out(r, d, r.fingerprint in applied) for r, d in rows],
+        accepted_staged=accepted_staged,
+        staged_changesets=staged_changesets,
+        rows=[
+            _out(r, d, r.fingerprint in applied).model_copy(
+                update={"staged_in": staged_by.get(r.fingerprint, (None, ""))[0]}
+            )
+            for r, d in rows
+        ],
     )
 
 

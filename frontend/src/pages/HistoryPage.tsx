@@ -120,7 +120,7 @@ export function HistoryPage() {
                               onClick={() =>
                                 void post(
                                   `/api/changesets/${String(e.changeset_id)}/batches/${String(e.seq)}/revert`,
-                                  t('hist.revertConfirm', { title: e.title, seq: e.seq }),
+                                  t('hist.revertConfirm', { cs: e.changeset_id, title: e.title, seq: e.seq }),
                                 )
                               }
                             >
@@ -135,7 +135,7 @@ export function HistoryPage() {
                               onClick={() =>
                                 void post(
                                   '/api/history/revert-to',
-                                  t('hist.revertToConfirm', { title: e.title, seq: e.seq }),
+                                  t('hist.revertToConfirm', { cs: e.changeset_id, title: e.title, seq: e.seq }),
                                   { changeset_id: e.changeset_id, seq: e.seq },
                                 )
                               }
@@ -186,7 +186,7 @@ function HistoryRow({
         </td>
         <td>
           <button type="button" className="link" aria-expanded={open} onClick={onToggle}>
-            <bdi>{entry.title}</bdi> · {t('dep.batch', { seq: entry.seq })}
+            <bdi>{entry.title}</bdi> · {t('dep.batch', { cs: entry.changeset_id, seq: entry.seq })}
           </button>
           <div className="muted small">
             <Ltr>{entry.ticket_id}</Ltr> · {t('hist.by', { author: entry.created_by, approver: entry.approved_by ?? '—' })}

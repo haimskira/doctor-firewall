@@ -130,7 +130,7 @@ export function RecommendationsPage() {
               </button>
             ))}
           </div>
-          <div className="pe-toolbar card-toolbar">
+          <div className="rec-toolbar card-toolbar">
             <label className="inline-field">
               {t('rec.col.state')}
               <select
@@ -158,17 +158,27 @@ export function RecommendationsPage() {
                 }}
               />
             )}
-            {accepted !== undefined && accepted.count > 0 && can('changeset:write') && snapshotId !== null && (
-              <StageForm snapshotId={snapshotId} accepted={accepted.count} />
-            )}
             {accepted !== undefined && (
-              <span className="pe-total">
+              <span className="rec-toolbar-summary">
                 {t('rec.acceptedSummary', {
                   count: accepted.count,
                   cost: accepted.deploy_cost,
                   ace: signed(accepted.ace_delta),
                 })}
+                {page.data.accepted_staged > 0 && (
+                  <span className="rec-staged-note">
+                    {t('rec.stagedNote', { count: page.data.accepted_staged })}{' '}
+                    {page.data.staged_changesets.map((c) => (
+                      <Link key={c.id} to={`/deploy?changeset=${String(c.id)}`}>
+                        #{c.id} <bdi>{c.title}</bdi>
+                      </Link>
+                    ))}
+                  </span>
+                )}
               </span>
+            )}
+            {accepted !== undefined && accepted.count > page.data.accepted_staged && can('changeset:write') && snapshotId !== null && (
+              <StageForm snapshotId={snapshotId} accepted={accepted.count - page.data.accepted_staged} />
             )}
           </div>
 
@@ -540,7 +550,7 @@ function BulkDecision({
 
   const skipped = preview === null ? 0 : Object.values(preview.result.skipped).reduce((a, b) => a + b, 0);
   return (
-    <div className="bulk-decision">
+    <>
       {preview === null ? (
         <>
           {!acceptedView && (
@@ -555,7 +565,7 @@ function BulkDecision({
           )}
         </>
       ) : (
-        <div className="bulk-confirm card" role="dialog" aria-label={t('rec.bulk.confirmTitle')}>
+        <div className="toolbar-panel bulk-confirm" role="dialog" aria-label={t('rec.bulk.confirmTitle')}>
           {preview.result.count === 0 ? (
             <p>{t('rec.bulk.nothing')}</p>
           ) : preview.status === 'accepted' ? (
@@ -618,8 +628,12 @@ function BulkDecision({
           </div>
         </div>
       )}
-      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
-    </div>
+      {error !== null && (
+        <div className="toolbar-panel">
+          <Alert kind="error">{tError(error)}</Alert>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -639,8 +653,12 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
     setError(null);
     try {
       const page = await api<Page>(
-        `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&limit=${String(STAGE_MAX)}`,
+        `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&unstaged=true&limit=${String(STAGE_MAX)}`,
       );
+      if (page.rows.length === 0) {
+        setError('nothing_to_stage');
+        return;
+      }
       const made = await api<{ id: number }>('/api/changesets', 'POST', {
         snapshot_id: snapshotId,
         recommendation_ids: page.rows.map((r) => r.id),
@@ -659,6 +677,7 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
     return (
       <button
         type="button"
+        className="rec-toolbar-primary"
         onClick={() => {
           setOpen(true);
         }}
@@ -668,7 +687,7 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
     );
   }
   return (
-    <form className="row stage-form" onSubmit={(e) => void submit(e)}>
+    <form className="toolbar-panel stage-form" onSubmit={(e) => void submit(e)}>
       {accepted > STAGE_MAX && <p className="muted small grow">{t('dep.stageCapped', { count: accepted, max: STAGE_MAX })}</p>}
       <label className="inline-field">
         {t('dep.stageTitle')}

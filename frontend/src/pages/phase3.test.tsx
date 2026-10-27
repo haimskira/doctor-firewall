@@ -86,7 +86,7 @@ function recRoutes(handler: Handler): Handler {
         body: {
           total: 2, offset: 0,
           summary: { split_rule: { count: 1, deploy_cost: 2, ace_delta: 0 }, remove_dead_rule: { count: 1, deploy_cost: 1, ace_delta: -12 } },
-          accepted: { count: 0, deploy_cost: 0, ace_delta: 0 },
+          accepted: { count: 0, deploy_cost: 0, ace_delta: 0 }, accepted_staged: 0, staged_changesets: [],
           rows: [SPLIT, REMOVE],
         },
       };
@@ -112,7 +112,7 @@ describe('RecommendationsPage', () => {
       }),
       ['policy:read', 'changeset:write'],
     );
-    await userEvent.click(await screen.findByRole('button', { name: 'Accept all: Split rule by destination tier' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept all' }));
     const dialog = await screen.findByRole('dialog', { name: 'Confirm a decision for many recommendations' });
     expect(within(dialog).getByText(/Accept 12 recommendations .*240 changes in the FMC, about 3 deploy batches of up to 100/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Left out: 2 \(2 cannot be executed/)).toBeInTheDocument();

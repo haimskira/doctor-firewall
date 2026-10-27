@@ -210,10 +210,10 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
         const isNext = firstOpen?.seq === b.seq;
         const mayAct = open && can('deploy:approve') && !isAuthor && isNext;
         return (
-          <article key={b.seq} className={`batch batch-${b.status}`} aria-label={t('dep.batch', { seq: b.seq })}>
+          <article key={b.seq} className={`batch batch-${b.status}`} aria-label={t('dep.batch', { cs: cs.id, seq: b.seq })}>
             <header className="row spread">
               <div className="rec-facts">
-                <strong>{t('dep.batch', { seq: b.seq })}</strong>
+                <strong>{t('dep.batch', { cs: cs.id, seq: b.seq })}</strong>
                 <BatchBadge status={b.status} />
                 <span className="muted small">{t('dep.batchOps', { count: b.op_count, limit: b.deploy_limit })}</span>
                 {b.approved_by !== null && (
@@ -244,7 +244,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
                     onClick={() =>
                       void act(
                         `${base}/batches/${String(b.seq)}/run`,
-                        t('dep.runConfirm', { seq: b.seq, count: b.op_count }),
+                        t('dep.runConfirm', { cs: cs.id, seq: b.seq, count: b.op_count }),
                       )
                     }
                   >
@@ -259,7 +259,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
                     onClick={() =>
                       void act(
                         `${base}/batches/${String(b.seq)}/rollback`,
-                        t('dep.rollbackConfirm', { seq: b.seq, count: b.undo_pending }),
+                        t('dep.rollbackConfirm', { cs: cs.id, seq: b.seq, count: b.undo_pending }),
                       )
                     }
                   >

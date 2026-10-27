@@ -91,10 +91,10 @@ describe('DeployPage', () => {
     const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
     expect(within(panel).getByText('CHG-1001')).toBeInTheDocument();
     expect(within(panel).getByText('(unverified default)')).toBeInTheDocument();
-    const first = within(panel).getByRole('article', { name: 'Batch 1' });
+    const first = within(panel).getByRole('article', { name: 'Changeset 3.1' });
     expect(within(first).getByText('Deployed')).toBeInTheDocument();
     expect(within(first).getAllByText('Create rule MIXED_SILVER')).toHaveLength(2); // planned + written
-    const second = within(panel).getByRole('article', { name: 'Batch 2' });
+    const second = within(panel).getByRole('article', { name: 'Changeset 3.2' });
     expect(within(second).getByText('Rename GRP_10.30.0.0 to GRP_APPS')).toBeInTheDocument();
     expect(within(second).getByText('2 of 2 changes')).toBeInTheDocument();
     // Only the first not-yet-deployed batch can be acted on.
@@ -115,7 +115,7 @@ describe('DeployPage', () => {
     const calls = setup(me('appr', ['policy:read', 'deploy:approve']), approved, (req) =>
       req.url === '/api/changesets/3/batches/2/run' ? { status: 202, body: approved } : undefined,
     );
-    const second = await screen.findByRole('article', { name: 'Batch 2' });
+    const second = await screen.findByRole('article', { name: 'Changeset 3.2' });
     const run = within(second).getByRole('button', { name: 'Write and deploy' });
     await userEvent.click(run);
     expect(calls.some((c) => c.url.endsWith('/run'))).toBe(false); // declined
@@ -123,7 +123,7 @@ describe('DeployPage', () => {
     await waitFor(() => {
       expect(calls.some((c) => c.method === 'POST' && c.url === '/api/changesets/3/batches/2/run')).toBe(true);
     });
-    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Write batch 2 (2 changes) to the FMC'));
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Write changeset 3.2 (2 changes) to the FMC'));
     expect(await screen.findByText(/Batch queued for writing/)).toBeInTheDocument();
   });
 
@@ -154,7 +154,7 @@ describe('DeployPage', () => {
     const calls = setup(me('appr', ['policy:read', 'deploy:approve']), changing, (req) =>
       req.url === '/api/changesets/3/batches/2/approve' ? { status: 200, body: changing } : undefined,
     );
-    const batch = await screen.findByRole('article', { name: 'Batch 2' });
+    const batch = await screen.findByRole('article', { name: 'Changeset 3.2' });
     expect(within(batch).getByText(/This batch changes 1 flows by design \(96 checked\)/)).toBeInTheDocument();
     expect(within(batch).getByText('10.50.0.7 → 10.20.5.10 TCP/1433')).toBeInTheDocument();
     expect(within(batch).getByText('ALLOW + IPS')).toBeInTheDocument();
@@ -167,7 +167,7 @@ describe('DeployPage', () => {
       expect(calls.find((c) => c.url.endsWith('/batches/2/approve'))?.body).toEqual({ acknowledge_change: true });
     });
     // The first, deployed batch shows its proof against the FMC as well (none in this fixture).
-    expect(within(screen.getByRole('article', { name: 'Batch 2' })).queryByText(/cannot be approved/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: 'Changeset 3.2' })).queryByText(/cannot be approved/)).not.toBeInTheDocument();
   });
 
   it('never offers approval to the author', async () => {
@@ -191,7 +191,7 @@ describe('DeployPage', () => {
     };
     setup(me('appr', ['policy:read', 'deploy:approve', 'changeset:write']), failed);
     const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
-    const batch = within(panel).getByRole('article', { name: 'Batch 1' });
+    const batch = within(panel).getByRole('article', { name: 'Changeset 3.1' });
     expect(within(batch).getByText('Rolled back')).toBeInTheDocument();
     expect(within(batch).getByText(/Stopped before writing: the FMC no longer matches the snapshot — rule MIXED: field dst_net changed in the FMC/)).toBeInTheDocument();
     expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
@@ -220,10 +220,10 @@ describe('DeployPage', () => {
       req.url === '/api/changesets/3/batches/1/rollback' ? { status: 202, body: stuck } : undefined,
     );
     const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
-    const batch = within(panel).getByRole('article', { name: 'Batch 1' });
+    const batch = within(panel).getByRole('article', { name: 'Changeset 3.1' });
     expect(within(batch).getByText(/rollback could not be completed \(2 steps left\)/)).toBeInTheDocument();
     await userEvent.click(within(batch).getByRole('button', { name: 'Finish rollback' }));
-    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('batch 1 (2 steps)'));
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('changeset 3.1 (2 steps)'));
     expect(await screen.findByText(/Rollback queued/)).toBeInTheDocument();
     expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/batches/1/rollback'))).toBe(true);
   });

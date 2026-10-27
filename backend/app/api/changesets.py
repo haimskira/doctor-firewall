@@ -252,9 +252,19 @@ def create_changeset(
         )
     )
     if staged:
+        holders = db.execute(
+            select(Changeset.id, Changeset.title)
+            .join(ChangesetItem, ChangesetItem.changeset_id == Changeset.id)
+            .where(
+                Changeset.status.in_(("open", "in_progress")),
+                ChangesetItem.fingerprint.in_(staged),
+            )
+            .distinct()
+        ).all()
         return _conflict(
             "already_staged",
             recommendations=sorted(r.id for r, _ in rows if r.fingerprint in staged),
+            changesets=[{"id": i, "title": t} for i, t in holders],
         )
 
     by_policy, every = _clusters_of(db, snap.id)

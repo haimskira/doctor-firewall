@@ -79,18 +79,18 @@ describe('HistoryPage', () => {
       </I18nProvider>,
     );
     const user = userEvent.setup();
-    const row = (await screen.findByRole('button', { name: /Q4 clean-up · Batch 2/ })).closest('tr');
+    const row = (await screen.findByRole('button', { name: /Q4 clean-up · Changeset 5.2/ })).closest('tr');
     if (row === null) throw new Error('row');
     expect(within(row).getByText('verified: no flow changed (120 checked)')).toBeInTheDocument();
     expect(within(row).getByRole('link', { name: 'Policy before' })).toHaveAttribute('href', '/rules?snapshot=17');
 
-    await user.click(within(row).getByRole('button', { name: /Q4 clean-up · Batch 2/ }));
+    await user.click(within(row).getByRole('button', { name: /Q4 clean-up · Changeset 5.2/ }));
     expect(await screen.findByText('MIXED_TIERS_SQL_SILVER')).toBeInTheDocument();
     expect(screen.getByText('NET_GOLD_DB, NET_SILVER_APP')).toBeInTheDocument();
     expect(screen.getAllByText('Created').length).toBeGreaterThan(0);
 
     await user.click(within(row).getByRole('button', { name: 'Revert' }));
-    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Revert Q4 clean-up · batch 2?'));
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Revert changeset 5.2 (Q4 clean-up)?'));
     await waitFor(() => {
       expect(calls.some((c) => c.method === 'POST' && c.url === '/api/changesets/5/batches/2/revert')).toBe(true);
     });

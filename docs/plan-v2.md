@@ -118,6 +118,28 @@ The system may only improve the policy, never hurt production traffic.
 - [ ] **6e Device check** (if the FMC API allows it — verify in the lab): packet-tracer on the FTD for
       critical flows before / after deployment.
 
+## Stage 7 — Operator feedback round 2 (easiest first) `[ ]`
+
+- [x] **7.1 Terminology**: no "אצווה" anywhere — a changeset is cut into numbered changesets
+      ("changeset 3.2"), the user's choice of 2026-10-27.
+- [x] **7.2 Recommendations toolbar**: buttons aligned, one size, wrapping cleanly; the bulk buttons
+      read short ("אישור הכול" / "החזרה לפתוחות") with the type in the confirmation.
+- [x] **7.3 Staging that just works**: staging takes the accepted recommendations that are not in
+      an open changeset (and says how many were left out and where); "already in an open
+      changeset" errors name the changeset with a link; cancelling a changeset is offered right
+      there and on the deploy page.
+- [ ] **7.4 Findings lead to a fix**: every finding offers its fix — the recommendations for that
+      rule / object, or why there is none yet; the dashboard's "top findings" open the fixes.
+- [ ] **7.5 Disabled rules**: a finding and a recommendation to remove disabled rules (preserving —
+      they match nothing; the traffic proof shows it), listed by age when known.
+- [ ] **7.6 SGT and dynamic objects**: shown in the rule editor and object explorer; dynamic objects'
+      address mappings collected (FMC `dynamicobjects/{id}/mappings`) so analysis, the map and the
+      attack surface use real addresses; rules conditioned on SGT / dynamic objects marked as such
+      in the attack surface; mock + tests (the lab FMC has ISE disabled: no SGTs there).
+- [ ] **7.7 ACE-heavy rules get a fix**: a new preserving recommendation that replaces long address
+      lists by the fewest networks covering exactly the same addresses (a summarised group), proved
+      by the traffic proof; plus advice on Object Group Search where the platform supports it.
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
