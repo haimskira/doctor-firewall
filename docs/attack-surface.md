@@ -20,6 +20,16 @@ One permit rule that can match, as a flow from its sources to its destinations:
 A hop whose rule is partly overridden by an earlier rule with the opposite verdict is marked
 *partly decided by an earlier rule*: part of that traffic is blocked before it.
 
+A hop whose rule also requires an identity — a **security group tag** (SGT), a **dynamic
+object** or a **user** — lists it ("only for: source SGT: SGT_FIN_USERS"). The map is drawn
+from addresses, so such a hop shows more reach than there is: only endpoints that carry that
+tag / are mapped to that object get through.
+
+Dynamic objects: the collector also reads each object's current mappings
+(`GET object/dynamicobjects/{id}/mappings`) and the object page shows them. An orchestrator
+changes them at runtime without a deploy, so the analysis (shadowing, the traffic proof, this
+search) keeps the object as an opaque condition and never relies on those addresses.
+
 ## Pivots
 
 `C → B → A` is a path only if the addresses of B that C may reach **overlap** the addresses of B

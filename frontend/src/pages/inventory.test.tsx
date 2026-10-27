@@ -220,6 +220,29 @@ describe('ObjectDetailPage', () => {
     expect(within(table).getByText('destination')).toBeInTheDocument();
     expect(within(table).getByText('GRP_SRV_GOLD')).toBeInTheDocument();
   });
+
+  it('shows what a dynamic object maps to, as collected', async () => {
+    setup('/objects/d1?snapshot=7', <Route path="/objects/:objectId" element={<ObjectDetailPage />} />, (req) => {
+      if (req.url === '/api/snapshots/7/objects/d1') {
+        return {
+          status: 200,
+          body: {
+            object: { id: 'd1', name: 'DYN_K8S_PODS', kind: 'dynamic', fmc_type: 'DynamicObject', value: 'IP', stub: false, rule_refs: 1, member_of: 0 },
+            attrs: { mappings: ['10.60.1.10/32', 'pods.k8s.local'], mappings_total: 2 },
+            members: [],
+            member_of: [],
+            used_by: [],
+            used_by_total: 0,
+          },
+        };
+      }
+      return undefined;
+    });
+    expect(await screen.findByRole('heading', { name: 'Mapped addresses (2)' })).toBeInTheDocument();
+    expect(screen.getByText('10.60.1.10/32')).toBeInTheDocument();
+    expect(screen.getByText('pods.k8s.local')).toBeInTheDocument();
+    expect(screen.getByText(/changes them at runtime without a deploy/)).toBeInTheDocument();
+  });
 });
 
 describe('SnapshotsPage', () => {

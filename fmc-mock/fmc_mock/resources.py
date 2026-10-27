@@ -131,6 +131,14 @@ def build_router(data: FmcData, domain_uuid: str, token_ok: Callable[[Request], 
             )
         return page(request, _objects_of(data, "isesecuritygrouptags"))
 
+    @router.get(CONFIG + "/object/dynamicobjects/{object_id}/mappings")
+    async def dynamic_mappings(request: Request, domain: str, object_id: str) -> Response:
+        if (resp := guard(request, domain)) is not None:
+            return resp
+        if object_id not in data.dynamic_mappings:
+            return _error(404, "Dynamic object not found")
+        return page(request, [{"mapping": m} for m in data.dynamic_mappings[object_id]])
+
     collection("/object/variablesets", lambda: data.variable_sets)
     collection("/devices/devicerecords", lambda: data.devices)
     collection("/devicehapairs/ftddevicehapairs", lambda: data.ha_pairs)

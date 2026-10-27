@@ -256,6 +256,38 @@ def test_batch_is_written_verified_and_deployed(client: TestClient, admin: dict[
     flow.close()
 
 
+def test_compact_group_writes_fewer_members_and_keeps_every_flow(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    rec = flow.find("compact_group", "GRP_COMPACT_ME")
+    detail = client.get(f"/api/snapshots/{flow.sid}/recommendations/{rec['id']}").json()
+    compact = detail["preview"]["compact"]
+    # The host inside the /24 goes; four hosts become one range, two /25s one /24: 8 -> 3.
+    assert compact["covered"] == ["H_CMP_IN_BASE"]
+    assert (compact["members_before"], compact["members_after"]) == (8, 3)
+    assert {m["value"] for m in compact["merged"]} == {"10.70.1.1-10.70.1.4", "10.70.2.0/24"}
+    assert detail["ace_delta"] == -5  # COMPACT_RULE: 8 source leaves x 1 -> 3 x 1
+    assert behavior(detail["kind"]) == "preserves"
+
+    cs_id, batch_id = flow.approved_batch([rec])
+    result = _run(batch_id)
+    assert result["ok"] is True, result
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    # Proved twice: on the plan before writing, and on what the FMC holds after the writes.
+    assert cs["batches"][0]["proof"]["behavior"] == "preserves"
+    assert cs["batches"][0]["proof_after"]["behavior"] == "preserves"
+    group = next(
+        g
+        for g in mock("GET", CONFIG + "/object/networkgroups")["items"]
+        if g["name"] == "GRP_COMPACT_ME"
+    )
+    assert len(group["objects"]) == 3
+    ranges = {r["value"] for r in mock("GET", CONFIG + "/object/ranges")["items"]}
+    assert "10.70.1.1-10.70.1.4" in ranges
+    flow.close()
+
+
 def test_drift_stops_before_any_write(client: TestClient, admin: dict[str, str]) -> None:
     flow = Flow(client, admin)
     split = flow.find("split_rule", "MIXED_TIERS_SQL")

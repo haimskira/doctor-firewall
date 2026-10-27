@@ -13,6 +13,7 @@ from sqlalchemy import Select, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.analysis import routing
+from app.analysis.expand import ACE_FIELDS
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -261,19 +262,76 @@ def _finding_targets(details: dict[str, Any]) -> list[str]:
     return out
 
 
+MAX_NESTING = 16
+
+
+def _rule_objects(db: Session, snapshot_id: int, rule_ids: set[str]) -> dict[str, list[str]]:
+    """Rule FMC id -> every object it references in an ACE field, directly or nested."""
+    direct: dict[str, set[str]] = defaultdict(set)
+    for fmc_id, oid in db.execute(
+        select(Rule.fmc_id, RuleRef.object_fmc_id)
+        .join(Rule, Rule.id == RuleRef.rule_id)
+        .where(
+            RuleRef.snapshot_id == snapshot_id,
+            Rule.fmc_id.in_(rule_ids),
+            RuleRef.object_fmc_id.is_not(None),
+            RuleRef.field.in_(ACE_FIELDS),
+        )
+    ):
+        if oid is not None:
+            direct[fmc_id].add(oid)
+    children: dict[str, set[str]] = defaultdict(set)
+    frontier = set().union(*direct.values()) if direct else set()
+    seen = set(frontier)
+    for _ in range(MAX_NESTING):
+        if not frontier:
+            break
+        nxt: set[str] = set()
+        for group, member in db.execute(
+            select(GroupMember.group_fmc_id, GroupMember.member_fmc_id).where(
+                GroupMember.snapshot_id == snapshot_id,
+                GroupMember.group_fmc_id.in_(frontier),
+                GroupMember.member_fmc_id.is_not(None),
+            )
+        ):
+            if member is not None:
+                children[group].add(member)
+                if member not in seen:
+                    seen.add(member)
+                    nxt.add(member)
+        frontier = nxt
+    out: dict[str, list[str]] = {}
+    for rule, objects in direct.items():
+        found, queue = set(objects), list(objects)
+        while queue:
+            for child in children.get(queue.pop(), set()):
+                if child not in found:
+                    found.add(child)
+                    queue.append(child)
+        out[rule] = sorted(found)
+    return out
+
+
 def _fixes(
     db: Session, snapshot_id: int, findings: list[Finding]
 ) -> dict[int, list[dict[str, Any]]]:
-    wanted = {t for f in findings for t in _finding_targets(f.details)}
+    targets = {f.id: _finding_targets(f.details) for f in findings}
+    # An ACE-heavy rule is fixed through the groups it uses (compacting them).
+    heavy = {f.id: t[0] for f in findings if f.kind == "ace_heavy_rule" and (t := targets[f.id])}
+    if heavy:
+        groups = _rule_objects(db, snapshot_id, set(heavy.values()))
+        for fid, rule in heavy.items():
+            targets[fid] = [*targets[fid], *groups.get(rule, [])]
+    wanted = {t for ts in targets.values() for t in ts}
     if not wanted:
         return {}
     by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for rec_id, kind, title, targets in db.execute(
+    for rec_id, kind, title, rec_targets in db.execute(
         select(Recommendation.id, Recommendation.kind, Recommendation.title, Recommendation.targets)
         .where(Recommendation.snapshot_id == snapshot_id)
         .order_by(Recommendation.priority.desc(), Recommendation.id)
     ):
-        for t in targets:
+        for t in rec_targets:
             tid = t.get("id") if isinstance(t, dict) else None
             if tid in wanted and len(by_target[tid]) < 5:
                 by_target[tid].append({"id": rec_id, "kind": kind, "title": title[:160]})
@@ -281,7 +339,7 @@ def _fixes(
     for f in findings:
         seen: set[int] = set()
         fixes: list[dict[str, Any]] = []
-        for tid in _finding_targets(f.details):
+        for tid in targets[f.id]:
             for fix in by_target.get(tid, []):
                 if fix["id"] not in seen:
                     seen.add(fix["id"])

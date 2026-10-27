@@ -366,6 +366,17 @@ function RuleList({ rules, total, snapshotId }: { rules: AttackRule[]; total: nu
           )}{' '}
           <span className="muted">· {r.inspected ? t('atk.inspected') : t('atk.notInspected')}</span>
           {r.partial && <span className="muted"> · {t('atk.partial')}</span>}
+          {(r.conditions ?? []).length > 0 && (
+            <span className="atk-conditions" title={t('atk.conditionsHint')}>
+              {' · '}
+              {t('atk.conditional')}:{' '}
+              {(r.conditions ?? []).map((c) => (
+                <span key={`${c.field}-${c.name}`} className="chip small">
+                  <FieldLabel field={c.field} />: <bdi>{c.name}</bdi>
+                </span>
+              ))}
+            </span>
+          )}
         </li>
       ))}
       {total > rules.length && <li className="muted">{t('atk.moreRules', { count: total - rules.length })}</li>}
@@ -416,4 +427,10 @@ function Legend() {
       <span>{t('atk.legendArrows')}</span>
     </div>
   );
+}
+
+function FieldLabel({ field }: { field: string }) {
+  const { t } = useI18n();
+  const key = `field.${field}`;
+  return <>{isMessageKey(key) ? t(key) : field}</>;
 }

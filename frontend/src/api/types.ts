@@ -468,7 +468,8 @@ export type RecommendationKind =
   | 'ssl_decrypt_inbound'
   | 'remove_redundant_reference'
   | 'remove_redundant_member'
-  | 'remove_disabled_rule';
+  | 'remove_disabled_rule'
+  | 'compact_group';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -490,6 +491,7 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_redundant_reference',
   'remove_redundant_member',
   'remove_disabled_rule',
+  'compact_group',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';
@@ -872,6 +874,8 @@ export interface AttackRule {
   partial: boolean;
   default: boolean;
   hits: number | null;
+  /** SGT / dynamic object / user conditions: the rule applies only to endpoints matching them. */
+  conditions?: { field: string; name: string }[];
 }
 
 export interface AttackNode {

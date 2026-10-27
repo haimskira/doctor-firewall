@@ -43,6 +43,7 @@ export function ObjectDetailPage() {
             )}
             {d.object.stub && <p className="muted">{t('objects.stub')}</p>}
           </section>
+          {d.object.kind === 'dynamic' && <DynamicMappings attrs={d.attrs} />}
           <section className="card">
             <div className="row spread">
               <h2>{t('relations.title')}</h2>
@@ -148,5 +149,32 @@ export function ObjectDetailPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** The addresses a dynamic object maps to, as collected (they change at runtime). */
+function DynamicMappings({ attrs }: { attrs: Record<string, unknown> }) {
+  const { t } = useI18n();
+  const mappings = Array.isArray(attrs['mappings']) ? attrs['mappings'].filter((m): m is string => typeof m === 'string') : null;
+  const total = typeof attrs['mappings_total'] === 'number' ? attrs['mappings_total'] : (mappings?.length ?? 0);
+  return (
+    <section className="card">
+      <h2>{t('object.mappings', { count: total })}</h2>
+      <p className="muted small">{t('object.mappingsHint')}</p>
+      {mappings === null ? (
+        <p className="muted">{t('object.mappingsUnknown')}</p>
+      ) : mappings.length === 0 ? (
+        <p className="muted">{t('object.mappingsNone')}</p>
+      ) : (
+        <span className="chips-inline">
+          {mappings.map((m) => (
+            <span key={m} className="chip">
+              <Ltr>{m}</Ltr>
+            </span>
+          ))}
+          {total > mappings.length && <span className="muted small">{t('rules.more', { count: total - mappings.length })}</span>}
+        </span>
+      )}
+    </section>
   );
 }

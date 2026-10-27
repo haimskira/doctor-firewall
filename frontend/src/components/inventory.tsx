@@ -23,6 +23,9 @@ export function RefChip({ item, snapshotId }: { item: RefItem; snapshotId: numbe
         className={`chip obj kind-${item.kind ?? 'other'}`}
         to={`/objects/${encodeURIComponent(item.id)}?snapshot=${String(snapshotId)}`}
       >
+        {(item.kind === 'sgt' || item.kind === 'dynamic') && (
+          <span className="chip-kind">{t(`chip.kind.${item.kind}`)}</span>
+        )}
         <Ltr>{item.name}</Ltr>
       </Link>
     </ObjectHover>

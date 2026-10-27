@@ -117,6 +117,24 @@ def store_objects(session: Session, snapshot_id: int, records: Sequence[ObjectRe
     return len(rows)
 
 
+MAX_MAPPINGS = 2000  # addresses kept per dynamic object (the total is always kept)
+
+
+def set_dynamic_mappings(
+    session: Session, snapshot_id: int, object_id: str, mappings: Sequence[str]
+) -> None:
+    obj = session.scalar(
+        select(FwObject).where(FwObject.snapshot_id == snapshot_id, FwObject.fmc_id == object_id)
+    )
+    if obj is None:
+        return
+    obj.attrs = {
+        **(obj.attrs or {}),
+        "mappings": list(mappings[:MAX_MAPPINGS]),
+        "mappings_total": len(mappings),
+    }
+
+
 def add_stub_objects(
     session: Session, snapshot_id: int, kind_of: Callable[[str], ObjectKind]
 ) -> int:

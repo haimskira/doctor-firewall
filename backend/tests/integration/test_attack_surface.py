@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.analysis.attack import load_hops
+from app.db.session import get_sessionmaker
+from app.models.inventory import FwObject
 from tests.integration.conftest import login, make_user
 from tests.integration.test_phase3 import _analysed
 
@@ -62,3 +66,26 @@ def test_paths_to_a_target_and_blast_radius(client: TestClient, admin: dict[str,
     ):
         assert client.get(base, params=params).status_code == code, params
     assert client.get("/api/snapshots/999999/attack-surface/targets").status_code == 404
+
+
+def test_identity_conditions_and_dynamic_mappings(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    sid = _analysed(client, admin)
+    with get_sessionmaker()() as s:
+        hops = {h.name: h for h in load_hops(s, sid)}
+        dyn = s.scalar(
+            select(FwObject).where(FwObject.snapshot_id == sid, FwObject.name == "DYN_K8S_PODS")
+        )
+    # A permit that also needs an SGT says so: the addresses alone overstate who gets through.
+    assert ("src_sgt", "SGT_FIN_USERS") in hops["FIN-APP_TO_GOLD-DB_SQL"].conditions
+    assert hops["FIN-APP_TO_GOLD-DB_SQL"].describe()["conditions"] == [
+        {"field": "src_sgt", "name": "SGT_FIN_USERS"}
+    ]
+    assert any(("dst_dyn", "DYN_K8S_PODS") in h.conditions for h in hops.values())
+    # The addresses a dynamic object maps to are collected (junk dropped), shown on the object.
+    assert dyn is not None
+    assert dyn.attrs["mappings"] == ["10.60.1.10/32", "10.60.2.0/24", "pods.k8s.local"]
+    assert dyn.attrs["mappings_total"] == 3
+    detail = client.get(f"/api/snapshots/{sid}/objects/{dyn.fmc_id}").json()
+    assert detail["attrs"]["mappings_total"] == 3

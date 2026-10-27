@@ -66,7 +66,7 @@ const SURFACE: AttackSurface = {
       ],
       hops: [
         { services: ['any'], apps: [], rules: [rule('TEMP_ANY', 3, false)], rule_count: 1 },
-        { services: ['tcp/1433'], apps: [], rules: [rule('CRM_TO_SAP', 12, true)], rule_count: 1 },
+        { services: ['tcp/1433'], apps: [], rules: [{ ...rule('CRM_TO_SAP', 12, true), conditions: [{ field: 'src_sgt', name: 'SGT_FIN' }] }], rule_count: 1 },
       ],
     },
     {
@@ -129,6 +129,8 @@ describe('AttackSurfacePage', () => {
     await user.click(top);
     expect(top).toHaveAttribute('aria-expanded', 'true');
     expect(within(paths).getByRole('link', { name: '#3 TEMP_ANY' })).toHaveAttribute('href', '/rules?snapshot=7&policy=p1&q=TEMP_ANY');
+    // A hop that also needs an SGT says so (the map is drawn from addresses alone).
+    expect(within(paths).getByText('SGT_FIN').closest('.atk-conditions')).toHaveTextContent('only for: source SGT: SGT_FIN');
     // The path is highlighted on the map: the other edges are dimmed, its own are not.
     const edges = map.querySelectorAll('path.atk-edge');
     expect([...edges].every((e) => !e.classList.contains('dim'))).toBe(true);

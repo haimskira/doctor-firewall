@@ -36,13 +36,16 @@ from app.fmc.records import (
     AssignmentRecord,
     DeviceRecord,
     HaPairRecord,
+    ObjectKind,
     PolicyKind,
     PolicyRecord,
 )
-from app.models.inventory import Interface, Policy, Snapshot
+from app.models.inventory import FwObject, Interface, Policy, Snapshot
 from app.workers import progress
 
 log = logging.getLogger(__name__)
+
+MAX_DYNAMIC_OBJECTS = 1000  # dynamic objects whose mappings are read per collection
 
 PageHandler = Callable[[Session, int, list[dict[str, Any]]], int]
 
@@ -176,6 +179,7 @@ class Collector:
 
     async def run(self) -> dict[str, Any]:
         await self._objects()
+        await self._dynamic_mappings()
         progress.phase("collect_topology", 30, 35)
         clusters, assignments = await self._topology()
         await self._policies(clusters, assignments)
@@ -226,6 +230,40 @@ class Collector:
                 self.stats.unavailable[resource] = "feature_disabled"
                 with self.sessions.begin() as session:
                     store.advance(session, self.snapshot_id, f"objects:{resource}", 0, done=True)
+
+    async def _dynamic_mappings(self) -> None:
+        """The addresses each dynamic object maps to right now (an orchestrator or the CSDAC
+        changes them at runtime, without a deploy). Shown as they were at collection time;
+        the analysis keeps the object itself as the condition, never these addresses."""
+        with self.sessions() as session:
+            ids = list(
+                session.scalars(
+                    select(FwObject.fmc_id)
+                    .where(
+                        FwObject.snapshot_id == self.snapshot_id,
+                        FwObject.kind == ObjectKind.DYNAMIC.value,
+                        FwObject.stub.is_(False),
+                    )
+                    .order_by(FwObject.fmc_id)
+                    .limit(MAX_DYNAMIC_OBJECTS)
+                )
+            )
+        for oid in ids:
+            path = self._path(f"/object/dynamicobjects/{oid}/mappings")
+            try:
+                items = await self._fetch_all(path, optional=True)
+            except FmcProtocolError as exc:
+                if exc.status not in (404, 422):
+                    raise
+                self.stats.unavailable["dynamicobject_mappings"] = (
+                    "feature_disabled" if exc.status == 422 else "not_found"
+                )
+                continue
+            mappings = sorted(
+                {m for m in (self.adapter.map_dynamic_mapping(i) for i in items) if m is not None}
+            )
+            with self.sessions.begin() as session:
+                store.set_dynamic_mappings(session, self.snapshot_id, oid, mappings)
 
     async def _topology(self) -> tuple[list[dict[str, Any]], list[AssignmentRecord]]:
         devices = [

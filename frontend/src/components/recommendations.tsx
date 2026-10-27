@@ -35,6 +35,8 @@ const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['ssl_decrypt_inbound', 'inspect'],
   ['remove_redundant_reference', 'remove'],
   ['remove_redundant_member', 'remove'],
+  ['remove_disabled_rule', 'remove'],
+  ['compact_group', 'merge'],
 ]);
 
 export function tagGroup(kind: RecommendationKind): TagGroup {

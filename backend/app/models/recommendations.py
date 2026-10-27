@@ -51,6 +51,8 @@ RECOMMENDATION_KINDS = (
     "remove_redundant_member",
     # A disabled rule matches nothing: removing it changes no flow (only the clutter goes).
     "remove_disabled_rule",
+    # The same addresses with fewer group members: fewer ACEs, no flow changes.
+    "compact_group",
 )
 # What a recommendation does to traffic. Behaviour-preserving changes leave every flow's verdict
 # (and inspection) as it was — the batch verifier proves it before and after deployment.

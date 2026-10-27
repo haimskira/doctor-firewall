@@ -37,6 +37,7 @@ from app.fmc.records import (
     RuleRecord,
     StaticRouteRecord,
 )
+from app.fmc.validation import validate_host
 
 VERSION = "10.1"
 CONFIG_PREFIX = "/api/fmc_config/v1/domain/{domain}"
@@ -592,6 +593,22 @@ def map_hitcount(item: Any) -> HitCountRecord:
         deploy_known=m.lastDeployedTimeStamp is not None,
         deployed_at=_timestamp(m.lastDeployedTimeStamp),
     )
+
+
+def map_dynamic_mapping(item: Any) -> str | None:
+    """One address mapped to a dynamic object (``{"mapping": "10.1.1.0/24"}``): a canonical
+    network, a hostname, or None for anything else (never trusted to be well-formed)."""
+    value = item.get("mapping") if isinstance(item, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return normalize.address(value)
+    except ValueError:
+        pass
+    try:
+        return validate_host(value)
+    except ValueError:
+        return None
 
 
 def map_interface(kind: str, item: Any) -> InterfaceRecord:

@@ -50,6 +50,7 @@ class FmcData:
     bgp_general: dict[str, list[Json]] = field(default_factory=dict)
     bgp: dict[str, list[Json]] = field(default_factory=dict)
     hitcounts: dict[tuple[str, str], list[Json]] = field(default_factory=dict)  # (policy, dev)
+    dynamic_mappings: dict[str, list[str]] = field(default_factory=dict)  # object id -> mappings
     # Other policy types: resource -> policies, and (resource, policy id, sub) -> rules.
     policy_lists: dict[str, list[Json]] = field(default_factory=dict)
     policy_rules: dict[tuple[str, str, str], list[Json]] = field(default_factory=dict)
@@ -220,6 +221,8 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
     sgt_fin = b.obj("isesecuritygrouptags", "ISESecurityGroupTag", "SGT_FIN_USERS", tag="10")
     sgt_bad = b.obj("securitygrouptags", "SecurityGroupTag", "SGT_QUARANTINE", tag="999")
     dyn = b.obj("dynamicobjects", "DynamicObject", "DYN_K8S_PODS", objectType="IP")
+    # What the orchestrator mapped (a hostname and junk too: the collector must cope).
+    b.data.dynamic_mappings[dyn["id"]] = ["10.60.1.10", "10.60.2.0/24", "pods.k8s.local", "bad//x"]
     url = b.obj("urls", "Url", "URL_PARTNER", url="https://partner.example")
 
     apps = [
@@ -780,6 +783,50 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             "destinationNetworks": {
                 "objects": [_ref(levels[7]), _ref(levels[3]), _ref(chain_host)]
             },
+            "metadata": {"section": "Default", "category": "--Undefined--"},
+        },
+    )
+
+    # Compaction scenario: a group with a covering network and a host inside it, four
+    # consecutive hosts and two adjacent halves of a /24 — the same addresses fit in 3 members.
+    def host(name: str, value: str) -> Json:
+        item = {"id": fixed(name), "name": name, "type": "Host", "value": value}
+        b.data.objects.setdefault("hosts", []).append(item)
+        return item
+
+    def network(name: str, value: str) -> Json:
+        item = {"id": fixed(name), "name": name, "type": "Network", "value": value}
+        b.data.objects.setdefault("networks", []).append(item)
+        return item
+
+    compact_members = [
+        network("NET_CMP_BASE", "10.70.0.0/24"),
+        host("H_CMP_IN_BASE", "10.70.0.5"),
+        *(host(f"H_CMP_{n}", f"10.70.1.{n}") for n in range(1, 5)),
+        network("NET_CMP_LOW", "10.70.2.0/25"),
+        network("NET_CMP_HIGH", "10.70.2.128/25"),
+    ]
+    compact_group = {
+        "id": fixed("GRP_COMPACT_ME"),
+        "name": "GRP_COMPACT_ME",
+        "type": "NetworkGroup",
+        "objects": [_ref(m) for m in compact_members],
+        "overridable": False,
+    }
+    b.data.objects.setdefault("networkgroups", []).append(compact_group)
+    chain_rules.insert(
+        at,
+        {
+            "id": fixed("COMPACT_RULE"),
+            "type": "AccessRule",
+            "name": "COMPACT_RULE",
+            "enabled": True,
+            "action": "ALLOW",
+            "logBegin": False,
+            "logEnd": True,
+            "sendEventsToFMC": True,
+            "sourceNetworks": {"objects": [_ref(compact_group)]},
+            "destinationNetworks": {"objects": [_ref(host("H_CMP_DST", "10.71.0.10"))]},
             "metadata": {"section": "Default", "category": "--Undefined--"},
         },
     )

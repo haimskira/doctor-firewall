@@ -1655,6 +1655,19 @@ def recommend_rule_renames(
     return drafts
 
 
+def proposed_object_name(estate: Estate, kind: str, value: str) -> str | None:
+    """The naming-convention name (or the default) for a new object holding ``value``."""
+    convention = estate.conventions.get(kind)
+    tokens: dict[str, str | None] = {"VALUE": value_token(kind, value)}
+    if kind in ADDRESS_KINDS:
+        tokens.update(
+            estate.asset_facts(literal_leaves(value, "address" if kind != "range" else "range"))
+        )
+    else:
+        tokens.update(_object_tokens(estate, Obj("", "", kind, value, False)))
+    return (convention.render(tokens) if convention else None) or _default_literal_name(kind, value)
+
+
 def _default_literal_name(kind: str, value: str) -> str | None:
     if kind == "host":
         return f"H_{value.split('/', 1)[0]}"
@@ -1701,20 +1714,7 @@ def recommend_literals(estate: Estate) -> list[Draft]:
         if existing is not None:
             name = existing.name
         else:
-            convention = estate.conventions.get(kind)
-            obj = Obj("", "", kind, value, False)
-            tokens: dict[str, str | None] = {"VALUE": value_token(kind, value)}
-            if kind in ADDRESS_KINDS:
-                tokens.update(
-                    estate.asset_facts(
-                        literal_leaves(value, "address" if kind != "range" else "range")
-                    )
-                )
-            else:
-                tokens.update(_object_tokens(estate, obj))
-            proposed = (convention.render(tokens) if convention else None) or _default_literal_name(
-                kind, value
-            )
+            proposed = proposed_object_name(estate, kind, value)
             if proposed is None:
                 continue
             name = disambiguate(proposed[:MAX_NAME], taken)
@@ -1809,7 +1809,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     """Recompute all recommendations of a snapshot (idempotent). Caller commits."""
     session.execute(delete(Recommendation).where(Recommendation.snapshot_id == snapshot_id))
     # Phase-6 inspection builds on this module's primitives (imported here: no cycle).
-    from app.analysis import inspection, redundancy
+    from app.analysis import compact, inspection, redundancy
 
     estate = Estate(session, snapshot_id)
     drafts: list[Draft] = []
@@ -1817,6 +1817,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     profiles = inspection.load_profiles(session)
     ssl = inspection.SslAdvisor(estate)
     ordered = sorted(estate.policies.values(), key=lambda p: (p.kind, p.name))
+    ace_rules: dict[int, RuleInfo] = {}
     for n, policy in enumerate(ordered):
         progress.advance(n, len(ordered))
         if policy.kind not in ("access", "prefilter", "decryption"):
@@ -1825,6 +1826,8 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
         if not rules:
             continue
         drafts += recommend_removals(estate, policy, rules)
+        if policy.kind in ACE_KINDS:
+            ace_rules.update((info.rule.id, info) for info in rules)
         if policy.kind in ("access", "prefilter"):
             drafts += redundancy.recommend_redundant_references(estate, policy, rules)
         if policy.kind == "access":
@@ -1838,7 +1841,11 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
             ssl.decryption_policy(policy, rules)
     drafts += ssl.drafts()
     drafts += recommend_object_merges(estate)
-    drafts += redundancy.recommend_redundant_members(estate)
+    members = redundancy.recommend_redundant_members(estate)
+    drafts += members
+    drafts += compact.recommend_compact_groups(
+        estate, ace_rules, skip={t["id"] for d in members for t in d.targets}
+    )
     drafts += recommend_split_groups(estate)
     drafts += renames
     drafts += recommend_literals(estate)

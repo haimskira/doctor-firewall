@@ -972,3 +972,11 @@ a.button-link {
 a.button-link:hover { background: var(--primary-soft); }
 
 .finding-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+
+/* SGT / dynamic-object chips share the address column: a small kind label tells them apart */
+.chip-kind {
+  font-size: 0.68rem; font-weight: 600; margin-inline-end: 0.3rem; padding-inline: 0.3rem;
+  border-radius: 999px; background: var(--primary-soft); color: var(--primary);
+}
+.chip.kind-sgt, .chip.kind-dynamic { border-color: var(--primary); }
+.atk-conditions .chip { margin-inline-start: 0.25rem; }

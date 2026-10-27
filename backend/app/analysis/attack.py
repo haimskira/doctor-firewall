@@ -79,6 +79,9 @@ class Hop:
     risk: str
     hits: int | None
     default: bool = False
+    # Identity conditions the addresses alone do not show (SGT, dynamic object, user): the
+    # hop exists only for endpoints that also match them. ((field, name), ...)
+    conditions: tuple[tuple[str, str], ...] = ()
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -92,6 +95,7 @@ class Hop:
             "partial": self.partial,
             "default": self.default,
             "hits": self.hits,
+            "conditions": [{"field": f, "name": n} for f, n in self.conditions],
         }
 
 
@@ -163,6 +167,7 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
         if isinstance(rule, dict) and isinstance(rule.get("id"), str):
             partial.add(rule["id"])
     labels = _service_labels(session, snapshot_id)
+    condition_labels = _condition_labels(session, snapshot_id)
     inspected = {
         rule_id: ips is not None
         for rule_id, ips in session.execute(
@@ -180,6 +185,7 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
             if shadowed_by is not None:
                 continue
             services, apps = labels.get(rs.rule_id, ((), ()))
+            conditions = condition_labels.get(rs.rule_id, ())
             hops.append(
                 Hop(
                     rule_id=rs.rule_id,
@@ -197,6 +203,7 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
                     partial=rs.fmc_id in partial,
                     risk=rule_risk(reasons),
                     hits=rs.hit_count,
+                    conditions=conditions,
                 )
             )
         if policy.kind == "access" and policy.default_action.upper() in PERMIT_DEFAULTS:
@@ -243,6 +250,25 @@ def _service_labels(
         k: (tuple(sorted(services.get(k, set()))), tuple(sorted(apps.get(k, set()))))
         for k in set(services) | set(apps)
     }
+
+
+CONDITION_FIELDS = ("src_sgt", "dst_sgt", "src_dyn", "dst_dyn", "user")
+
+
+def _condition_labels(session: Session, snapshot_id: int) -> dict[int, tuple[tuple[str, str], ...]]:
+    """Per rule: its SGT / dynamic object / user conditions, as the FMC names them."""
+    out: dict[int, set[tuple[str, str]]] = defaultdict(set)
+    for rule_id, fld, name, literal in session.execute(
+        select(RuleRef.rule_id, RuleRef.field, FwObject.name, RuleRef.literal)
+        .outerjoin(
+            FwObject,
+            (FwObject.snapshot_id == RuleRef.snapshot_id)
+            & (FwObject.fmc_id == RuleRef.object_fmc_id),
+        )
+        .where(RuleRef.snapshot_id == snapshot_id, RuleRef.field.in_(CONDITION_FIELDS))
+    ):
+        out[rule_id].add((fld, str(name or literal or "?")))
+    return {k: tuple(sorted(v)) for k, v in out.items()}
 
 
 def _merge(a: AddressSet, b: AddressSet) -> AddressSet:
