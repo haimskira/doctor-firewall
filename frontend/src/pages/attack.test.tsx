@@ -110,7 +110,8 @@ describe('AttackSurfacePage', () => {
     const calls = setup('/attack');
     expect(await screen.findByText(/Choose a system from the asset table/)).toBeInTheDocument();
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Target' }), 'GOLD|SAP');
+    await screen.findByRole('option', { name: 'SAP' }); // the targets list has loaded
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Target' }), 'GOLD|SAP');
     await waitFor(() => {
       expect(calls.some((c) => c.url === '/api/snapshots/7/attack-surface?mode=to&depth=3&system=GOLD%7CSAP')).toBe(true);
     });
