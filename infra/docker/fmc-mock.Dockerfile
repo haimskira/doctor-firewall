@@ -1,5 +1,5 @@
 # FMC 10.1 emulator — development and tests ONLY. Never part of the production bundle.
-ARG PYTHON_IMAGE=python:3.12.15-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+ARG PYTHON_IMAGE=python:3.12.16-slim-bookworm@sha256:6dd8b6dab6b3adc7812bab69eca5dbdc1a5cc690ad28306d234ffb4ef8ac9753
 
 FROM ${PYTHON_IMAGE} AS deps
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1

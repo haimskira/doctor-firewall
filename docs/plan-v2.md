@@ -145,9 +145,20 @@ The system may only improve the policy, never hurt production traffic.
       Done as `compact_group` (covered members dropped, touching ones merged; lab snapshot 24:
       107 groups, heavy rules ~470k -> ~5k ACEs).
 
+## Stage 8 — Round 3 (2026-10-27) `[x]`
+
+- [x] **8.1 Bell and ACE-limit findings**: the bell counts high + medium findings and opens them
+      unfiltered; the cluster ACE-limit finding lists the recommendations that save the most.
+- [x] **8.2 Clean-up roadmap** (`docs/roadmap.md`): preparation checks and five phases in order,
+      a phase filter on recommendations and bulk decisions, a warning on later-phase items.
+- [x] **8.3 Port groups compacted** like network groups (per protocol).
+- [x] **8.4 Attack surface**: prefilter blocks cut / mark hops; zones narrow hops to the networks
+      routed behind them.
+- [x] **8.5 Base image** `python:3.12.16-slim-bookworm` (libssl3 deb12u2, CVE-2026-84782 fixed).
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
 - [x] Shadowed rules are never split / merged / tightened / renamed (found on the lab FMC).
 - [x] Resumable rollback with an undo journal (found when the lab VPN dropped mid-batch).
-- [ ] Docker Hub 0.7.0 — blocked on the base-image OpenSSL fix (decision pending).
+- [x] Docker Hub 0.7.0 — unblocked by the 3.12.16 base image (no vendored packages needed).

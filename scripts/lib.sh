@@ -10,7 +10,7 @@ VENDOR="$ROOT/vendor"
 export MSYS_NO_PATHCONV=1
 
 # Pinned third-party images (multi-arch index digests). Keep in sync with Dockerfiles/compose.
-PYTHON_IMAGE="python:3.12.15-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258"
+PYTHON_IMAGE="python:3.12.16-slim-bookworm@sha256:6dd8b6dab6b3adc7812bab69eca5dbdc1a5cc690ad28306d234ffb4ef8ac9753"
 NODE_IMAGE="node:22.23.3-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392"
 NGINX_IMAGE="nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6"
 POSTGRES_IMAGE="postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4"
