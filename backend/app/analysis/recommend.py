@@ -1384,11 +1384,13 @@ def recommend_object_merges(estate: Estate) -> list[Draft]:
         if values:
             by_leaves[(o.kind, values)].append(o)
     for (_kind, _values), objs in sorted(by_leaves.items(), key=lambda kv: kv[1][0].name):
+        ids = {o.fmc_id for o in objs}
+        # A group wrapping another candidate (e.g. GRP_10.30.0.0 = [GRP_SYS_APP]) has the same
+        # content but cannot be merged with what it contains (self-reference): leave the
+        # wrappers out and merge the rest.
+        objs = [o for o in objs if not (_reachable(estate, o.fmc_id) & (ids - {o.fmc_id}))]
         if len(objs) < 2 or sum(o.read_only for o in objs) > 1:
             continue
-        ids = {o.fmc_id for o in objs}
-        if any(_reachable(estate, o.fmc_id) & ids for o in objs):
-            continue  # nested in one another: merging would create a self-reference
         drafts.append(
             _merge_objects_draft(estate, "merge_groups", "one_name_per_value", objs, "same members")
         )

@@ -408,6 +408,9 @@ async def main() -> int:
     parser.add_argument("--no-deploy", action="store_true")
     parser.add_argument("--max-chunks", type=int, default=0, help="stop after N rule chunks")
     parser.add_argument("--cleanup", action="store_true")
+    parser.add_argument(
+        "--deploy-only", action="store_true", help="deploy pending changes, nothing else"
+    )
     parser.add_argument("--yes-write-to-lab", action="store_true")
     args = parser.parse_args()
     if not args.yes_write_to_lab:
@@ -436,7 +439,9 @@ async def main() -> int:
         ) as fmc:
             log(f"FMC {await server_version(fmc)}")
             loader = Loader(fmc, args.work, scenario, args.policy)
-            if args.cleanup:
+            if args.deploy_only:
+                await loader.deploy_now("pending changes")
+            elif args.cleanup:
                 await loader.cleanup(not args.no_deploy)
             else:
                 loader.write_assets()

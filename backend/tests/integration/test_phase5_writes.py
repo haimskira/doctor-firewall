@@ -18,6 +18,7 @@ from app.enforce.executor import execute_batch, redis_lock
 from app.fmc.client import FmcSession, build_ssl_context
 from app.models.audit import AuditRecord
 from app.models.enforce import Batch
+from app.models.fmc import FmcConnection
 from app.runtime import get_audit, get_redis, get_secretbox
 from app.workers import jobs
 from tests.integration.conftest import login, make_user
@@ -289,4 +290,27 @@ def test_run_endpoint_enqueues_an_approved_batch(client: TestClient, admin: dict
     assert (
         flow.appr.post(f"/api/changesets/{cs_id}/batches/9/run", headers=flow.ah).status_code == 404
     )
+    flow.close()
+
+
+def test_unreachable_fmc_leaves_the_batch_approved(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """Nothing written: the batch can run again, and the operator sees why it did not."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    _cs, batch_id = flow.approved_batch([split])
+    with get_sessionmaker()() as s:
+        connection = s.scalars(select(FmcConnection)).one()
+        connection.host = "fmc-down"  # resolves to nothing: the session cannot open
+        s.commit()
+    result = _run(batch_id)
+    assert (result["ok"], result["status"], result["error"]) == (False, "approved", "unreachable")
+    with get_sessionmaker()() as s:
+        batch = s.get(Batch, batch_id)
+        assert batch is not None
+        assert batch.status == "approved"
+        assert (batch.error or "").startswith("unreachable")
+        actions = list(s.scalars(select(AuditRecord.action)))
+    assert "changeset.batch_not_started" in actions
     flow.close()

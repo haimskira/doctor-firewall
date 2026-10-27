@@ -720,11 +720,12 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
         )
 
 
-def _unclaim(sessions: sessionmaker[Session], plan: _Plan) -> None:
+def _unclaim(sessions: sessionmaker[Session], plan: _Plan, error: str | None = None) -> None:
+    """Nothing was written: the batch goes back to approved (``error``: why it did not run)."""
     with sessions.begin() as db:
         b = db.get(Batch, plan.batch_id, with_for_update=True)
         if b is not None and b.status == "running":
-            b.status, b.started_at = "approved", None
+            b.status, b.started_at, b.error = "approved", None, error
 
 
 def _finish(
@@ -864,9 +865,22 @@ async def execute_batch(
                 )
                 return {"ok": False, "error": code, "status": status, "undo_failed": left}
     except FmcError as exc:
-        # Could not even open the session / read the version: nothing was written.
-        _finish(sessions, audit, plan, "failed", error=exc.code, results=[], task_id=None)
-        return {"ok": False, "error": exc.code, "status": "failed"}
+        # Could not even open the session / read the version: nothing was written, so the
+        # batch stays approved and can simply run again (the reason is kept for the operator).
+        reason = f"{exc.code}: {scrub_text(str(exc))[:200]}"
+        log.warning("batch did not start", extra={"batch": plan.batch_id, "reason": reason})
+        _unclaim(sessions, plan, reason)
+        audit_db_event = AuditEvent(
+            actor="system:enforcer",
+            actor_id=None,
+            action="changeset.batch_not_started",
+            outcome="failure",
+            target=plan.title[:256],
+            details={"changeset_id": plan.changeset_id, "batch_id": plan.batch_id, "error": reason},
+        )
+        with sessions.begin() as db:
+            audit.record(db, audit_db_event)
+        return {"ok": False, "error": exc.code, "status": "approved", "detail": reason}
     finally:
         await release()
     _finish(
