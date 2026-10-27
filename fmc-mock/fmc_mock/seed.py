@@ -511,6 +511,45 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             destinationPorts=objs(pg_admin),
             ipsPolicy=ips_max,
         )
+        # Phase-3 scenarios ahead of the bulk, where no broad rule shadows them (a rule that
+        # never matches is proposed for removal only): adjacent rules differing only by source
+        # (merge), one rule spanning two tiers (split), "any" source behind a zone (tighten).
+        for src_group, rule_name in (
+            (grp_users_fin, "WEB_FIN_USERS"),
+            (grp_users_it, "WEB_IT_USERS"),
+        ):
+            rule(
+                "Mandatory",
+                "DC-Inbound",
+                name=rule_name,
+                sourceNetworks=objs(src_group),
+                destinationNetworks=objs(grp_ip_named),
+                destinationPorts=objs(pg_web),
+            )
+        rule(
+            "Mandatory",
+            "DC-Inbound",
+            name="MIXED_TIERS_SQL",
+            sourceNetworks=objs(users_fin),
+            destinationNetworks=objs(gold_net, silver_net),
+            destinationPorts=objs(tcp1433),
+        )
+        rule(
+            "Mandatory",
+            "DC-Inbound",
+            name="USERS_ZONE_TO_GOLD",
+            sourceZones=objs(zones["users"]),
+            destinationNetworks=objs(gold_db[1]),
+            destinationPorts=objs(tcp1433),
+        )
+        # Bronze -> gold: a classic violation.
+        rule(
+            "Mandatory",
+            "DC-Inbound",
+            name="TEMP_DEV_TO_DB",
+            sourceNetworks=objs(bronze_net),
+            destinationNetworks=objs(grp_gold),
+        )
         # The messy bulk.
         for i in range(max(0, rules_per_policy - 10)):
             section = "Mandatory" if i < rules_per_policy // 2 else "Default"
@@ -553,44 +592,7 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             if rng.random() < 0.03:  # identical duplicate under another name
                 dup = {k: v for k, v in fields.items() if k != "name"}
                 rule(section, category, name=f"{fields['name']}-copy", **dup)
-        # Phase-3 scenarios: adjacent rules differing only by source (merge), one rule
-        # spanning two tiers (split), and "any" source behind a zone (tighten).
-        for src_group, rule_name in (
-            (grp_users_fin, "WEB_FIN_USERS"),
-            (grp_users_it, "WEB_IT_USERS"),
-        ):
-            rule(
-                "Default",
-                "--Undefined--",
-                name=rule_name,
-                sourceNetworks=objs(src_group),
-                destinationNetworks=objs(grp_ip_named),
-                destinationPorts=objs(pg_web),
-            )
-        rule(
-            "Default",
-            "--Undefined--",
-            name="MIXED_TIERS_SQL",
-            sourceNetworks=objs(users_fin),
-            destinationNetworks=objs(gold_net, silver_net),
-            destinationPorts=objs(tcp1433),
-        )
-        rule(
-            "Default",
-            "--Undefined--",
-            name="USERS_ZONE_TO_GOLD",
-            sourceZones=objs(zones["users"]),
-            destinationNetworks=objs(gold_db[1]),
-            destinationPorts=objs(tcp1433),
-        )
-        # Bronze -> gold and any-any: classic violations.
-        rule(
-            "Default",
-            "--Undefined--",
-            name="TEMP_DEV_TO_DB",
-            sourceNetworks=objs(bronze_net),
-            destinationNetworks=objs(grp_gold),
-        )
+        # Any-any: everything after it never matches.
         rule("Default", "--Undefined--", name="ANY_ANY_TEMP")
         rule(
             "Default",

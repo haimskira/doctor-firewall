@@ -723,6 +723,15 @@ def _policy_ref(policy: Policy) -> dict[str, str]:
 # ------------------------------------------------------------------ rule recommenders
 
 
+def shadowed(info: RuleInfo) -> bool:
+    """An earlier rule matches all of this rule's traffic: only its removal is proposed.
+
+    Splitting, merging, tightening or renaming a rule that never matches would only add more
+    rules that never match (seen in the lab: splits of shadowed copies created shadowed rules).
+    """
+    return info.score is not None and info.score.shadowed_by is not None
+
+
 def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) -> list[Draft]:
     evaluator = Evaluator(estate)
     by_fmc = {i.rule.fmc_id: i for i in rules}
@@ -868,6 +877,8 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
         r = info.rule
         if not (r.enabled and info.permit and "multi_tier_destination" in _reasons(info)):
             continue
+        if shadowed(info):
+            continue
         if info.refs.get("dst_sgt") or info.refs.get("dst_dyn") or not info.refs.get("dst_net"):
             continue
         partition = _partition_by_tier(estate, info.refs["dst_net"])
@@ -979,8 +990,8 @@ def recommend_merge_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
         run.clear()
 
     for info in rules:
-        if not info.rule.enabled:
-            continue  # disabled rules do not take part in evaluation order
+        if not info.rule.enabled or shadowed(info):
+            continue  # neither takes part in evaluation: matches nothing in between
         if eligible(info) and run and _merge_key(run[-1]) == _merge_key(info):
             run.append(info)
             continue
@@ -1106,7 +1117,7 @@ def recommend_tighten(estate: Estate, policy: Policy, rules: list[RuleInfo]) -> 
     drafts: list[Draft] = []
     for info in rules:
         r = info.rule
-        if not (r.enabled and info.permit):
+        if not (r.enabled and info.permit) or shadowed(info):
             continue
         source_any = not any(info.refs.get(f) for f in ("src_net", "src_sgt", "src_dyn", "user"))
         zones = {x.object_id for x in info.refs.get("src_zone", []) if x.object_id}
@@ -1584,6 +1595,8 @@ def recommend_rule_renames(
             counts["compliant"] += 1
             continue
         counts["noncompliant"] += 1
+        if shadowed(info):
+            continue  # removed instead
         proposed = convention.render(_rule_tokens(estate, info, info.refs, info.leaves))
         if proposed is None or proposed == r.name:
             continue

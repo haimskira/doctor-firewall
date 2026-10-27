@@ -66,6 +66,19 @@ def test_recommendations_cover_the_doctrine(client: TestClient, admin: dict[str,
         "literal_to_object",
         "remove_unused_object",
     } <= kinds
+    # A rule that never matches (shadowed) is only ever proposed for removal.
+    shadowed = {
+        t["id"] for r in recs if r["kind"] == "remove_shadowed_rule" for t in r["targets"]
+    }
+    assert shadowed
+    reworked = {
+        (r["kind"], t["name"])
+        for r in recs
+        if r["kind"] != "remove_shadowed_rule"
+        for t in r["targets"]
+        if t["type"] == "rule" and t["id"] in shadowed
+    }
+    assert not reworked, reworked
     priorities = [
         r["priority"]
         for r in client.get(f"/api/snapshots/{sid}/recommendations?limit=200").json()["rows"]

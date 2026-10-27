@@ -27,6 +27,7 @@ from app.analysis.recommend import (
     _rule_priority,
     _rule_target,
     rule_view,
+    shadowed,
     with_status,
 )
 from app.models.inventory import Policy
@@ -79,6 +80,8 @@ def recommend_redundant_references(
     cache: dict[str, dict[str, list[str]]] = {}
     drafts: list[Draft] = []
     for info in rules:
+        if shadowed(info):
+            continue  # removed instead
         new_refs = {f: list(v) for f, v in info.refs.items()}
         why: list[dict[str, Any]] = []
         for fld in REF_FIELDS:
