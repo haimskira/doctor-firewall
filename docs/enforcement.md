@@ -93,6 +93,22 @@ rules without hits, tightening, adding inspection). See [traffic-proof.md](traff
   that would change any flow — or a changing one that differs from its proved plan — is rolled
   back; nothing reaches the devices.
 
+### History and rollback to any point
+
+*Manage → Change history* lists every batch that ran: when, who staged and approved it, its
+traffic proof, and — per rule and object — what it changed, field by field (before from the undo
+journal's pre-images, after from what the FMC returned when the batch was verified). "Policy
+before" opens the snapshot the changeset was staged from; such snapshots are never deleted.
+
+* **Revert** a deployed batch (approver): first every item it wrote must still be exactly what it
+  wrote and every item it deleted still absent — otherwise nothing is written (`changed_since`).
+  Then the journal is undone; every rule and object must read back as its pre-image and every
+  touched policy must list its rules in the same order as before the batch; only then is it
+  deployed and the batch marked `reverted`. Otherwise the batch stays `failed` with the reason.
+* **Back to before a point**: that batch and every batch deployed after it to the same FMC are
+  reverted in one job, newest first, stopping at the first that cannot be reverted.
+* A batch can only be reverted when no later batch is still in place (newest first).
+
 ### Stale snapshots
 
 Seen in the lab: a changeset was staged from a snapshot after another changeset from the same

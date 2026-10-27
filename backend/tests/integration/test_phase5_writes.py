@@ -411,6 +411,82 @@ def test_a_failed_traffic_proof_rolls_back_before_deploying(
     flow.close()
 
 
+def test_history_shows_every_change_and_reverts_exactly(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    cs_id, batch_id = flow.approved_batch([split, rename])
+    policy = split["policy_fmc_id"]
+    before_rules = flow.rules(policy)
+    before_groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert _run(batch_id)["ok"] is True
+
+    entry = next(e for e in client.get("/api/history").json() if e["changeset_id"] == cs_id)
+    assert (entry["status"], entry["revert_blocker"]) == ("deployed", None)
+    assert entry["proof_after"]["ok"] is True
+    changes = client.get(f"/api/changesets/{cs_id}/batches/1/changes").json()
+    by_label = {(c["label"], c["action"]): c for c in changes}
+    updated = by_label[("MIXED_TIERS_SQL", "changed")]
+    dst = next(f for f in updated["fields"] if f["field"] == "destinationNetworks")
+    assert "NET_SILVER_APP" in dst["before"]
+    assert "NET_SILVER_APP" not in dst["after"]
+    assert ("MIXED_TIERS_SQL_SILVER", "created") in by_label
+    renamed = by_label[("GRP_10.30.0.0", "changed")]
+    assert {"field": "name", "before": "GRP_10.30.0.0", "after": "GRP_APPS"} in renamed["fields"]
+
+    # Revert: exactly the policy before the batch, deployed.
+    url = f"/api/changesets/{cs_id}/batches/1/revert"
+    assert flow.opt.post(url, headers=flow.oh).status_code == 403  # approvers only
+    queued = flow.appr.post(url, headers=flow.ah)
+    assert queued.status_code == 202, queued.text
+    result = jobs.revert_batches_job([batch_id], "p5w-appr")
+    assert result["ok"] is True, result
+    after_rules = flow.rules(policy)
+    assert list(after_rules) == list(before_rules)  # same rules, same order
+    assert (
+        after_rules["MIXED_TIERS_SQL"]["destinationNetworks"]
+        == before_rules["MIXED_TIERS_SQL"]["destinationNetworks"]
+    )
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert groups == before_groups
+    entry = next(e for e in client.get("/api/history").json() if e["changeset_id"] == cs_id)
+    assert entry["status"] == "reverted"
+    again = flow.appr.post(url, headers=flow.ah)
+    assert (again.status_code, again.json()["detail"]) == (409, "not_deployed")
+    with get_sessionmaker()() as s:
+        actions = list(s.scalars(select(AuditRecord.action)))
+    assert "changeset.batch_revert" in actions
+    assert "changeset.batch_revert_ok" in actions
+    flow.close()
+
+
+def test_revert_refuses_when_the_fmc_changed_since(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    assert _run(batch_id)["ok"] is True
+    # Someone edits the rule the batch created, in the FMC, after the deployment.
+    policy = split["policy_fmc_id"]
+    created = flow.rules(policy)["MIXED_TIERS_SQL_SILVER"]
+    body = {k: v for k, v in created.items() if k not in ("links", "metadata")}
+    body["enabled"] = False
+    mock("PUT", CONFIG + f"/policy/accesspolicies/{policy}/accessrules/{created['id']}", body)
+
+    result = jobs.revert_batches_job([batch_id], "p5w-appr")
+    assert result["ok"] is False
+    detail = result["detail"]
+    assert (detail["error"], detail["status"]) == ("changed_since", "deployed")
+    assert any("MIXED_TIERS_SQL_SILVER" in item for item in detail["items"])
+    assert "MIXED_TIERS_SQL_SILVER" in flow.rules(policy)  # nothing was written
+    entry = next(e for e in client.get("/api/history").json() if e["changeset_id"] == cs_id)
+    assert entry["status"] == "deployed"
+    flow.close()
+
+
 def test_deploy_failure_rolls_back_and_lock_busy_keeps_batch(
     client: TestClient, admin: dict[str, str]
 ) -> None:

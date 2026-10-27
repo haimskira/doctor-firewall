@@ -109,7 +109,7 @@ The system may only improve the policy, never hurt production traffic.
       verdict or inspection changes is listed. At staging (report per batch), before running (a
       *preserves* batch with a difference is refused) and after deployment (the same proof on what
       the FMC actually holds, read back).
-- [ ] **6c History and rollback**: every batch with its before / after per rule and object (journal
+- [x] **6c History and rollback**: every batch with its before / after per rule and object (journal
       pre-images + read-back after-images), readable diffs; revert a deployed batch (refused if the
       FMC changed since), revert to any point (later batches first); snapshots behind changes are
       never deleted, so the previous policy is always there.

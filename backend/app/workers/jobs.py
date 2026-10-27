@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.db.session import get_sessionmaker
 from app.enforce.batch_proof import prove_changeset
 from app.enforce.executor import execute_batch, redis_lock, resume_rollback
+from app.enforce.revert import revert_batch
 from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
 from app.models.inventory import Snapshot
@@ -274,6 +275,49 @@ def prove_changeset_job(changeset_id: int, run_id: int | None = None) -> dict[st
     return {"ok": all(outcome.values()), "batches": {str(k): v for k, v in outcome.items()}}
 
 
+def enqueue_revert(batch_ids: list[int], requested_by: str, title: str) -> int:
+    """Revert batches one after another, newest first (one job: order matters)."""
+    sessions = get_sessionmaker()
+    run_id = progress.create_run(sessions, "revert", title, requested_by, batch_id=batch_ids[0])
+    job = get_queue(QueueName.ENFORCE, get_redis()).enqueue(
+        revert_batches_job,
+        batch_ids,
+        requested_by,
+        run_id=run_id,
+        job_timeout=(get_settings().deploy_timeout_seconds + 3600) * len(batch_ids),
+    )
+    progress.set_rq_job(sessions, run_id, str(job.id))
+    return run_id
+
+
+def revert_batches_job(
+    batch_ids: list[int], requested_by: str, run_id: int | None = None
+) -> dict[str, Any]:
+    """Revert each batch in turn; stop at the first that cannot be reverted."""
+    sessions = get_sessionmaker()
+    if run_id is None:
+        run_id = progress.create_run(sessions, "revert", "revert", requested_by)
+    done: list[int] = []
+    with progress.tracked(sessions, run_id):
+        for batch_id in batch_ids:
+            result = asyncio.run(
+                revert_batch(
+                    batch_id,
+                    sessions=sessions,
+                    box=get_secretbox(),
+                    audit=get_audit(),
+                    settings=get_settings(),
+                    lock=redis_lock(get_redis()),
+                    requested_by=requested_by,
+                )
+            )
+            if not result.get("ok"):
+                progress.fail(str(result.get("error") or "revert_failed"))
+                return {"ok": False, "reverted": done, "failed": batch_id, "detail": result}
+            done.append(batch_id)
+    return {"ok": True, "reverted": done}
+
+
 def enqueue_rollback(batch_id: int, requested_by: str) -> int:
     title, changeset_id = _batch_ids(batch_id)
     return _enqueue(
@@ -313,6 +357,7 @@ ALLOWED_JOBS: frozenset[str] = frozenset(
         "app.workers.jobs.execute_batch_job",
         "app.workers.jobs.resume_rollback_job",
         "app.workers.jobs.prove_changeset_job",
+        "app.workers.jobs.revert_batches_job",
         "app.workers.jobs.verify_audit_chain",
         "app.workers.jobs.collect_snapshot",
         "app.workers.jobs.analyze_snapshot",

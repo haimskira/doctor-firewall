@@ -36,6 +36,7 @@ BATCH_STATUSES = (
     "failed",
     "rolled_back",
     "cancelled",
+    "reverted",  # deployed, then undone on request (history / rollback to a point)
 )
 
 

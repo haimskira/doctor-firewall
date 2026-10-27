@@ -227,6 +227,7 @@ class Writer:
     persist: Callable[[list[dict[str, Any]]], None] | None = None
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     seen: dict[str, dict[str, Any]] = field(default_factory=dict)  # path -> last read
+    _op: dict[str, Any] = field(default_factory=dict)  # the operation being written
     _variable_set: dict[str, Any] | None = None
 
     def save(self) -> None:
@@ -308,6 +309,7 @@ class Writer:
         }.get(str(op.get("op")))
         if handler is None:
             raise BatchError("unsupported_operation", str(op.get("op")))
+        self._op = op
         await handler(op)
 
     async def write(
@@ -337,6 +339,16 @@ class Writer:
         (connection lost, 5xx) leaves the step as ``intent`` — the write may have landed.
         """
         step["state"] = "intent"
+        step.setdefault("op", str(self._op.get("op", "")))
+        step.setdefault(
+            "label",
+            str(
+                self._op.get("rule_name")
+                or self._op.get("object_name")
+                or self._op.get("name")
+                or ""
+            ),
+        )
         self.undo.append(step)
         self.save()
         try:
@@ -729,6 +741,20 @@ class Writer:
                         op, self._read_back(self.rule_path(op, op["rule"]), _what(op))
                     )
         return after
+
+    def record_after(self) -> None:
+        """Keep, per journal step, what the FMC holds after the batch (read back by the
+        verification): the history shows before / after, and a revert checks nothing changed
+        since."""
+        for step in self.undo:
+            if step.get("state") != "applied":
+                continue
+            if step.get("undo") == "recreate":
+                step["after"] = None  # deleted by the batch
+                continue
+            item = self.seen.get(str(step.get("path") or ""))
+            step["after"] = self._clean(item, keep_id=True) if item is not None else None
+        self.save()
 
     async def rollback(self, rounds: int = 1, wait: float = 0.0) -> list[str]:
         """Undo the journal in reverse order; returns the steps that could not be undone.
@@ -1125,6 +1151,7 @@ async def execute_batch(
                 await writer.verify()
                 progress.phase("proof_after", 63, 66)
                 _prove_written(sessions, plan, writer)
+                writer.record_after()
                 progress.phase("deploying", 66, 98)
                 task_id = await deploy(
                     fmc,

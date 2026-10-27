@@ -90,6 +90,7 @@ const NAV: NavGroup[] = [
           { to: '/naming', label: 'nav.naming', permission: 'policy:read' },
           { to: '/inspection', label: 'nav.inspection', permission: 'policy:read' },
           { to: '/deploy', label: 'nav.deploy', permission: 'policy:read' },
+          { to: '/history', label: 'nav.history', permission: 'policy:read' },
         ],
       },
       {

@@ -763,7 +763,7 @@ export interface DashboardData {
 // ---- phase 5: changesets and batches (mirrors app/api/changesets.py) ----
 
 export type ChangesetStatus = 'open' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
-export type BatchStatus = 'pending' | 'approved' | 'running' | 'deployed' | 'failed' | 'rolled_back' | 'cancelled';
+export type BatchStatus = 'pending' | 'approved' | 'running' | 'deployed' | 'failed' | 'rolled_back' | 'cancelled' | 'reverted';
 
 export interface BatchResult {
   op: string;
@@ -920,7 +920,7 @@ export interface AttackSurface {
 
 /* ---- background jobs ---- */
 
-export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify' | 'proof';
+export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify' | 'proof' | 'revert';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export interface JobRun {
