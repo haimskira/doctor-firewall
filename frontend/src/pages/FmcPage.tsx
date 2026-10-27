@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SyntheticEvent } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { FmcConnection, FmcTestResult } from '../api/types';
@@ -146,20 +147,23 @@ export function FmcPage() {
       {connections.length > 0 && (
         <section className="card">
           <table>
-            <thead>
-              <tr>
-                <th>{t('fmc.name')}</th>
-                <th>{t('fmc.host')}</th>
-                <th>{t('fmc.username')}</th>
-                <th>{t('fmc.version')}</th>
-                <th>{t('fmc.domain')}</th>
-                <th>{t('fmc.lastTest')}</th>
-                <th>{t('fmc.sync')}</th>
-                <th>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {connections.map((conn) => (
+            <SortedTable
+              rows={connections}
+              columns={{ name: (conn) => conn.name, host: (conn) => conn.host, user: (conn) => conn.username, version: (conn) => conn.server_version, domain: (conn) => conn.domain_uuid, tested: (conn) => conn.last_test_at, sync: (conn) => conn.sync_interval_minutes }}
+              head={(th) => (
+                <tr>
+                  {th('name', t('fmc.name'))}
+                  {th('host', t('fmc.host'))}
+                  {th('user', t('fmc.username'))}
+                  {th('version', t('fmc.version'))}
+                  {th('domain', t('fmc.domain'))}
+                  {th('tested', t('fmc.lastTest'), true)}
+                  {th('sync', t('fmc.sync'), true)}
+                  <th>t('common.actions')</th>
+                </tr>
+              )}
+            >
+              {(conn) => (
                 <tr key={conn.id}>
                   <td>{conn.name}</td>
                   <td>
@@ -204,8 +208,8 @@ export function FmcPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}

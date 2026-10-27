@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SyntheticEvent } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import { ALL_ROLES, AUTH_PROVIDERS } from '../api/types';
@@ -117,19 +118,22 @@ export function UsersPage() {
 
       <section className="card">
         <table>
-          <thead>
-            <tr>
-              <th>{t('users.username')}</th>
-              <th>{t('users.displayName')}</th>
-              <th>{t('users.provider')}</th>
-              <th>{t('users.roles')}</th>
-              <th>{t('users.active')}</th>
-              <th>{t('users.lastLogin')}</th>
-              <th>{t('common.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
+          <SortedTable
+            rows={users}
+            columns={{ username: (user) => user.username, display: (user) => user.display_name, provider: (user) => user.auth_provider, roles: (user) => user.roles.join(', '), active: (user) => user.is_active, login: (user) => user.last_login_at }}
+            head={(th) => (
+              <tr>
+                {th('username', t('users.username'))}
+                {th('display', t('users.displayName'))}
+                {th('provider', t('users.provider'))}
+                {th('roles', t('users.roles'))}
+                {th('active', t('users.active'))}
+                {th('login', t('users.lastLogin'), true)}
+                <th>t('common.actions')</th>
+              </tr>
+            )}
+          >
+            {(user) => (
               <tr key={user.id} className={user.is_active ? '' : 'inactive'}>
                 <td>
                   <Ltr>{user.username}</Ltr>
@@ -174,8 +178,8 @@ export function UsersPage() {
                   )}
                 </td>
               </tr>
-            ))}
-          </tbody>
+            )}
+          </SortedTable>
         </table>
       </section>
 

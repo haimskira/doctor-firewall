@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
 from app.api.schemas import StrictModel
+from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
@@ -230,16 +231,31 @@ def list_recommendations(
     q: Annotated[str | None, Query(max_length=128)] = None,
     offset: Annotated[int, Query(ge=0, le=10_000_000)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    sort: Annotated[
+        Literal["priority", "kind", "title", "deploy_cost", "ace_delta", "score_delta"] | None,
+        Query(),
+    ] = None,
+    order: SortOrder = None,
 ) -> RecommendationsPage:
     """The recommendation queue: highest priority first, with impact and deploy cost."""
     _snapshot(db, snapshot_id)
     query = _filtered(snapshot_id, kind, policy, state, q, rule)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows = db.execute(
-        query.order_by(Recommendation.priority.desc(), Recommendation.kind, Recommendation.id)
-        .offset(offset)
-        .limit(limit)
-    ).all()
+    columns: SortColumns = {
+        "priority": Recommendation.priority,
+        "kind": Recommendation.kind,
+        "title": Recommendation.title,
+        "deploy_cost": Recommendation.deploy_cost,
+        "ace_delta": Recommendation.ace_delta,
+        "score_delta": Recommendation.score_delta,
+    }
+    terms = order_by(
+        sort,
+        order,
+        columns,
+        [Recommendation.priority.desc(), Recommendation.kind, Recommendation.id],
+    )
+    rows = db.execute(query.order_by(*terms).offset(offset).limit(limit)).all()
     summary = {
         k: KindSummary(count=c, deploy_cost=cost or 0, ace_delta=ace or 0)
         for k, c, cost, ace in db.execute(

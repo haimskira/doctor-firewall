@@ -796,3 +796,18 @@ svg.flow { display: block; font-family: inherit; }
   .explorer { grid-template-columns: 1fr; }
   .explorer > .card { height: auto; max-height: 70vh; }
 }
+
+/* ---- sortable table headers ---- */
+th.sortable { padding: 0; }
+button.th-sort {
+  display: inline-flex; align-items: center; gap: 0.3rem; inline-size: 100%;
+  padding-block: 0.45rem; padding-inline: 0.5rem;
+  background: none; border: none; color: inherit; font: inherit;
+  text-align: start; cursor: pointer; border-radius: 0; min-height: 0; font-weight: 650; font-size: 0.85rem;
+}
+button.th-sort:hover:not(:disabled) { border: none; color: inherit; background: color-mix(in srgb, var(--primary) 8%, transparent); }
+button.th-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+th.num button.th-sort { justify-content: flex-end; }
+.sort-icon { display: inline-flex; color: var(--muted); opacity: 0.55; font-size: 0.85em; }
+.sort-icon.active { color: var(--primary); opacity: 1; }
+th.sortable:hover .sort-icon { opacity: 1; }

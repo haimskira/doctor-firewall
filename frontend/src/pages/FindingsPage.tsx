@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { FindingsPage as Page, Severity } from '../api/types';
 import { Alert } from '../components/common';
 import { FindingDetails, useFindingHeadline } from '../components/findings';
+import { useServerSort } from '../components/sort';
 import { SeverityBadge, SnapshotPicker } from '../components/inventory';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
@@ -14,6 +15,8 @@ const KINDS = [
   'inline_literal', 'unused_object',
 ] as const;
 const SEVERITIES: Severity[] = ['high', 'medium', 'low', 'info'];
+const SORTS = ['severity', 'kind', 'title'] as const;
+const SORT_OPTIONS = ['severity:desc', 'severity:asc', 'kind:asc', 'kind:desc', 'title:asc', 'title:desc'] as const;
 
 export function FindingsPage() {
   const { t, tError } = useI18n();
@@ -22,9 +25,11 @@ export function FindingsPage() {
   const [severity, setSeverity] = useQueryParam('severity');
   const [open, setOpen] = useState<number | null>(null);
   const headline = useFindingHeadline();
+  const sort = useServerSort(SORTS);
   const params = new URLSearchParams({ limit: '500' });
   if (kind !== null) params.set('kind', kind);
   if (severity !== null) params.set('severity', severity);
+  for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
   const page = useApi<Page>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/findings?${params.toString()}`);
   const error = snapError ?? page.error;
 
@@ -63,6 +68,23 @@ export function FindingsPage() {
               </button>
             ))}
           </div>
+          <div className="row">
+          <label className="inline-field">
+            {t('sort.by')}
+            <select
+              value={sort.state === null ? 'severity:desc' : `${sort.state.key}:${sort.state.dir}`}
+              onChange={(e) => {
+                const [key = 'severity', dir] = e.target.value.split(':');
+                sort.onSort({ key, dir: dir === 'asc' ? 'asc' : 'desc' });
+              }}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o} value={o}>
+                  {t(`findings.sort.${o.replace(':', '.')}` as MessageKey)}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="inline-field">
             {t('findings.severity')}
             <select
@@ -79,6 +101,7 @@ export function FindingsPage() {
               ))}
             </select>
           </label>
+          </div>
           <section className="card">
             <p className="muted">{t('common.total', { count: page.data.total })}</p>
             <ul className="findings">

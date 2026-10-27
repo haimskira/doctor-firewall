@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
+import { SortedTable } from '../components/sort';
 
 import type { ObjectDetail, ObjectRelations } from '../api/types';
 import { Alert, Ltr } from '../components/common';
@@ -107,17 +108,20 @@ export function ObjectDetailPage() {
               <p className="muted">{t('object.notUsed')}</p>
             ) : (
               <table>
-                <thead>
-                  <tr>
-                    <th>{t('rules.policy')}</th>
-                    <th>{t('rules.col.index')}</th>
-                    <th>{t('rules.col.name')}</th>
-                    <th>{t('objects.col.kind')}</th>
-                    <th>{t('object.via')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.used_by.map((u) => (
+                <SortedTable
+                  rows={d.used_by}
+                  columns={{ policy: (u) => u.policy_name, index: (u) => u.rule_index, name: (u) => u.rule_name, field: (u) => u.field, via: (u) => u.via_name }}
+                  head={(th) => (
+                    <tr>
+                      {th('policy', t('rules.policy'))}
+                      {th('index', t('rules.col.index'), true)}
+                      {th('name', t('rules.col.name'))}
+                      {th('field', t('objects.col.kind'))}
+                      {th('via', t('object.via'))}
+                    </tr>
+                  )}
+                >
+                  {(u) => (
                     <tr key={`${u.policy_fmc_id}-${u.rule_id}-${u.field}-${u.via_id}`}>
                       <td>
                         {t(`kind.${u.policy_kind}`)}
@@ -136,8 +140,8 @@ export function ObjectDetailPage() {
                       <td>{t(`field.${u.field}`)}</td>
                       <td>{u.via_id === d.object.id ? t('object.direct') : <Ltr>{u.via_name}</Ltr>}</td>
                     </tr>
-                  ))}
-                </tbody>
+                  )}
+                </SortedTable>
               </table>
             )}
           </section>

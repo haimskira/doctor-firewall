@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { Cluster, ClusterLimits, ClusterNetwork, RouteLookup } from '../api/types';
@@ -33,20 +34,23 @@ export function ClustersPage() {
       {clusters.data !== null && snapshotId !== null && (
         <section className="card">
           <table>
-            <thead>
-              <tr>
-                <th>{t('rules.cluster')}</th>
-                <th>{t('clusters.members')}</th>
-                <th>{t('clusters.version')}</th>
-                <th>{t('clusters.model')}</th>
-                <th>{t('clusters.policy')}</th>
-                <th>{t('clusters.rules')}</th>
-                <th>{t('limits.ace')}</th>
-                <th>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clusters.data.map((c) => (
+            <SortedTable
+              rows={clusters.data}
+              columns={{ name: (c) => c.name, members: (c) => c.members.length, version: (c) => c.sw_version, model: (c) => c.model, policy: (c) => c.policy_name, rules: (c) => c.rule_count, ace: (c) => c.ace_total === null ? null : c.ace_total / c.ace_limit }}
+              head={(th) => (
+                <tr>
+                  {th('name', t('rules.cluster'))}
+                  {th('members', t('clusters.members'), true)}
+                  {th('version', t('clusters.version'))}
+                  {th('model', t('clusters.model'))}
+                  {th('policy', t('clusters.policy'))}
+                  {th('rules', t('clusters.rules'), true)}
+                  {th('ace', t('limits.ace'), true)}
+                  <th>t('common.actions')</th>
+                </tr>
+              )}
+            >
+              {(c) => (
                 <tr key={c.fmc_id} className={c.fmc_id === clusterId ? 'selected' : ''}>
                   <td>
                     <Ltr>{c.name}</Ltr>
@@ -97,8 +101,8 @@ export function ClustersPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}
@@ -110,17 +114,20 @@ export function ClustersPage() {
           <section className="card">
             <h2>{t('clusters.interfaces')}</h2>
             <table>
-              <thead>
-                <tr>
-                  <th>{t('objects.col.name')}</th>
-                  <th>ifname</th>
-                  <th>{t('clusters.zone')}</th>
-                  <th>{t('clusters.address')}</th>
-                  <th>VLAN</th>
-                </tr>
-              </thead>
-              <tbody>
-                {network.data.interfaces.map((i) => (
+              <SortedTable
+                rows={network.data.interfaces}
+                columns={{ name: (i) => i.name, ifname: (i) => i.ifname, zone: (i) => i.zone, address: (i) => i.ipv4, vlan: (i) => i.vlan }}
+                head={(th) => (
+                  <tr>
+                    {th('name', t('objects.col.name'))}
+                    {th('ifname', 'ifname')}
+                    {th('zone', t('clusters.zone'))}
+                    {th('address', t('clusters.address'))}
+                    {th('vlan', 'VLAN', true)}
+                  </tr>
+                )}
+              >
+                {(i) => (
                   <tr key={`${i.kind}-${i.name}`} className={i.enabled ? '' : 'inactive'}>
                     <td>
                       <Ltr>{i.name}</Ltr>
@@ -134,8 +141,8 @@ export function ClustersPage() {
                     </td>
                     <td>{i.vlan ?? ''}</td>
                   </tr>
-                ))}
-              </tbody>
+                )}
+              </SortedTable>
             </table>
           </section>
           <RouteLookupCard snapshotId={snapshotId} clusterId={clusterId} network={network.data} />
@@ -143,18 +150,21 @@ export function ClustersPage() {
             <h2>{t('clusters.routes')}</h2>
             <RuntimeNote network={network.data} />
             <table>
-              <thead>
-                <tr>
-                  <th>{t('objects.col.kind')}</th>
-                  <th>{t('rules.col.dstNet')}</th>
-                  <th>ifname</th>
-                  <th>{t('clusters.gateway')}</th>
-                  <th>{t('clusters.distance')}</th>
-                  <th>metric</th>
-                </tr>
-              </thead>
-              <tbody>
-                {network.data.routes.map((r, i) => (
+              <SortedTable
+                rows={network.data.routes}
+                columns={{ kind: (r) => r.kind, network: (r) => r.network, ifname: (r) => r.interface, gateway: (r) => r.gateway, distance: (r) => r.distance, metric: (r) => r.metric }}
+                head={(th) => (
+                  <tr>
+                    {th('kind', t('objects.col.kind'))}
+                    {th('network', t('rules.col.dstNet'))}
+                    {th('ifname', 'ifname')}
+                    {th('gateway', t('clusters.gateway'))}
+                    {th('distance', t('clusters.distance'), true)}
+                    {th('metric', 'metric', true)}
+                  </tr>
+                )}
+              >
+                {(r, i) => (
                   <tr key={`${r.kind}-${String(i)}`}>
                     <td>
                       {t(`clusters.routeKind.${r.kind}`)}
@@ -173,8 +183,8 @@ export function ClustersPage() {
                     <td>{r.distance ?? ''}</td>
                     <td>{r.metric}</td>
                   </tr>
-                ))}
-              </tbody>
+                )}
+              </SortedTable>
             </table>
           </section>
           {network.data.bgp.map((b) => (

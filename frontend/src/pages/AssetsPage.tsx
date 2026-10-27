@@ -1,6 +1,7 @@
 import { HardDriveIcon, PlusIcon, TreeStructureIcon, UserIcon, UsersThreeIcon } from '@phosphor-icons/react';
 import { useState } from 'react';
 import type { ChangeEvent, SyntheticEvent } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { ApiError, api, errorCode } from '../api/client';
 import { ASSET_KINDS, TIERS } from '../api/types';
@@ -267,17 +268,20 @@ export function AssetsPage() {
             )}
           </div>
           <table>
-            <thead>
-              <tr>
-                <th>{t('assets.network')}</th>
-                <th>{t('assets.system')}</th>
-                <th>{t('assets.tier')}</th>
-                <th>{t('assets.source')}</th>
-                {writable && <th>{t('common.actions')}</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {unassigned.map((a) => (
+            <SortedTable
+              rows={unassigned}
+              columns={{ network: (a) => a.network, system: (a) => a.system, tier: (a) => TIERS.indexOf(a.tier), source: (a) => a.source }}
+              head={(th) => (
+                <tr>
+                  {th('network', t('assets.network'))}
+                  {th('system', t('assets.system'))}
+                  {th('tier', t('assets.tier'))}
+                  {th('source', t('assets.source'))}
+                  {writable && <th>{t('common.actions')}</th>}
+                </tr>
+              )}
+            >
+              {(a) => (
                 <tr key={a.id} className={a.confirmed ? '' : 'inactive'}>
                   <td>
                     <Ltr>{a.network}</Ltr>
@@ -343,8 +347,8 @@ export function AssetsPage() {
                     </td>
                   )}
                 </tr>
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}
@@ -565,18 +569,21 @@ function GroupDetail({
         <p className="muted small">{t('assets.noComponents')}</p>
       ) : (
         <table>
-          <thead>
-            <tr>
-              <th>{t('assets.componentName')}</th>
-              <th>{t('assets.network')}</th>
-              <th>{t('assets.role')}</th>
-              <th>{t('assets.ports')}</th>
-              <th>{t('assets.notes')}</th>
-              {writable && <th>{t('common.actions')}</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {group.components.map((c) => (
+          <SortedTable
+            rows={group.components}
+            columns={{ name: (c) => c.system, network: (c) => c.network, role: (c) => c.system_type, ports: (c) => c.ports, notes: (c) => c.notes }}
+            head={(th) => (
+              <tr>
+                {th('name', t('assets.componentName'))}
+                {th('network', t('assets.network'))}
+                {th('role', t('assets.role'))}
+                {th('ports', t('assets.ports'))}
+                {th('notes', t('assets.notes'))}
+                {writable && <th>{t('common.actions')}</th>}
+              </tr>
+            )}
+          >
+            {(c) => (
               <tr key={c.id}>
                 <td>
                   <bdi>{c.system}</bdi>
@@ -629,8 +636,8 @@ function GroupDetail({
                   </td>
                 )}
               </tr>
-            ))}
-          </tbody>
+            )}
+          </SortedTable>
         </table>
       )}
 

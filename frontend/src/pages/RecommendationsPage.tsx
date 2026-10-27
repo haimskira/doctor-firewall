@@ -9,11 +9,14 @@ import { useAuth } from '../auth/AuthProvider';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import { RecommendationPreviewView, signed, tagGroup } from '../components/recommendations';
+import { SortTh, useServerSort } from '../components/sort';
+import type { SortState } from '../components/sort';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import { useOpLabel } from './DeployPage';
 
 const PAGE_SIZE = 100;
+const SORTS = ['priority', 'title', 'ace_delta', 'deploy_cost'] as const;
 const STATES = ['open', 'accepted', 'dismissed'] as const;
 
 /**
@@ -29,6 +32,11 @@ export function RecommendationsPage() {
   const [rule] = useQueryParam('rule');
   const [recParam, setRecParam] = useQueryParam('rec');
   const [offset, setOffset] = useState(0);
+  const sort = useServerSort(SORTS);
+  const onSort = (next: SortState) => {
+    sort.onSort(next);
+    setOffset(0);
+  };
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -36,6 +44,7 @@ export function RecommendationsPage() {
   if (kind !== null) params.set('kind', kind);
   if (state !== null) params.set('state', state);
   if (rule !== null) params.set('rule', rule);
+  for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
   const base = snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/recommendations`;
   const page = useApi<Page>(base === null ? null : `${base}?${params.toString()}`);
   const selectedId = recParam !== null && /^\d+$/.test(recParam) ? Number(recParam) : null;
@@ -148,10 +157,10 @@ export function RecommendationsPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th>{t('rec.col.priority')}</th>
-                      <th>{t('rec.col.title')}</th>
-                      <th>{t('rec.col.impact')}</th>
-                      <th>{t('rec.col.cost')}</th>
+                      <SortTh label={t('rec.col.priority')} sortKey="priority" state={sort.state} onSort={onSort} numeric />
+                      <SortTh label={t('rec.col.title')} sortKey="title" state={sort.state} onSort={onSort} />
+                      <SortTh label={t('rec.col.impact')} sortKey="ace_delta" state={sort.state} onSort={onSort} numeric />
+                      <SortTh label={t('rec.col.cost')} sortKey="deploy_cost" state={sort.state} onSort={onSort} numeric />
                       <th>{t('rec.col.state')}</th>
                     </tr>
                   </thead>

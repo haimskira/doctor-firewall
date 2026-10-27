@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { Snapshot } from '../api/types';
@@ -66,19 +67,22 @@ export function SnapshotsPage() {
           <p className="muted">{t('common.none')}</p>
         ) : (
           <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>FMC</th>
-                <th>{t('audit.outcome')}</th>
-                <th>{t('snap.created')}</th>
-                <th>{t('snap.finished')}</th>
-                <th>{t('snap.by')}</th>
-                <th>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(snapshots.data ?? []).map((s) => (
+            <SortedTable
+              rows={(snapshots.data ?? [])}
+              columns={{ id: (s) => s.id, fmc: (s) => s.connection_name, status: (s) => s.status, created: (s) => s.created_at, finished: (s) => s.finished_at, by: (s) => s.requested_by }}
+              head={(th) => (
+                <tr>
+                  {th('id', '#', true)}
+                  {th('fmc', 'FMC')}
+                  {th('status', t('audit.outcome'))}
+                  {th('created', t('snap.created'), true)}
+                  {th('finished', t('snap.finished'), true)}
+                  {th('by', t('snap.by'))}
+                  <th>t('common.actions')</th>
+                </tr>
+              )}
+            >
+              {(s) => (
                 <tr key={s.id}>
                   <td>{s.id}</td>
                   <td>
@@ -124,8 +128,8 @@ export function SnapshotsPage() {
                     )}
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         )}
       </section>

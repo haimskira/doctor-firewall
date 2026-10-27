@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { AuditRecord, AuditVerify } from '../api/types';
@@ -63,18 +64,21 @@ export function AuditPage() {
       )}
       <section className="card">
         <table>
-          <thead>
-            <tr>
-              <th>{t('audit.time')}</th>
-              <th>{t('audit.actor')}</th>
-              <th>{t('audit.action')}</th>
-              <th>{t('audit.outcome')}</th>
-              <th>{t('audit.target')}</th>
-              <th>{t('audit.source')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
+          <SortedTable
+            rows={rows}
+            columns={{ ts: (row) => row.ts, actor: (row) => row.actor, action: (row) => row.action, outcome: (row) => row.outcome, target: (row) => row.target, source: (row) => row.source_ip }}
+            head={(th) => (
+              <tr>
+                {th('ts', t('audit.time'), true)}
+                {th('actor', t('audit.actor'))}
+                {th('action', t('audit.action'))}
+                {th('outcome', t('audit.outcome'))}
+                {th('target', t('audit.target'))}
+                {th('source', t('audit.source'))}
+              </tr>
+            )}
+          >
+            {(row) => (
               <tr key={row.id} className={`outcome-${row.outcome}`}>
                 <td>
                   <DateTime value={row.ts} />
@@ -93,8 +97,8 @@ export function AuditPage() {
                   <Ltr>{row.source_ip ?? ''}</Ltr>
                 </td>
               </tr>
-            ))}
-          </tbody>
+            )}
+          </SortedTable>
         </table>
         <div className="row">
           <button

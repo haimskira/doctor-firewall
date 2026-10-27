@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { BatchResult, Changeset, ChangesetBatch, ChangesetDetail, PlanOp } from '../api/types';
@@ -57,20 +58,23 @@ export function DeployPage() {
       {list.data !== null && list.data.length > 0 && (
         <section className="card">
           <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>{t('dep.col.title')}</th>
-                <th>{t('dep.col.ticket')}</th>
-                <th>{t('dep.col.status')}</th>
-                <th>{t('dep.col.ops')}</th>
-                <th>{t('dep.col.batches')}</th>
-                <th>{t('dep.col.author')}</th>
-                <th>{t('dep.col.created')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.data.map((cs) => (
+            <SortedTable
+              rows={list.data}
+              columns={{ id: (cs) => cs.id, title: (cs) => cs.title, ticket: (cs) => cs.ticket_id, status: (cs) => cs.status, ops: (cs) => cs.op_count, batches: (cs) => cs.batches.length, author: (cs) => cs.created_by, created: (cs) => cs.created_at }}
+              head={(th) => (
+                <tr>
+                  {th('id', '#', true)}
+                  {th('title', t('dep.col.title'))}
+                  {th('ticket', t('dep.col.ticket'))}
+                  {th('status', t('dep.col.status'))}
+                  {th('ops', t('dep.col.ops'), true)}
+                  {th('batches', t('dep.col.batches'), true)}
+                  {th('author', t('dep.col.author'))}
+                  {th('created', t('dep.col.created'), true)}
+                </tr>
+              )}
+            >
+              {(cs) => (
                 <tr key={cs.id} className={cs.id === selected ? 'selected' : ''}>
                   <td>{cs.id}</td>
                   <td>
@@ -102,8 +106,8 @@ export function DeployPage() {
                     <DateTime value={cs.created_at} />
                   </td>
                 </tr>
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}

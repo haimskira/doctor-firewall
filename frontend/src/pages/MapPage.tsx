@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { SortedTable } from '../components/sort';
 
 import type { Cluster, ConnectivityMap, MapEdge, MapNode, MapRisk, MapView } from '../api/types';
 import { Alert, Ltr } from '../components/common';
@@ -15,6 +16,7 @@ import { useI18n } from '../i18n/I18nProvider';
 
 const VIEWS: readonly MapView[] = ['assets', 'system', 'users'];
 const RISKS: readonly MapRisk[] = ['red', 'yellow', 'green'];
+const RISK_RANK: Record<MapRisk, number> = { green: 0, yellow: 1, red: 2 };
 const LIST_LIMIT = 200;
 type Mode = 'flows' | 'graph';
 
@@ -346,18 +348,22 @@ export function MapPage() {
             <section className="card">
               <h2>{t('map.table')}</h2>
               <table>
-                <thead>
-                  <tr>
-                    <th>{t('map.col.from')}</th>
-                    <th>{t('map.col.to')}</th>
-                    <th>{t('map.col.risk')}</th>
-                    <th>{t('map.services')}</th>
-                    <th>{t('map.col.rules')}</th>
-                    <th>{t('map.hits')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.edges.slice(0, LIST_LIMIT).map((e) => (
+                <SortedTable
+                  rows={data.edges}
+                  columns={{ from: (e) => nodeLabel(e.src), to: (e) => nodeLabel(e.dst), risk: (e) => RISK_RANK[e.risk], services: (e) => e.services.join(', '), rules: (e) => e.rule_count, hits: (e) => e.hits }}
+                  limit={LIST_LIMIT}
+                  head={(th) => (
+                    <tr>
+                      {th('from', t('map.col.from'))}
+                      {th('to', t('map.col.to'))}
+                      {th('risk', t('map.col.risk'), true)}
+                      {th('services', t('map.services'))}
+                      {th('rules', t('map.col.rules'), true)}
+                      {th('hits', t('map.hits'), true)}
+                    </tr>
+                  )}
+                >
+                  {(e) => (
                     <tr key={e.id} className={selected?.id === e.id ? 'selected' : ''}>
                       <td>
                         <button
@@ -383,8 +389,8 @@ export function MapPage() {
                       <td>{e.rule_count}</td>
                       <td>{e.hits.toLocaleString()}</td>
                     </tr>
-                  ))}
-                </tbody>
+                  )}
+                </SortedTable>
               </table>
             </section>
           )}

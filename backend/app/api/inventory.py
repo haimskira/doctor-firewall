@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from sqlalchemy import Select, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.analysis import routing
+from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
@@ -473,6 +474,8 @@ def worst_rules(
     _: ReaderDep,
     policy_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    sort: Annotated[Literal["score", "ace", "index", "name", "policy"] | None, Query()] = None,
+    order: SortOrder = None,
 ) -> list[ScoredRule]:
     """The optimisation queue: lowest-scoring permit rules first, with their reasons."""
     _snapshot(db, snapshot_id)
@@ -486,7 +489,15 @@ def worst_rules(
     )
     if policy_id:
         query = query.where(Rule.policy_fmc_id == policy_id)
-    rows = db.execute(query.order_by(RuleScore.score, Rule.rule_index).limit(limit)).all()
+    columns: SortColumns = {
+        "score": RuleScore.score,
+        "ace": RuleScore.ace_count,
+        "index": Rule.rule_index,
+        "name": Rule.name,
+        "policy": Policy.name,
+    }
+    terms = order_by(sort, order, columns, [RuleScore.score, Rule.rule_index, Rule.id])
+    rows = db.execute(query.order_by(*terms).limit(limit)).all()
     return [
         ScoredRule(
             policy_fmc_id=rule.policy_fmc_id,
@@ -769,6 +780,10 @@ def list_objects(
     q: SearchQuery = None,
     offset: Offset = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    sort: Annotated[
+        Literal["name", "kind", "value", "rule_refs", "member_of"] | None, Query()
+    ] = None,
+    order: SortOrder = None,
 ) -> ObjectsPage:
     _snapshot(db, snapshot_id)
     query = _object_rows(snapshot_id)
@@ -779,7 +794,15 @@ def list_objects(
             _search(FwObject.name, q) | _search(func.coalesce(FwObject.value, ""), q)
         )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows = db.execute(query.order_by(FwObject.name, FwObject.fmc_id).offset(offset).limit(limit))
+    columns: SortColumns = {
+        "name": FwObject.name,
+        "kind": FwObject.kind,
+        "value": FwObject.value,
+        "rule_refs": query.selected_columns["rule_refs"],
+        "member_of": query.selected_columns["member_of"],
+    }
+    terms = order_by(sort, order, columns, [FwObject.name, FwObject.fmc_id])
+    rows = db.execute(query.order_by(*terms).offset(offset).limit(limit))
     return ObjectsPage(
         total=total, offset=offset, rows=[_object_out(o, rr, mo) for o, rr, mo in rows]
     )
@@ -913,6 +936,8 @@ def list_findings(
     policy_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None,
     offset: Offset = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    sort: Annotated[Literal["severity", "kind", "title"] | None, Query()] = None,
+    order: SortOrder = None,
 ) -> FindingsPage:
     _snapshot(db, snapshot_id)
     query = select(Finding).where(Finding.snapshot_id == snapshot_id)
@@ -933,9 +958,17 @@ def list_findings(
     severity_order = func.array_position(
         literal(["high", "medium", "low", "info"]), Finding.severity
     )
-    rows = db.scalars(
-        query.order_by(severity_order, Finding.kind, Finding.id).offset(offset).limit(limit)
+    # "high" first is rank 1: a descending severity sort puts the highest first.
+    severity_rank = func.array_position(
+        literal(["info", "low", "medium", "high"]), Finding.severity
     )
+    columns: SortColumns = {
+        "severity": severity_rank,
+        "kind": Finding.kind,
+        "title": Finding.title,
+    }
+    terms = order_by(sort, order, columns, [severity_order, Finding.kind, Finding.id])
+    rows = db.scalars(query.order_by(*terms).offset(offset).limit(limit))
     return FindingsPage(
         total=total,
         offset=offset,

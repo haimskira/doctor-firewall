@@ -293,7 +293,8 @@ describe('Flow view', () => {
     if (band === null) return;
     await userEvent.click(band);
     expect(await screen.findByText('TEMP_DEV_TO_DB')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Hits' }));
+    const by = screen.getByRole('group', { name: 'Width by' });
+    await userEvent.click(within(by).getByRole('button', { name: 'Hits' }));
     expect(document.querySelector('path.flow-band.risk-yellow')).toBeNull(); // the yellow rule has no hits
   });
 });

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { SortedTable } from '../components/sort';
 
 import { RULE_POLICY_KINDS } from '../api/types';
 import type { PolicyInfo, PolicyKind } from '../api/types';
@@ -34,16 +35,19 @@ export function PoliciesPage() {
           <section key={kind} className="card">
             <h2>{t(`kind.${kind}`)}</h2>
             <table>
-              <thead>
-                <tr>
-                  <th>{t('objects.col.name')}</th>
-                  <th>{t('policies.governs')}</th>
-                  <th>{t('policies.links')}</th>
-                  <th>{t('clusters.rules')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(byKind.get(kind) ?? []).map((p) => (
+              <SortedTable
+                rows={(byKind.get(kind) ?? [])}
+                columns={{ name: (p) => p.name, governs: (p) => p.clusters.length, links: (p) => p.links.length, rules: (p) => p.rule_count }}
+                head={(th) => (
+                  <tr>
+                    {th('name', t('objects.col.name'))}
+                    {th('governs', t('policies.governs'), true)}
+                    {th('links', t('policies.links'), true)}
+                    {th('rules', t('clusters.rules'), true)}
+                  </tr>
+                )}
+              >
+                {(p) => (
                   <tr key={p.id}>
                     <td>
                       <Ltr>{p.name}</Ltr>
@@ -79,8 +83,8 @@ export function PoliciesPage() {
                       )}
                     </td>
                   </tr>
-                ))}
-              </tbody>
+                )}
+              </SortedTable>
             </table>
           </section>
         ))}

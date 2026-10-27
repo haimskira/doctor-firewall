@@ -5,6 +5,7 @@ import { api, errorCode } from '../api/client';
 import type { FwObject, ObjectsPage as Page } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
+import { SortTh, useServerSort } from '../components/sort';
 import { useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -13,6 +14,7 @@ const KINDS = [
   'sgt', 'dynamic', 'application', 'url', 'url_group', 'geo', 'other',
 ] as const;
 const PAGE = 100;
+const SORTS = ['name', 'kind', 'value', 'rule_refs', 'member_of'] as const;
 
 export function ObjectsPage() {
   const { t, tError } = useI18n();
@@ -23,6 +25,7 @@ export function ObjectsPage() {
   const [rows, setRows] = useState<FwObject[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const sort = useServerSort(SORTS);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -38,6 +41,7 @@ export function ObjectsPage() {
     const params = new URLSearchParams({ offset: String(offset), limit: String(PAGE) });
     if (kind !== null) params.set('kind', kind);
     if (q !== null) params.set('q', q);
+    for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
     return `/api/snapshots/${String(snapshotId)}/objects?${params.toString()}`;
   }
 
@@ -117,11 +121,11 @@ export function ObjectsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>{t('objects.col.name')}</th>
-                  <th>{t('objects.col.kind')}</th>
-                  <th>{t('objects.col.value')}</th>
-                  <th>{t('objects.col.rules')}</th>
-                  <th>{t('objects.col.groups')}</th>
+                  <SortTh label={t('objects.col.name')} sortKey="name" state={sort.state} onSort={sort.onSort} />
+                  <SortTh label={t('objects.col.kind')} sortKey="kind" state={sort.state} onSort={sort.onSort} />
+                  <SortTh label={t('objects.col.value')} sortKey="value" state={sort.state} onSort={sort.onSort} />
+                  <SortTh label={t('objects.col.rules')} sortKey="rule_refs" state={sort.state} onSort={sort.onSort} numeric />
+                  <SortTh label={t('objects.col.groups')} sortKey="member_of" state={sort.state} onSort={sort.onSort} numeric />
                 </tr>
               </thead>
               <tbody>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import { CONVENTION_KINDS } from '../api/types';
@@ -35,18 +36,21 @@ export function NamingPage() {
       {catalog.data !== null && (
         <section className="card">
           <table>
-            <thead>
-              <tr>
-                <th>{t('rec.col.kind')}</th>
-                <th>{t('naming.template')}</th>
-                <th>{t('naming.case')}</th>
-                <th>{t('naming.enabled')}</th>
-                <th>{t('naming.tokens')}</th>
-                <th>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CONVENTION_KINDS.map((kind) => (
+            <SortedTable
+              rows={CONVENTION_KINDS}
+              columns={{ kind: (kind) => kind, template: (kind) => byKind.get(kind)?.template, case: (kind) => byKind.get(kind)?.letter_case, enabled: (kind) => byKind.get(kind)?.enabled }}
+              head={(th) => (
+                <tr>
+                  {th('kind', t('rec.col.kind'))}
+                  {th('template', t('naming.template'))}
+                  {th('case', t('naming.case'))}
+                  {th('enabled', t('naming.enabled'))}
+                  <th>t('naming.tokens')</th>
+                  <th>t('common.actions')</th>
+                </tr>
+              )}
+            >
+              {(kind) => (
                 <ConventionRow
                   key={`${kind}-${byKind.get(kind)?.updated_at ?? 'new'}`}
                   kind={kind}
@@ -59,8 +63,8 @@ export function NamingPage() {
                     catalog.reload();
                   }}
                 />
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}

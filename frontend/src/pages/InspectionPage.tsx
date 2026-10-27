@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
+import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { InspectionCatalog, InspectionPolicyChoice, InspectionProfile } from '../api/types';
@@ -31,17 +32,20 @@ export function InspectionPage() {
       {catalog.data !== null && (
         <section className="card">
           <table>
-            <thead>
-              <tr>
-                <th>{t('inspection.tier')}</th>
-                <th>{t('inspection.doctrine')}</th>
-                <th>{t('inspection.ips')}</th>
-                <th>{t('inspection.file')}</th>
-                <th>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {catalog.data.profiles.map((profile) => (
+            <SortedTable
+              rows={catalog.data.profiles}
+              columns={{ tier: (profile) => profile.tier, ips: (profile) => profile.ips_policy, file: (profile) => profile.file_policy }}
+              head={(th) => (
+                <tr>
+                  {th('tier', t('inspection.tier'))}
+                  <th>t('inspection.doctrine')</th>
+                  {th('ips', t('inspection.ips'))}
+                  {th('file', t('inspection.file'))}
+                  <th>t('common.actions')</th>
+                </tr>
+              )}
+            >
+              {(profile) => (
                 <ProfileRow
                   key={`${profile.tier}-${profile.ips_policy ?? ''}-${profile.file_policy ?? ''}-${String(profile.configured)}`}
                   profile={profile}
@@ -53,8 +57,8 @@ export function InspectionPage() {
                     catalog.reload();
                   }}
                 />
-              ))}
-            </tbody>
+              )}
+            </SortedTable>
           </table>
         </section>
       )}

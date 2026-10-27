@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 
 import { useI18n } from '../i18n/I18nProvider';
 import { Ltr } from './common';
+import { SortedTable } from './sort';
 
 export type BarTone = 'blue' | 'green' | 'pink' | 'orange' | 'red' | 'yellow' | 'gray';
 
@@ -112,16 +113,17 @@ export function BarTable({
   if (rows.length === 0) return <p className="widget-empty">{empty}</p>;
   return (
     <table className="bar-table">
-      <thead>
-        <tr>
-          <th scope="col">{labelHeader}</th>
-          <th scope="col" className="num">
-            {valueHeader}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
+      <SortedTable
+        rows={rows}
+        columns={{ label: (r) => (typeof r.label === 'string' || typeof r.label === 'number' ? r.label : r.key), value: (r) => r.value }}
+        head={(th) => (
+          <tr>
+            {th('label', labelHeader)}
+            {th('value', valueHeader, true, 'num')}
+          </tr>
+        )}
+      >
+        {(r) => (
           <tr key={r.key}>
             <td>{r.to !== undefined ? <Link to={r.to}>{r.label}</Link> : r.label}</td>
             <td className="num">
@@ -135,8 +137,8 @@ export function BarTable({
               </span>
             </td>
           </tr>
-        ))}
-      </tbody>
+        )}
+      </SortedTable>
     </table>
   );
 }
