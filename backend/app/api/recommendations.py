@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
+from app.analysis.roadmap import PHASE_NAMES, kinds_of
 from app.api.schemas import StrictModel
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
@@ -139,6 +140,7 @@ class BulkDecisionIn(StrictModel):
     policy: Annotated[str | None, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None
     rule: Annotated[str | None, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None
     q: Annotated[str | None, Field(max_length=128)] = None
+    phase: Annotated[str | None, Field(pattern="^(" + "|".join(PHASE_NAMES) + ")$")] = None
     note: Annotated[str, Field(max_length=512)] = ""
     dry_run: bool = False
     # Accepting recommendations that change traffic by design needs a deliberate yes.
@@ -288,6 +290,7 @@ def list_recommendations(
     state: Annotated[str | None, Query(pattern="^(open|accepted|dismissed)$")] = None,
     rule: FmcIdQuery = None,
     unstaged: bool = False,
+    phase: Annotated[str | None, Query(pattern="^(" + "|".join(PHASE_NAMES) + ")$")] = None,
     q: Annotated[str | None, Query(max_length=128)] = None,
     offset: Annotated[int, Query(ge=0, le=10_000_000)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -300,6 +303,8 @@ def list_recommendations(
     """The recommendation queue: highest priority first, with impact and deploy cost."""
     snap = _snapshot(db, snapshot_id)
     query = _filtered(snapshot_id, kind, policy, state, q, rule)
+    if phase is not None:  # one step of the clean-up roadmap
+        query = query.where(Recommendation.kind.in_(kinds_of(phase)))
     open_items = (
         select(ChangesetItem.fingerprint, Changeset.id, Changeset.title)
         .join(Changeset, Changeset.id == ChangesetItem.changeset_id)
@@ -487,10 +492,11 @@ def decide_many(
             content={"detail": "snapshot_stale", "changeset": stale["changeset_id"]},
         )
     current_state = "accepted" if body.status == "open" else "open"
+    matching = _filtered(snapshot_id, body.kind, body.policy, current_state, body.q, body.rule)
+    if body.phase is not None:
+        matching = matching.where(Recommendation.kind.in_(kinds_of(body.phase)))
     rows = db.execute(
-        _filtered(snapshot_id, body.kind, body.policy, current_state, body.q, body.rule)
-        .order_by(Recommendation.priority.desc(), Recommendation.id)
-        .limit(BULK_MAX + 1)
+        matching.order_by(Recommendation.priority.desc(), Recommendation.id).limit(BULK_MAX + 1)
     ).all()
     if len(rows) > BULK_MAX:
         return JSONResponse(

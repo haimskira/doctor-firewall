@@ -14,7 +14,7 @@ export function Ltr({ children }: { children: ReactNode }) {
   );
 }
 
-export function Alert({ kind, children }: { kind: 'error' | 'success' | 'info'; children: ReactNode }) {
+export function Alert({ kind, children }: { kind: 'error' | 'success' | 'info' | 'warning'; children: ReactNode }) {
   return (
     <div role={kind === 'error' ? 'alert' : 'status'} className={`alert alert-${kind}`}>
       {children}

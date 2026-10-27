@@ -102,7 +102,10 @@ def test_accept_and_reopen_a_whole_kind(client: TestClient, admin: dict[str, str
     with get_sessionmaker()() as s:
         actions = list(
             s.scalars(
-                select(AuditRecord.action).where(AuditRecord.action.like("recommendation.bulk_%"))
+                select(AuditRecord.action).where(
+                    AuditRecord.action.like("recommendation.bulk_%"),
+                    AuditRecord.actor.in_(("bulk-admin", "bulk-opt")),  # this test's own
+                )
             )
         )
     # Two acceptances (duplicates, acknowledged dead rules); the empty one leaves no record.

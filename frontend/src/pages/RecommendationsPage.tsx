@@ -10,6 +10,8 @@ import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import { RecommendationPreviewView, signed, tagGroup } from '../components/recommendations';
 import { useJobs } from '../components/jobs';
+import { isAhead, isPhase } from '../components/roadmap';
+import type { Roadmap } from '../components/roadmap';
 import { SortTh, useServerSort } from '../components/sort';
 import type { SortState } from '../components/sort';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
@@ -35,6 +37,8 @@ export function RecommendationsPage() {
   const [state, setState] = useQueryParam('state');
   const [rule] = useQueryParam('rule');
   const [recParam, setRecParam] = useQueryParam('rec');
+  const [phaseParam, setPhase] = useQueryParam('phase');
+  const phase = isPhase(phaseParam) ? phaseParam : null;
   const [offset, setOffset] = useState(0);
   const jobs = useJobs();
   const sort = useServerSort(SORTS);
@@ -49,11 +53,13 @@ export function RecommendationsPage() {
   if (kind !== null) params.set('kind', kind);
   if (state !== null) params.set('state', state);
   if (rule !== null) params.set('rule', rule);
+  if (phase !== null) params.set('phase', phase);
   for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
   const base = snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/recommendations`;
   const page = useApi<Page>(base === null ? null : `${base}?${params.toString()}`);
   const selectedId = recParam !== null && /^\d+$/.test(recParam) ? Number(recParam) : null;
   const detail = useApi<RecommendationDetail>(base === null || selectedId === null ? null : `${base}/${String(selectedId)}`);
+  const roadmap = useApi<Roadmap>(base === null ? null : `/api/snapshots/${String(snapshotId)}/roadmap`);
   const error = snapError ?? page.error;
 
   function filter(setter: (v: string | null) => void, value: string | null) {
@@ -103,6 +109,21 @@ export function RecommendationsPage() {
           <Link to="/snapshots">{t('rec.staleAction')}</Link>
         </Alert>
       )}
+      {phase !== null && (
+        <Alert kind="info">
+          {t('road.filtered', { phase: t(`road.phase.${phase}`) })}{' '}
+          <Link to={`/roadmap?snapshot=${String(snapshotId ?? '')}`}>{t('road.back')}</Link>{' '}
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              filter(setPhase, null);
+            }}
+          >
+            {t('road.clear')}
+          </button>
+        </Alert>
+      )}
       {page.data !== null && (
         <>
           <div className="rec-summary" role="group" aria-label={t('rec.col.kind')}>
@@ -150,7 +171,7 @@ export function RecommendationsPage() {
             {can('changeset:write') && snapshotId !== null && page.data.stale == null && (
               <BulkDecision
                 snapshotId={snapshotId}
-                filter={{ kind, rule }}
+                filter={{ kind, rule, phase }}
                 acceptedView={state === 'accepted'}
                 onDone={(message) => {
                   setNotice(message);
@@ -247,6 +268,7 @@ export function RecommendationsPage() {
                   rec={detail.data}
                   snapshotId={snapshotId}
                   canDecide={can('changeset:write')}
+                  currentPhase={roadmap.data?.current ?? null}
                   onDecided={() => {
                     detail.reload();
                     page.reload();
@@ -318,11 +340,13 @@ function Detail({
   rec,
   snapshotId,
   canDecide,
+  currentPhase,
   onDecided,
 }: {
   rec: RecommendationDetail;
   snapshotId: number;
   canDecide: boolean;
+  currentPhase: string | null;
   onDecided: () => void;
 }) {
   const { t, tError } = useI18n();
@@ -378,6 +402,12 @@ function Detail({
           )}
         </div>
       </div>
+      {rec.decision === null && isPhase(currentPhase) && isAhead(rec.kind, currentPhase) && (
+        <Alert kind="warning">
+          {t('road.ahead', { phase: t(`road.phase.${currentPhase}`) })}{' '}
+          <Link to={`/roadmap?snapshot=${String(snapshotId)}`}>{t('road.back')}</Link>
+        </Alert>
+      )}
       {!rec.executable && (
         <div className="alert alert-error" role="note">
           <strong>{t('rec.notExecutable')}</strong>
@@ -502,7 +532,7 @@ function BulkDecision({
   onDone,
 }: {
   snapshotId: number;
-  filter: { kind: string | null; rule: string | null };
+  filter: { kind: string | null; rule: string | null; phase: string | null };
   acceptedView: boolean;
   onDone: (message: string) => void;
 }) {
@@ -512,8 +542,17 @@ function BulkDecision({
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const url = `/api/snapshots/${String(snapshotId)}/recommendations/decisions`;
-  const scope = { ...(filter.kind === null ? {} : { kind: filter.kind }), ...(filter.rule === null ? {} : { rule: filter.rule }) };
-  const what = filter.kind === null ? t('rec.bulk.everything') : t(`rec.kind.${filter.kind}` as MessageKey);
+  const scope = {
+    ...(filter.kind === null ? {} : { kind: filter.kind }),
+    ...(filter.rule === null ? {} : { rule: filter.rule }),
+    ...(filter.phase === null ? {} : { phase: filter.phase }),
+  };
+  const what =
+    filter.kind !== null
+      ? t(`rec.kind.${filter.kind}` as MessageKey)
+      : isPhase(filter.phase)
+        ? t(`road.phase.${filter.phase}`)
+        : t('rec.bulk.everything');
 
   async function ask(status: 'accepted' | 'open') {
     setBusy(true);

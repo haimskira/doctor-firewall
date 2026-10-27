@@ -86,6 +86,7 @@ const NAV: NavGroup[] = [
         children: [
           { to: '/rules', label: 'shell.policyEditor', permission: 'policy:read' },
           { to: '/policies', label: 'shell.securityPolicies', permission: 'policy:read' },
+          { to: '/roadmap', label: 'nav.roadmap', permission: 'policy:read' },
           { to: '/recommendations', label: 'nav.recommendations', permission: 'policy:read' },
           { to: '/naming', label: 'nav.naming', permission: 'policy:read' },
           { to: '/inspection', label: 'nav.inspection', permission: 'policy:read' },

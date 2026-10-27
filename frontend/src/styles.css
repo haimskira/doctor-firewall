@@ -345,6 +345,7 @@ tr.selected td { background: var(--primary-soft); }
 .alert-error { border-color: var(--danger); color: var(--danger); }
 .alert-success { border-color: var(--ok); color: var(--ok); }
 .alert-info { border-color: var(--primary); color: var(--text); }
+.alert-warning { border-color: var(--warn); color: var(--text); }
 
 /* ---- summary dashboard (FMC widgets) ---- */
 .dash { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -991,3 +992,22 @@ a.button-link:hover { background: var(--primary-soft); }
 .watch-alert:hover { filter: brightness(1.1); }
 .watch-state { margin-block-start: 0.3rem; }
 .watch-state ul { margin: 0.2rem 0 0; }
+
+/* clean-up roadmap */
+.road-phases { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.road-phase { border-inline-start: 4px solid var(--border); }
+.road-phase.road-current { border-inline-start-color: var(--primary); }
+.road-phase.road-done { opacity: 0.75; border-inline-start-color: var(--ok); }
+.road-num {
+  display: inline-grid; place-items: center; inline-size: 1.6rem; block-size: 1.6rem; border-radius: 50%;
+  background: var(--primary-soft); color: var(--primary); font-size: 0.9rem; margin-inline-end: 0.4rem;
+}
+.road-prepare li { padding-block: 0.15rem; }
+.road-prepare li.ok > span:first-child { color: var(--ok); font-weight: 700; }
+.road-prepare li.warn > span:first-child { color: var(--warn); font-weight: 700; }
+.road-status-current { background: var(--primary); color: #fff; }
+.road-status-done { color: var(--ok); border-color: var(--ok); }
+.road-counts { margin-block: 0.3rem; }
+.road-open { margin-block-start: 0.5rem; }
+.road-phase .chips-inline { margin-block-start: 0.3rem; }
+.badge.behavior-preserves { border-color: var(--ok); color: var(--ok); }

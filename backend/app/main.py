@@ -19,6 +19,7 @@ from app.api import (
     jobs,
     recommendations,
     relations,
+    roadmap,
     users,
 )
 from app.core.config import get_settings
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
         audit,
         jobs,
         history,
+        roadmap,
     ):
         app.include_router(module.router)
     app.add_middleware(SecurityMiddleware, max_body_bytes=settings.max_request_bytes)
