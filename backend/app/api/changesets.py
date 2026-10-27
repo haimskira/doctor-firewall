@@ -60,6 +60,11 @@ class BatchOut(BaseModel):
     # Undo steps saved for this batch that are not undone yet (a rollback can be resumed).
     undo_pending: int
     rollback_resumable: bool
+    # Traffic proof of the plan (None while it is being computed) and of what the FMC held
+    # after the writes, checked before deploying.
+    proof: dict[str, Any] | None = None
+    proof_after: dict[str, Any] | None = None
+    changes_acknowledged_by: str | None = None
 
 
 class ItemOut(BaseModel):
@@ -134,6 +139,9 @@ def _batch_out(b: Batch) -> BatchOut:
         rollback_resumable=rollback_resumable(
             b, datetime.now(UTC), stale_after_run(get_settings())
         ),
+        proof=b.proof,
+        proof_after=b.proof_after,
+        changes_acknowledged_by=b.changes_acknowledged_by,
     )
 
 
@@ -350,6 +358,7 @@ def create_changeset(
         },
     )
     db.commit()
+    jobs.enqueue_proof(cs.id, who.username)
     return _detail(db, cs)
 
 
@@ -392,11 +401,26 @@ def get_changeset(changeset_id: int, db: DbDep, _: ReaderDep) -> ChangesetDetail
     return _detail(db, cs)
 
 
+class ApproveIn(StrictModel):
+    # The approver has seen the flows a behaviour-changing batch changes.
+    acknowledge_change: bool = False
+
+
 @router.post("/changesets/{changeset_id}/batches/{seq}/approve", response_model=ChangesetOut)
 def approve_batch(
-    changeset_id: int, seq: int, request: Request, db: DbDep, audit: AuditDep, who: ApproverDep
+    changeset_id: int,
+    seq: int,
+    request: Request,
+    db: DbDep,
+    audit: AuditDep,
+    who: ApproverDep,
+    body: ApproveIn | None = None,
 ) -> ChangesetOut:
-    """Approve the next batch. Four eyes: the changeset's author can never approve it."""
+    """Approve the next batch. Four eyes: the changeset's author can never approve it.
+
+    The batch's traffic proof must exist: a batch that preserves traffic is approved only with
+    no flow changed; one that changes traffic by design needs ``acknowledge_change``.
+    """
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -416,6 +440,16 @@ def approve_batch(
     )
     if earlier:
         raise HTTPException(status.HTTP_409_CONFLICT, "previous_batch_not_deployed")
+    proof = target.proof
+    if proof is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "proof_pending")
+    changed = int(proof.get("differences", 0))
+    if proof.get("behavior") != "changes" and changed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "proof_failed")
+    if proof.get("behavior") == "changes" and changed:
+        if body is None or not body.acknowledge_change:
+            raise HTTPException(status.HTTP_409_CONFLICT, "behavior_change_unacknowledged")
+        target.changes_acknowledged_by = who.username
     target.status = "approved"
     target.approved_by = who.username
     target.approved_at = datetime.now(UTC)

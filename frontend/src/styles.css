@@ -912,3 +912,13 @@ th.sortable:hover .sort-icon { opacity: 1; }
 .badge.behavior-changes { border-color: var(--warn); color: var(--warn); margin-inline-start: 0.4rem; }
 .behavior-warning { border: 1px solid var(--warn); border-radius: var(--radius); padding: 0.5rem 0.7rem; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 .behavior-warning p { margin: 0 0 0.3rem; }
+
+/* ---- traffic proof ---- */
+.proof-block { gap: 0.4rem; margin-block: 0.4rem; }
+.proof { margin: 0; padding: 0.45rem 0.7rem; border-radius: var(--radius); border-inline-start: 4px solid var(--border); }
+.proof-ok { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.proof-bad { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.proof-changes { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.proof-pending { border-color: var(--primary); }
+.proof p { margin: 0 0 0.3rem; }
+table.proof-diffs { font-size: 0.85rem; margin-block: 0.3rem; }

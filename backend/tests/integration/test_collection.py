@@ -21,6 +21,7 @@ from app.db.session import get_sessionmaker
 from app.fmc.adapters import v10_1
 from app.fmc.adapters.v10_1 import AdapterError
 from app.fmc.client import ThrottlePolicy
+from app.models.enforce import Changeset
 from app.models.inventory import Rule, Snapshot, SnapshotCheckpoint
 from app.workers import jobs
 from tests.integration.conftest import login, make_user
@@ -367,6 +368,25 @@ def test_retention(
         ids.append(sid)
     remaining = [s["id"] for s in client.get(f"/api/snapshots?connection_id={conn_id}").json()]
     assert remaining == [ids[2], ids[1]]
+
+    # A snapshot a changeset was staged from is the policy before those changes: never deleted.
+    with get_sessionmaker().begin() as session:
+        session.add(
+            Changeset(
+                snapshot_id=ids[1],
+                connection_id=conn_id,
+                title="history",
+                ticket_id="CHG-1",
+                created_by="collector-admin",
+                deploy_limit=100,
+            )
+        )
+    for _ in range(2):
+        sid = _collect(client, admin, conn_id)
+        assert jobs.collect_snapshot(sid)["ok"] is True
+        ids.append(sid)
+    remaining = [s["id"] for s in client.get(f"/api/snapshots?connection_id={conn_id}").json()]
+    assert remaining == [ids[4], ids[3], ids[1]]
 
 
 def test_scheduler_starts_due_collections(client: TestClient, admin: dict[str, str]) -> None:

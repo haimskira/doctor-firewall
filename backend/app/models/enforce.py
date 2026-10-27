@@ -117,3 +117,9 @@ class Batch(Base):
     # Undo journal: each write's undo step, recorded *before* the write (state intent ->
     # applied -> undone). Kept in the database so an interrupted rollback can be resumed.
     journal: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Traffic proof (app.enforce.proof): of the plan, computed when the changeset is staged, and
+    # of what the FMC holds after the writes, checked before deploying. None: not computed yet.
+    proof: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    proof_after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Who acknowledged the traffic changes of a behaviour-changing batch when approving it.
+    changes_acknowledged_by: Mapped[str | None] = mapped_column(String(64))

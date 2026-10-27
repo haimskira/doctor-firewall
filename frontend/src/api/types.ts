@@ -772,6 +772,24 @@ export interface BatchResult {
   detail?: string;
 }
 
+export interface ProofDifference {
+  flow: Record<string, string | number>;
+  before: { verdict: (string | null)[]; rule: string | null };
+  after: { verdict: (string | null)[]; rule: string | null };
+}
+
+export interface TrafficProof {
+  ok: boolean;
+  exhaustive: boolean;
+  flows: number;
+  differences: number;
+  behavior: 'preserves' | 'changes';
+  matches_plan?: boolean;
+  seconds: number;
+  computed_at: string;
+  policies: { id: string; name: string; touched: number; flows: number; exhaustive: boolean; differences: ProofDifference[]; difference_count?: number }[];
+}
+
 export interface ChangesetBatch {
   seq: number;
   status: BatchStatus;
@@ -788,6 +806,10 @@ export interface ChangesetBatch {
   undo_pending: number;
   /** The rollback was interrupted (FMC unreachable) and can be finished. */
   rollback_resumable: boolean;
+  /** Traffic proof of the plan (null while computing) and of what the FMC held before deploying. */
+  proof?: TrafficProof | null;
+  proof_after?: TrafficProof | null;
+  changes_acknowledged_by?: string | null;
 }
 
 export interface ChangesetItem {
@@ -898,7 +920,7 @@ export interface AttackSurface {
 
 /* ---- background jobs ---- */
 
-export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify';
+export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify' | 'proof';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 export interface JobRun {

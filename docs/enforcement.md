@@ -75,6 +75,24 @@ recommendations cannot enter a changeset.
    redeploy the restored configuration, and end `rolled_back` — or `failed` with the steps that
    could not be undone.
 
+### Traffic proof
+
+The system may only improve the policy, never change what production traffic gets by accident.
+Every recommendation is *preserving* (no flow's verdict changes: removing shadowed rules,
+merging duplicates and groups, splits, merges, renames, …) or *changing* by design (removing
+rules without hits, tightening, adding inspection). See [traffic-proof.md](traffic-proof.md).
+
+* **When a changeset is staged** a worker job proves every batch: the rulebase before (snapshot +
+  earlier batches) and after (its plan applied), compared flow by flow. The report — flows
+  checked, exhaustive or sampled, every flow that changes with its verdict before and after —
+  is shown on the batch.
+* **Approval** needs the proof. A preserving batch with any changed flow cannot be approved; a
+  changing one shows exactly which flows change and the approver acknowledges them.
+* **While running**, after the writes are verified and **before deploying**, the same proof runs
+  on what the FMC actually holds (every touched rule and object read back). A preserving batch
+  that would change any flow — or a changing one that differs from its proved plan — is rolled
+  back; nothing reaches the devices.
+
 ### Stale snapshots
 
 Seen in the lab: a changeset was staged from a snapshot after another changeset from the same

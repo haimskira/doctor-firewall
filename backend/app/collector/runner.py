@@ -24,6 +24,7 @@ from app.fmc.adapters import select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import server_version
+from app.models.enforce import Changeset
 from app.models.fmc import FmcConnection
 from app.models.inventory import Snapshot
 
@@ -196,13 +197,20 @@ async def run_collection(
 
 
 def apply_retention(session: Session, connection_id: int, keep: int) -> int:
-    """Delete finished snapshots beyond the newest ``keep`` for a connection."""
+    """Delete finished snapshots beyond the newest ``keep`` for a connection.
+
+    A snapshot a changeset was staged from is never deleted: it is the policy as it was before
+    those changes, kept for history, diffs and rollback.
+    """
+    behind_changes = select(Changeset.snapshot_id).where(Changeset.snapshot_id.is_not(None))
     old_ids = session.scalars(
         select(Snapshot.id)
         .where(Snapshot.connection_id == connection_id, Snapshot.status.in_(("complete", "failed")))
         .order_by(Snapshot.created_at.desc(), Snapshot.id.desc())
         .offset(keep)
     ).all()
+    kept = set(session.scalars(behind_changes))
+    old_ids = [i for i in old_ids if i not in kept]
     if old_ids:
         session.execute(delete(Snapshot).where(Snapshot.id.in_(old_ids)))
     return len(old_ids)

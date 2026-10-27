@@ -103,7 +103,7 @@ The system may only improve the policy, never hurt production traffic.
 - [x] **6a Behaviour class**: every recommendation is *preserves* (no flow's verdict changes) or
       *changes* (less access, more inspection, removing a rule without hits). Bulk accept without a
       type filter takes only *preserves*; a *changes* type needs an explicit acknowledgement.
-- [ ] **6b Traffic proof per batch**: build the rulebase as it will be after the batch (plan applied
+- [x] **6b Traffic proof per batch**: build the rulebase as it will be after the batch (plan applied
       to the snapshot model) and run probe flows — generated from the boundaries of every rule the
       batch touches and of the rules overlapping them — through both, first match. Any flow whose
       verdict or inspection changes is listed. At staging (report per batch), before running (a

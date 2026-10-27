@@ -41,7 +41,9 @@ from app.audit.chain import AuditEvent, AuditLog
 from app.core.config import Settings
 from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
+from app.enforce.batch_proof import batch_plans, model_before
 from app.enforce.plan import identity
+from app.enforce.proof import SPACE_FIELDS, Model, RuleModel, apply_plan, compare
 from app.fmc.adapters import FmcAdapter, select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import FmcError, FmcWriteRejectedError
@@ -224,6 +226,7 @@ class Writer:
     checks: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
     persist: Callable[[list[dict[str, Any]]], None] | None = None
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    seen: dict[str, dict[str, Any]] = field(default_factory=dict)  # path -> last read
     _variable_set: dict[str, Any] | None = None
 
     def save(self) -> None:
@@ -251,6 +254,7 @@ class Writer:
             raise BatchError("drift", f"{what or path} no longer exists in the FMC")
         if not isinstance(item, dict):
             raise BatchError("unexpected_response", path)
+        self.seen[path] = item
         return item
 
     def rule_fields(self, op: dict[str, Any], item: dict[str, Any]) -> dict[str, list[str]]:
@@ -648,6 +652,84 @@ class Writer:
             progress.advance(n, len(self.checks))
             await check()
 
+    def _read_back(self, path: str, what: str) -> dict[str, Any]:
+        item = self.seen.get(path)
+        if item is None:
+            raise BatchError("proof_unreadable", what)
+        return item
+
+    def _rule_model(self, op: dict[str, Any], item: dict[str, Any]) -> RuleModel:
+        rec = self.adapter.map_any_rule(RULE_KINDS[str(op["policy_kind"])], None, item, 1)
+        refs: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
+        for fld, ref in rec.refs:
+            if fld.value in SPACE_FIELDS:
+                refs.setdefault(fld.value, []).append(
+                    (ref.object_id, ref.literal, ref.literal_kind)
+                )
+        return RuleModel(
+            key=rec.fmc_id,
+            name=rec.name,
+            enabled=rec.enabled,
+            action=rec.action.upper(),
+            ips=rec.ips_policy_id,
+            file=rec.file_policy_id,
+            refs=refs,
+        )
+
+    def actual_model(self, before: Model, ops: list[dict[str, Any]]) -> Model:
+        """The rulebase as the FMC holds it after this batch: ``before`` with every touched
+        rule and object replaced by what verification read back."""
+        after = before.clone()
+        for op in ops:
+            kind = op.get("op")
+            if kind in ("create_object", "update_group"):
+                if kind == "create_object":
+                    made = self.temps[str(op["temp"])]
+                    oid, otype = str(made["id"]), str(made["type"])
+                else:
+                    oid, otype = str(op["object"]), str(op["type"])
+                rec = self.adapter.map_object(
+                    OBJECT_RESOURCES[otype],
+                    self._read_back(
+                        self.object_path(otype, oid),
+                        f"object {op.get('name') or op.get('object_name')}",
+                    ),
+                )
+                if rec.members or rec.kind.value.endswith("group"):
+                    after.objects[oid] = (rec.kind.value, None)
+                    after.members[oid] = [
+                        (m.object_id, m.literal, m.literal_kind) for m in rec.members
+                    ]
+                else:
+                    after.objects[oid] = (rec.kind.value, rec.value)
+            elif kind == "delete_object":
+                after.objects.pop(str(op["object"]), None)
+                after.members.pop(str(op["object"]), None)
+            elif kind in ("create_rule", "update_rule", "set_inspection", "delete_rule"):
+                policy = after.policies.get(str(op.get("policy")))
+                if policy is None:
+                    continue
+                rules = policy.rules
+                if kind == "create_rule":
+                    rid = str(self.temps[str(op["temp"])]["id"])
+                    model = self._rule_model(
+                        op, self._read_back(f"{self.rule_base(op)}/{rid}", f"rule {op['name']}")
+                    )
+                    anchor = str(op["insert_after"])
+                    if anchor in self.temps:
+                        anchor = str(self.temps[anchor]["id"])
+                    at = next(i for i, r in enumerate(rules) if r.key == anchor)
+                    rules.insert(at + 1, model)
+                    continue
+                at = next(i for i, r in enumerate(rules) if r.key == str(op["rule"]))
+                if kind == "delete_rule":
+                    rules.pop(at)
+                else:
+                    rules[at] = self._rule_model(
+                        op, self._read_back(self.rule_path(op, op["rule"]), _what(op))
+                    )
+        return after
+
     async def rollback(self, rounds: int = 1, wait: float = 0.0) -> list[str]:
         """Undo the journal in reverse order; returns the steps that could not be undone.
 
@@ -795,6 +877,7 @@ async def deploy(
 @dataclass
 class _Plan:
     batch_id: int
+    seq: int
     changeset_id: int
     title: str
     ticket: str
@@ -840,6 +923,7 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
         cs.status = "in_progress"
         return _Plan(
             batch_id=b.id,
+            seq=b.seq,
             changeset_id=cs.id,
             title=cs.title,
             ticket=cs.ticket_id,
@@ -847,6 +931,46 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
             connection=connection,
             ops=ops,
             targets=targets,
+        )
+
+
+def _prove_written(sessions: sessionmaker[Session], plan: _Plan, writer: Writer) -> None:
+    """Compare the rulebase before the batch with what the FMC holds now (read back).
+
+    A batch that preserves traffic must change no flow; one that changes traffic by design must
+    hold exactly what its plan proved. Otherwise the batch stops here — before any deployment —
+    and is rolled back.
+    """
+    try:
+        with sessions() as db:
+            before = model_before(db, plan.changeset_id, plan.seq)
+            _ops, behaviors = batch_plans(db, plan.changeset_id)
+        actual = writer.actual_model(before, plan.ops)
+        report = compare(before, actual)
+    except BatchError:
+        raise
+    except Exception as exc:  # no proof, no deployment: roll back
+        log.exception("traffic proof could not run", extra={"batch": plan.batch_id})
+        raise BatchError("proof_error", type(exc).__name__) from exc
+    behaviour = behaviors.get(plan.seq, "preserves")
+    report["behavior"] = behaviour
+    if behaviour == "changes":
+        matches = compare(apply_plan(before, plan.ops), actual)
+        report["matches_plan"] = matches["ok"]
+        ok = bool(matches["ok"])
+    else:
+        ok = bool(report["ok"])
+    report["computed_at"] = datetime.now(UTC).isoformat()
+    with sessions.begin() as db:
+        batch = db.get(Batch, plan.batch_id, with_for_update=True)
+        if batch is not None:
+            batch.proof_after = report
+    if not ok:
+        raise BatchError(
+            "proof_failed",
+            f"{report['differences']} flows would change"
+            if behaviour == "preserves"
+            else "the FMC does not hold what the plan proved",
         )
 
 
@@ -997,8 +1121,10 @@ async def execute_batch(
                 for n, op in enumerate(plan.ops):
                     progress.advance(n, len(plan.ops))
                     await writer.run(op)
-                progress.phase("batch_verify", 60, 66)
+                progress.phase("batch_verify", 60, 63)
                 await writer.verify()
+                progress.phase("proof_after", 63, 66)
+                _prove_written(sessions, plan, writer)
                 progress.phase("deploying", 66, 98)
                 task_id = await deploy(
                     fmc,
@@ -1132,6 +1258,7 @@ async def resume_rollback(
         b.status = "running"
         plan = _Plan(
             batch_id=b.id,
+            seq=b.seq,
             changeset_id=cs.id,
             title=cs.title,
             ticket=cs.ticket_id,

@@ -223,6 +223,13 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
         if last > 1:
             out_of_order = appr.post(f"{url}/{last}/approve", headers=ah)
             assert out_of_order.json()["detail"] == "previous_batch_not_deployed"
+        # No approval before the traffic proof of the batch exists (computed by a worker job).
+        pending = appr.post(f"{url}/1/approve", headers=ah)
+        assert (pending.status_code, pending.json()["detail"]) == (409, "proof_pending")
+        jobs.prove_changeset_job(cs["id"])
+        proved = client.get(f"/api/changesets/{cs['id']}").json()["batches"]
+        assert all(b["proof"]["behavior"] == "preserves" for b in proved)
+        assert all(b["proof"]["ok"] and b["proof"]["exhaustive"] for b in proved), proved
         ok = appr.post(f"{url}/1/approve", headers=ah)
         assert ok.status_code == 200
         first = ok.json()["batches"][0]

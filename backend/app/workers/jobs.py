@@ -19,6 +19,7 @@ from app.analysis.semantic import analyze_semantics
 from app.collector.runner import SnapshotBusyError, request_collection, run_collection
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
+from app.enforce.batch_proof import prove_changeset
 from app.enforce.executor import execute_batch, redis_lock, resume_rollback
 from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
@@ -247,6 +248,32 @@ def execute_batch_job(batch_id: int, run_id: int | None = None) -> dict[str, Any
     return result
 
 
+def enqueue_proof(changeset_id: int, requested_by: str) -> int:
+    with get_sessionmaker()() as session:
+        cs = session.get(Changeset, changeset_id)
+        title = cs.title if cs is not None else f"#{changeset_id}"
+    return _enqueue(
+        QueueName.ANALYSIS,
+        prove_changeset_job,
+        changeset_id,
+        kind="proof",
+        title=title,
+        requested_by=requested_by,
+        timeout=3600,
+        changeset_id=changeset_id,
+    )
+
+
+def prove_changeset_job(changeset_id: int, run_id: int | None = None) -> dict[str, Any]:
+    """Prove every batch of a changeset (what each does to traffic) and store the reports."""
+    sessions = get_sessionmaker()
+    if run_id is None:
+        run_id = progress.create_run(sessions, "proof", f"#{changeset_id}", "system")
+    with progress.tracked(sessions, run_id):
+        outcome = prove_changeset(sessions, changeset_id)
+    return {"ok": all(outcome.values()), "batches": {str(k): v for k, v in outcome.items()}}
+
+
 def enqueue_rollback(batch_id: int, requested_by: str) -> int:
     title, changeset_id = _batch_ids(batch_id)
     return _enqueue(
@@ -285,6 +312,7 @@ ALLOWED_JOBS: frozenset[str] = frozenset(
     {
         "app.workers.jobs.execute_batch_job",
         "app.workers.jobs.resume_rollback_job",
+        "app.workers.jobs.prove_changeset_job",
         "app.workers.jobs.verify_audit_chain",
         "app.workers.jobs.collect_snapshot",
         "app.workers.jobs.analyze_snapshot",

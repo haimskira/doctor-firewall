@@ -10,15 +10,17 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings, read_secret_file
 from app.db.session import get_sessionmaker
+from app.enforce import executor
 from app.enforce.executor import execute_batch, redis_lock, resume_rollback
 from app.fmc.client import FmcSession, build_ssl_context
 from app.models.audit import AuditRecord
 from app.models.enforce import Batch
 from app.models.fmc import FmcConnection
+from app.models.recommendations import behavior
 from app.runtime import get_audit, get_redis, get_secretbox
 from app.workers import jobs
 from tests.integration.conftest import login, make_user
@@ -140,7 +142,15 @@ class Flow:
         assert made.status_code == 201, made.text
         cs = made.json()
         assert len(cs["batches"]) == 1
-        ok = self.appr.post(f"/api/changesets/{cs['id']}/batches/1/approve", headers=self.ah)
+        jobs.prove_changeset_job(cs["id"])  # what the worker does after staging
+        url = f"/api/changesets/{cs['id']}/batches/1/approve"
+        if any(behavior(r["kind"]) == "changes" for r in recs):
+            # Traffic changes by design: approved only when the approver says so.
+            refused = self.appr.post(url, headers=self.ah)
+            assert refused.json()["detail"] == "behavior_change_unacknowledged", refused.text
+            ok = self.appr.post(url, headers=self.ah, json={"acknowledge_change": True})
+        else:
+            ok = self.appr.post(url, headers=self.ah)
         assert ok.status_code == 200, ok.text
         with get_sessionmaker()() as s:
             batch_id = s.scalar(
@@ -207,6 +217,13 @@ def test_batch_is_written_verified_and_deployed(client: TestClient, admin: dict[
             s.scalars(select(AuditRecord.action).where(AuditRecord.action.like("changeset.%")))
         )
     assert "changeset.batch_deployed" in actions
+    # What the FMC held after the writes was proved, before deploying, to change no flow.
+    proof_after = cs["batches"][0]["proof_after"]
+    assert proof_after["ok"] is True
+    assert proof_after["behavior"] == "preserves"
+    assert proof_after["exhaustive"] is True
+    assert proof_after["flows"] > 0
+    assert cs["batches"][0]["proof"]["ok"] is True
 
     # The snapshot no longer matches the FMC: its recommendations say so, the ones carried out
     # are marked applied, and no new changeset may be staged from it (lab: changeset #4).
@@ -355,6 +372,41 @@ def test_outage_mid_batch_keeps_the_journal_and_resumes(
     with get_sessionmaker()() as s:
         actions = list(s.scalars(select(AuditRecord.action)))
     assert "changeset.batch_rollback" in actions
+    assert "changeset.batch_rolled_back" in actions
+    flow.close()
+
+
+def test_a_failed_traffic_proof_rolls_back_before_deploying(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If what the FMC holds after the writes would change a flow, nothing is deployed."""
+    with get_sessionmaker()() as s:
+        first_record = (s.scalar(select(func.max(AuditRecord.id))) or 0) + 1
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)["MIXED_TIERS_SQL"]
+
+    def changed(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ok": False, "differences": 1, "flows": 1, "exhaustive": True, "policies": []}
+
+    monkeypatch.setattr(executor, "compare", changed)
+    result = _run(batch_id)
+    assert (result["ok"], result["error"], result["status"]) == (
+        False,
+        "proof_failed",
+        "rolled_back",
+    )
+    after = flow.rules(policy)
+    assert "MIXED_TIERS_SQL_SILVER" not in after
+    assert after["MIXED_TIERS_SQL"]["destinationNetworks"] == before["destinationNetworks"]
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["proof_after"]["ok"] is False
+    assert batch["error"].startswith("proof_failed")
+    with get_sessionmaker()() as s:
+        actions = list(s.scalars(select(AuditRecord.action).where(AuditRecord.id >= first_record)))
+    assert "changeset.batch_deployed" not in actions
     assert "changeset.batch_rolled_back" in actions
     flow.close()
 

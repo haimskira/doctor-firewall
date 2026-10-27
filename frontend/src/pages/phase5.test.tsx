@@ -37,6 +37,10 @@ const CS: ChangesetDetail = {
       seq: 2, status: 'pending', op_count: 2, deploy_limit: 2, clusters: ['c1'], approved_by: null,
       approved_at: null, started_at: null, finished_at: null, error: null, results: [],
       undo_pending: 0, rollback_resumable: false,
+      proof: {
+        ok: true, exhaustive: true, flows: 412, differences: 0, behavior: 'preserves', seconds: 1.2,
+        computed_at: '2026-10-21T08:12:00Z', policies: [],
+      },
     },
   ],
   items: [
@@ -121,6 +125,49 @@ describe('DeployPage', () => {
     });
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Write batch 2 (2 changes) to the FMC'));
     expect(await screen.findByText(/Batch queued for writing/)).toBeInTheDocument();
+  });
+
+  it('shows the traffic proof and needs an acknowledgement for a batch that changes traffic', async () => {
+    const [first, second] = CS.batches;
+    if (first === undefined || second === undefined) throw new Error('fixture');
+    const changing: ChangesetDetail = {
+      ...CS,
+      batches: [
+        first,
+        {
+          ...second,
+          proof: {
+            ok: false, exhaustive: true, flows: 96, differences: 1, behavior: 'changes', seconds: 0.4,
+            computed_at: '2026-10-21T08:12:00Z',
+            policies: [{
+              id: 'p1', name: 'ACP', touched: 1, flows: 96, exhaustive: true, difference_count: 1,
+              differences: [{
+                flow: { src: '10.50.0.7', dst: '10.20.5.10', service: 'TCP/1433' },
+                before: { verdict: ['ALLOW', null, null], rule: 'MIXED' },
+                after: { verdict: ['ALLOW', 'ips-1', null], rule: 'MIXED' },
+              }],
+            }],
+          },
+        },
+      ],
+    };
+    const calls = setup(me('appr', ['policy:read', 'deploy:approve']), changing, (req) =>
+      req.url === '/api/changesets/3/batches/2/approve' ? { status: 200, body: changing } : undefined,
+    );
+    const batch = await screen.findByRole('article', { name: 'Batch 2' });
+    expect(within(batch).getByText(/This batch changes 1 flows by design \(96 checked\)/)).toBeInTheDocument();
+    expect(within(batch).getByText('10.50.0.7 → 10.20.5.10 TCP/1433')).toBeInTheDocument();
+    expect(within(batch).getByText('ALLOW + IPS')).toBeInTheDocument();
+    const approve = within(batch).getByRole('button', { name: 'Approve' });
+    expect(approve).toBeDisabled();
+    await userEvent.click(within(batch).getByRole('checkbox', { name: 'I have seen these changes and approve them' }));
+    expect(approve).toBeEnabled();
+    await userEvent.click(approve);
+    await waitFor(() => {
+      expect(calls.find((c) => c.url.endsWith('/batches/2/approve'))?.body).toEqual({ acknowledge_change: true });
+    });
+    // The first, deployed batch shows its proof against the FMC as well (none in this fixture).
+    expect(within(screen.getByRole('article', { name: 'Batch 2' })).queryByText(/cannot be approved/)).not.toBeInTheDocument();
   });
 
   it('never offers approval to the author', async () => {
