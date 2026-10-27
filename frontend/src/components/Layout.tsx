@@ -22,7 +22,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 
 import { api } from '../api/client';
 import { ErrorBoundary } from './ErrorBoundary';
-import { JobsIndicator, JobsProvider } from './jobs';
+import { JobsIndicator, JobsProvider, WatchAlert } from './jobs';
 import type { FindingsPage, Me, Permission, Snapshot } from '../api/types';
 import { applyTheme, effectiveTheme, useAuth, useMe } from '../auth/AuthProvider';
 import { useApi } from '../hooks';
@@ -154,14 +154,17 @@ function useBreadcrumb(): MessageKey[] {
   return ['nav.dashboard'];
 }
 
-/** High-severity findings in the newest analysed snapshot (the bell badge). */
+/** High and medium findings in the newest analysed snapshot (the bell badge). The bell opens
+ * that snapshot's findings, most severe first (no filter: the page always shows them all). */
 function useHighFindings(enabled: boolean): { count: number; snapshotId: number | null } {
   const snaps = useApi<Snapshot[]>(enabled ? '/api/snapshots?limit=20' : null);
   const latest = (snaps.data ?? []).find((s) => s.status === 'complete' && s.analyzed_at !== null);
-  const page = useApi<FindingsPage>(
-    latest === undefined ? null : `/api/snapshots/${String(latest.id)}/findings?severity=high&limit=1`,
-  );
-  return { count: page.data?.total ?? 0, snapshotId: latest?.id ?? null };
+  const page = useApi<FindingsPage>(latest === undefined ? null : `/api/snapshots/${String(latest.id)}/findings?limit=1`);
+  let count = 0;
+  for (const bySeverity of Object.values(page.data?.summary ?? {})) {
+    count += (bySeverity.high ?? 0) + (bySeverity.medium ?? 0);
+  }
+  return { count, snapshotId: latest?.id ?? null };
 }
 
 /** Close a popup on an outside click or Escape. */
@@ -218,7 +221,7 @@ export function Layout() {
   }
 
   const alertsTarget =
-    high.snapshotId === null ? '/findings' : `/findings?snapshot=${String(high.snapshotId)}&severity=high`;
+    high.snapshotId === null ? '/findings' : `/findings?snapshot=${String(high.snapshotId)}`;
 
   return (
     <JobsProvider username={me.username} enabled={readable}>
@@ -274,6 +277,7 @@ export function Layout() {
               )}
             </button>
           )}
+          {readable && <WatchAlert />}
           {readable && <JobsIndicator />}
           <ThemeToggle />
           <span className="fmc-top-divider" aria-hidden="true" />

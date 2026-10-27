@@ -96,4 +96,50 @@ describe('HistoryPage', () => {
     });
     expect(await screen.findByText(/Revert of 1 batch\(es\) queued/)).toBeInTheDocument();
   });
+
+  it('shows blocked traffic after a deployment and lets the approver dismiss it', async () => {
+    const watched = {
+      ...ENTRY,
+      watch: {
+        status: 'alert',
+        until: '2026-10-28T09:05:00Z',
+        checks: 3,
+        last_at: '2026-10-27T09:50:00Z',
+        rules: 4,
+        blocks: 2,
+        alerts: [{ id: 'r99', name: 'DENY_ALL', index: 99, new_hits: 500, expected: 0.4 }],
+        error: null,
+        dismissed_by: null,
+      },
+    };
+    const calls = mockFetch((req) => {
+      if (req.url === '/api/auth/me') return { status: 200, body: ME };
+      if (req.url.startsWith('/api/history?')) return { status: 200, body: [watched] };
+      if (req.url === '/api/changesets/5/batches/2/watch/dismiss') return { status: 200, body: { status: 'dismissed' } };
+      if (req.url.startsWith('/api/jobs')) return { status: 200, body: { active: 0, rows: [], alerts: 1 } };
+      return { status: 404, body: { detail: 'not_found' } };
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <I18nProvider>
+        <AuthProvider>
+          <MemoryRouter initialEntries={['/history']}>
+            <Routes>
+              <Route path="/history" element={<HistoryPage />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </I18nProvider>,
+    );
+    const user = userEvent.setup();
+    const alert = await screen.findByText('Blocked traffic since this deployment');
+    const box = alert.closest('.watch-state');
+    if (box === null) throw new Error('watch');
+    expect(box).toHaveTextContent('#99 DENY_ALL: 500 new hits (about 0 expected)');
+    await user.click(screen.getByRole('button', { name: 'Dismiss alert' }));
+    await waitFor(() => {
+      expect(calls.some((c) => c.method === 'POST' && c.url === '/api/changesets/5/batches/2/watch/dismiss')).toBe(true);
+    });
+    expect(await screen.findByText('The alert was dismissed.')).toBeInTheDocument();
+  });
 });

@@ -96,7 +96,7 @@ check, scheduled pulls — is visible with its progress, without refreshing, and
       (pulls, re-analysis, batch run).
 - [x] Tests (worker progress, lost-worker reconciliation, API, UI), docs.
 
-## Stage 6 — Traffic guarantee, history and rollback to any point `[~]`
+## Stage 6 — Traffic guarantee, history and rollback to any point `[x]`
 
 The system may only improve the policy, never hurt production traffic.
 
@@ -113,12 +113,13 @@ The system may only improve the policy, never hurt production traffic.
       pre-images + read-back after-images), readable diffs; revert a deployed batch (refused if the
       FMC changed since), revert to any point (later batches first); snapshots behind changes are
       never deleted, so the previous policy is always there.
-- [ ] **6d After deployment**: hit counters of touched rules and of the block rules behind them
+- [x] **6d After deployment**: hit counters of touched rules and of the block rules behind them
       compared with before; an alert with a one-click revert when blocked traffic appears.
 - [ ] **6e Device check** (if the FMC API allows it — verify in the lab): packet-tracer on the FTD for
-      critical flows before / after deployment.
+      critical flows before / after deployment. *Deferred 2026-10-27*: the API works, but the lab FTDv
+      has no real network (every flow drops with no-route), so it cannot be validated there.
 
-## Stage 7 — Operator feedback round 2 (easiest first) `[ ]`
+## Stage 7 — Operator feedback round 2 (easiest first) `[x]`
 
 - [x] **7.1 Terminology**: no "אצווה" anywhere — a changeset is cut into numbered changesets
       ("changeset 3.2"), the user's choice of 2026-10-27.
@@ -128,17 +129,21 @@ The system may only improve the policy, never hurt production traffic.
       an open changeset (and says how many were left out and where); "already in an open
       changeset" errors name the changeset with a link; cancelling a changeset is offered right
       there and on the deploy page.
-- [ ] **7.4 Findings lead to a fix**: every finding offers its fix — the recommendations for that
+- [x] **7.4 Findings lead to a fix**: every finding offers its fix — the recommendations for that
       rule / object, or why there is none yet; the dashboard's "top findings" open the fixes.
-- [ ] **7.5 Disabled rules**: a finding and a recommendation to remove disabled rules (preserving —
+- [x] **7.5 Disabled rules**: a finding and a recommendation to remove disabled rules (preserving —
       they match nothing; the traffic proof shows it), listed by age when known.
-- [ ] **7.6 SGT and dynamic objects**: shown in the rule editor and object explorer; dynamic objects'
+- [x] **7.6 SGT and dynamic objects**: shown in the rule editor and object explorer; dynamic objects'
       address mappings collected (FMC `dynamicobjects/{id}/mappings`) so analysis, the map and the
       attack surface use real addresses; rules conditioned on SGT / dynamic objects marked as such
       in the attack surface; mock + tests (the lab FMC has ISE disabled: no SGTs there).
-- [ ] **7.7 ACE-heavy rules get a fix**: a new preserving recommendation that replaces long address
+      *Decided 2026-10-27*: the mappings are shown, but analysis keeps the object as an opaque
+      condition (an orchestrator changes them without a deploy).
+- [x] **7.7 ACE-heavy rules get a fix**: a new preserving recommendation that replaces long address
       lists by the fewest networks covering exactly the same addresses (a summarised group), proved
       by the traffic proof; plus advice on Object Group Search where the platform supports it.
+      Done as `compact_group` (covered members dropped, touching ones merged; lab snapshot 24:
+      107 groups, heavy rules ~470k -> ~5k ACEs).
 
 ## Running work outside the plan
 

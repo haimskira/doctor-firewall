@@ -27,6 +27,27 @@ interface HistoryEntry {
   proof: { ok: boolean; flows: number; differences: number; behavior: string } | null;
   proof_after: { ok: boolean; flows: number; differences: number } | null;
   revert_blocker: string | null;
+  watch?: Watch | null;
+}
+
+interface WatchAlertRow {
+  id: string;
+  name: string;
+  index: number;
+  new_hits: number;
+  expected: number;
+}
+
+interface Watch {
+  status: 'watching' | 'ok' | 'alert' | 'dismissed' | 'ended';
+  until: string;
+  checks: number;
+  last_at: string | null;
+  rules: number;
+  blocks: number;
+  alerts: WatchAlertRow[];
+  error: string | null;
+  dismissed_by: string | null;
 }
 
 interface Change {
@@ -49,6 +70,23 @@ export function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const approver = can('deploy:approve');
+
+  async function dismiss(e: HistoryEntry) {
+    if (!window.confirm(t('watch.dismissConfirm', { cs: e.changeset_id, seq: e.seq }))) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/api/changesets/${String(e.changeset_id)}/batches/${String(e.seq)}/watch/dismiss`, 'POST');
+      setNotice(t('watch.dismissed'));
+      jobs.kick();
+      history.reload();
+    } catch (err) {
+      setError(errorCode(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function post(path: string, confirmText: string, body?: unknown) {
     if (!window.confirm(confirmText)) return;
@@ -112,6 +150,11 @@ export function HistoryPage() {
                     actions={
                       approver && e.status === 'deployed' ? (
                         <>
+                          {e.watch?.status === 'alert' && (
+                            <button type="button" className="secondary" disabled={busy} onClick={() => void dismiss(e)}>
+                              {t('watch.dismiss')}
+                            </button>
+                          )}
                           {e.revert_blocker === null && (
                             <button
                               type="button"
@@ -195,6 +238,7 @@ function HistoryRow({
         <td>
           <span className={`badge batch-badge batch-${entry.status}`}>{statusLabel}</span>
           {entry.error !== null && <div className="bad small">{entry.error}</div>}
+          {entry.watch !== null && entry.watch !== undefined && entry.status === 'deployed' && <WatchState watch={entry.watch} />}
         </td>
         <td>{entry.op_count}</td>
         <td className="small">
@@ -277,4 +321,36 @@ function ChangeList({ changesetId, seq }: { changesetId: number; seq: number }) 
       ))}
     </ul>
   );
+}
+
+/** After-deploy watch of a batch: still watching, clean, or blocked traffic (with the rules). */
+function WatchState({ watch }: { watch: Watch }) {
+  const { t } = useI18n();
+  if (watch.status === 'alert') {
+    return (
+      <div className="watch-state bad small" role="alert">
+        <strong>{t('watch.alert')}</strong>
+        <ul className="plain-list">
+          {watch.alerts.map((a) => (
+            <li key={a.id}>
+              <bdi>{`#${String(a.index)} ${a.name}`}</bdi>: {t('watch.alertRule', { hits: a.new_hits, expected: Math.round(a.expected) })}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  if (watch.status === 'watching') {
+    return (
+      <div className="watch-state muted small" title={t('watch.watchingHint')}>
+        {t('watch.watching', { rules: watch.rules, blocks: watch.blocks })} <DateTime value={watch.until} />
+        {watch.error !== null && <span className="bad"> · {t('watch.unreachable')}</span>}
+      </div>
+    );
+  }
+  if (watch.status === 'ok') return <div className="watch-state ok small">{t('watch.ok', { checks: watch.checks })}</div>;
+  if (watch.status === 'dismissed') {
+    return <div className="watch-state muted small">{t('watch.wasDismissed', { by: watch.dismissed_by ?? '—' })}</div>;
+  }
+  return null;
 }

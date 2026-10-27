@@ -158,9 +158,9 @@ def test_rotate_secrets_cli(client: TestClient, writable_keyring: Path) -> None:
 
 def test_scheduler_and_worker_run_allow_listed_job(clean: None) -> None:
     redis = get_redis()
-    assert run_due(redis, 10_000_000.0) == ["verify_audit_chain", "auto_collect"]
+    assert run_due(redis, 10_000_000.0) == ["verify_audit_chain", "auto_collect", "deploy_watch"]
     queue = get_queue(QueueName.MAINTENANCE, redis)
-    verify_job, auto_job = queue.jobs
+    verify_job, auto_job, watch_job = queue.jobs
     worker = AllowListWorker([queue], connection=redis, serializer=JSONSerializer)
     worker.work(burst=True)
     assert verify_job.get_status(refresh=True) == "finished"
@@ -169,6 +169,8 @@ def test_scheduler_and_worker_run_allow_listed_job(clean: None) -> None:
     assert result["ok"] is True
     assert auto_job.get_status(refresh=True) == "finished"
     assert auto_job.return_value(refresh=True) == []  # no connection has auto-sync enabled
+    assert watch_job.get_status(refresh=True) == "finished"
+    assert isinstance(watch_job.return_value(refresh=True), dict)  # watches checked, by status
 
 
 def test_worker_rejects_non_allow_listed_job(clean: None) -> None:

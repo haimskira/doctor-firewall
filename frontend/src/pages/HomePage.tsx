@@ -109,6 +109,7 @@ export function HomePage() {
                 label: label(t, `findings.kind.${f.key}`, f.key),
                 value: f.count,
                 to: `/findings?${q}&kind=${f.key}`,
+                fix: findingFix(f.key, q, t('dash.fix')),
               }))}
             />
           </Widget>
@@ -472,4 +473,23 @@ function StatusWidget({ id, data, onClose }: { id: string; data: DashboardData |
       </ul>
     </Widget>
   );
+}
+
+/** The recommendations that fix a finding type (none: the finding page explains why). */
+const FINDING_FIXES = new Map<string, string>([
+  ['shadowed_rule', 'kind=remove_shadowed_rule'],
+  ['identical_rules', 'kind=remove_shadowed_rule'],
+  ['dead_rule', 'kind=remove_dead_rule'],
+  ['disabled_rule', 'kind=remove_disabled_rule'],
+  ['unused_object', 'kind=remove_unused_object'],
+  ['duplicate_object', 'kind=merge_duplicate_objects'],
+  ['duplicate_membership', 'kind=remove_redundant_member'],
+  ['inline_literal', 'kind=literal_to_object'],
+  ['ace_heavy_rule', 'kind=compact_group'],
+  ['ace_cluster_limit', 'sort=ace_delta&order=asc'],
+]);
+
+function findingFix(kind: string, q: string, label: string): { to: string; label: string } | undefined {
+  const filter = FINDING_FIXES.get(kind);
+  return filter === undefined ? undefined : { to: `/recommendations?${q}&${filter}`, label };
 }

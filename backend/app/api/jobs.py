@@ -11,12 +11,13 @@ from pydantic import BaseModel
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.serializers import JSONSerializer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
+from app.models.enforce import DeployWatch
 from app.models.jobs import JOB_KINDS, JobRun
 from app.runtime import get_redis
 
@@ -52,6 +53,8 @@ class JobOut(BaseModel):
 class JobsOut(BaseModel):
     active: int
     rows: list[JobOut]
+    # Deployed batches whose after-deploy watch raised an alert (shown in the top bar).
+    alerts: int = 0
 
 
 def _reconcile(db: Session, runs: list[JobRun]) -> None:
@@ -118,6 +121,11 @@ def list_jobs(
                 .limit(max(0, limit - len(rows)))
             )
         )
+    alerts = db.scalar(
+        select(func.count()).select_from(DeployWatch).where(DeployWatch.status == "alert")
+    )
     return JobsOut(
-        active=len(active), rows=[JobOut.model_validate(r, from_attributes=True) for r in rows]
+        active=len(active),
+        rows=[JobOut.model_validate(r, from_attributes=True) for r in rows],
+        alerts=alerts or 0,
     )

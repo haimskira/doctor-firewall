@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     # A rollback that could not finish (FMC unreachable) is retried after this pause.
     rollback_retry_seconds: float = Field(default=30.0, ge=0, le=600)
     write_lock_ttl_seconds: int = Field(default=2 * 3600, ge=300, le=24 * 3600)
+    # After a deployment: watch hit counters this long, this often (app.enforce.watch); alert
+    # when a BLOCK rule behind a changed rule gets at least this many new hits and this many
+    # times its rate before the deployment.
+    deploy_watch_hours: float = Field(default=24.0, ge=0.25, le=24 * 14)
+    deploy_watch_minutes: float = Field(default=15.0, ge=1.0, le=24 * 60)
+    deploy_watch_min_hits: int = Field(default=10, ge=1, le=1_000_000)
+    deploy_watch_ratio: float = Field(default=3.0, ge=1.0, le=1000.0)
 
     # Runtime routing table ("show route" through the FMC, read-only; FMC 7.4.1+). Off: only
     # connected and static routes from the configuration are known.

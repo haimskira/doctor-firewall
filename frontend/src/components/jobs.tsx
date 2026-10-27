@@ -19,10 +19,12 @@ const TOAST_MS = 12000;
 interface JobsValue {
   jobs: JobRun[];
   active: number;
+  /** Deployed batches whose after-deploy watch saw blocked traffic. */
+  alerts: number;
   kick: () => void;
 }
 
-const JobsContext = createContext<JobsValue>({ jobs: [], active: 0, kick: () => undefined });
+const JobsContext = createContext<JobsValue>({ jobs: [], active: 0, alerts: 0, kick: () => undefined });
 
 export function useJobs(): JobsValue {
   return useContext(JobsContext);
@@ -33,7 +35,7 @@ interface Toast {
 }
 
 export function JobsProvider({ username, enabled, children }: { username: string; enabled: boolean; children: ReactNode }) {
-  const [list, setList] = useState<JobsList>({ active: 0, rows: [] });
+  const [list, setList] = useState<JobsList>({ active: 0, rows: [], alerts: 0 });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const timer = useRef<number | null>(null);
   const known = useRef(new Map<number, JobRun['status']>());
@@ -100,7 +102,7 @@ export function JobsProvider({ username, enabled, children }: { username: string
   const kick = useCallback(() => {
     poll.current();
   }, []);
-  const value = useMemo(() => ({ jobs: list.rows, active: list.active, kick }), [list, kick]);
+  const value = useMemo(() => ({ jobs: list.rows, active: list.active, alerts: list.alerts ?? 0, kick }), [list, kick]);
   return (
     <JobsContext.Provider value={value}>
       {children}
@@ -328,5 +330,19 @@ function JobToasts({ toasts, onClose }: { toasts: Toast[]; onClose: (id: number)
         </div>
       ))}
     </div>
+  );
+}
+
+/** Top bar: a deployment whose watch saw blocked traffic (links to the history and its revert). */
+export function WatchAlert() {
+  const { t } = useI18n();
+  const { alerts } = useJobs();
+  if (alerts === 0) return null;
+  return (
+    <span role="alert">
+      <Link to="/history" className="watch-alert">
+        {t('watch.topAlert', { count: alerts })}
+      </Link>
+    </span>
   );
 }

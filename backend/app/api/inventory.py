@@ -323,14 +323,13 @@ def _fixes(
         for fid, rule in heavy.items():
             targets[fid] = [*targets[fid], *groups.get(rule, [])]
     wanted = {t for ts in targets.values() for t in ts}
-    if not wanted:
-        return {}
     by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for rec_id, kind, title, rec_targets in db.execute(
+    query = (
         select(Recommendation.id, Recommendation.kind, Recommendation.title, Recommendation.targets)
         .where(Recommendation.snapshot_id == snapshot_id)
         .order_by(Recommendation.priority.desc(), Recommendation.id)
-    ):
+    )
+    for rec_id, kind, title, rec_targets in db.execute(query) if wanted else ():
         for t in rec_targets:
             tid = t.get("id") if isinstance(t, dict) else None
             if tid in wanted and len(by_target[tid]) < 5:
@@ -345,6 +344,20 @@ def _fixes(
                     seen.add(fix["id"])
                     fixes.append(fix)
         out[f.id] = fixes[:5]
+    if any(f.kind == "ace_cluster_limit" for f in findings):
+        # The cluster's ACE budget is fixed by whatever saves the most ACEs.
+        saving = [
+            {"id": rec_id, "kind": kind, "title": title[:160]}
+            for rec_id, kind, title in db.execute(
+                select(Recommendation.id, Recommendation.kind, Recommendation.title)
+                .where(Recommendation.snapshot_id == snapshot_id, Recommendation.ace_delta < 0)
+                .order_by(Recommendation.ace_delta, Recommendation.id)
+                .limit(5)
+            )
+        ]
+        for f in findings:
+            if f.kind == "ace_cluster_limit":
+                out[f.id] = saving
     return out
 
 

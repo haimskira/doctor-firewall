@@ -496,6 +496,9 @@ export function FindingDetails({ finding, snapshotId }: { finding: FindingRow; s
               </Link>
             );
           })}
+          {finding.kind === 'ace_cluster_limit' && (
+            <Link to={`/recommendations?snapshot=${String(snapshotId)}&sort=ace_delta&order=asc`}>{t('finding.byAceSaving')}</Link>
+          )}
         </div>
       ) : (
         <p className="muted small">

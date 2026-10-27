@@ -109,6 +109,27 @@ before" opens the snapshot the changeset was staged from; such snapshots are nev
   reverted in one job, newest first, stopping at the first that cannot be reverted.
 * A batch can only be reverted when no later batch is still in place (newest first).
 
+### After deployment: watching the hit counters
+
+The traffic proof shows *before* writing that no verdict changes; the watch is the net on live
+traffic after it (`app/enforce/watch.py`). A deployed batch opens a watch for
+`DF_DEPLOY_WATCH_HOURS` (24 h). Every `DF_DEPLOY_WATCH_MINUTES` (15) the scheduler reads, read-only,
+the hit counters of
+
+* the access rules the batch changed — directly, or through an object it changed (every rule
+  using the object or a group holding it), and
+* every enabled BLOCK rule behind the first of them whose match space overlaps theirs: where
+  traffic a changed rule no longer takes would land.
+
+The first read is the baseline. A block rule with at least `DF_DEPLOY_WATCH_MIN_HITS` (10) new hits,
+`DF_DEPLOY_WATCH_RATIO` (3) times what its rate between the snapshot and the deployment predicts,
+raises an **alert**: a red link in the top bar, the rules and their hits on the history page,
+the batch's revert next to it, and an audit record (`changeset.watch_alert`). An approver either
+reverts or dismisses it (`changeset.watch_dismissed`, e.g. blocks that were expected). A counter
+that went down was reset (reboot, redeploy of the rule) and counts from zero; an unreachable FMC
+is retried at the next check. Limits: the default action has no hit counter (traffic falling
+through to it is not seen); only access policies have hit counters.
+
 ### Stale snapshots
 
 Seen in the lab: a changeset was staged from a snapshot after another changeset from the same

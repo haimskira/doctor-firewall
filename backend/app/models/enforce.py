@@ -124,3 +124,46 @@ class Batch(Base):
     proof_after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     # Who acknowledged the traffic changes of a behaviour-changing batch when approving it.
     changes_acknowledged_by: Mapped[str | None] = mapped_column(String(64))
+
+
+WATCH_STATUSES = ("watching", "ok", "alert", "dismissed", "ended")
+
+
+class DeployWatch(Base):
+    """Hit counters after a batch is deployed (app.enforce.watch).
+
+    The rules the batch changed and the BLOCK rules behind them whose traffic overlaps are read
+    on a schedule for ``settings.deploy_watch_hours``. A block rule hit far more often than
+    before the deployment means traffic that used to pass is now dropped: an alert, with the
+    batch's revert one click away.
+    """
+
+    __tablename__ = "deploy_watches"
+    __table_args__ = (CheckConstraint(f"status IN ({_in(WATCH_STATUSES)})", name="status_known"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("changeset_batches.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="watching")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # [{"policy", "id", "name", "index", "action", "role": changed | block_behind,
+    #   "snapshot_hits"}]; empty until the first check computes it.
+    rules: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Hit counts read right after the deployment, and at the latest check ("policy/rule": n).
+    baseline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    baseline: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    last_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # The block rules that fired: policy, id, name, new hits, expected hits, when.
+    alerts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    error: Mapped[str | None] = mapped_column(String(512))
+    dismissed_by: Mapped[str | None] = mapped_column(String(64))

@@ -44,6 +44,7 @@ from app.core.logging import scrub_text
 from app.enforce.batch_proof import batch_plans, model_before
 from app.enforce.plan import identity
 from app.enforce.proof import SPACE_FIELDS, Model, RuleModel, apply_plan, compare
+from app.enforce.watch import open_watch
 from app.fmc.adapters import FmcAdapter, select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import FmcError, FmcWriteRejectedError
@@ -1055,6 +1056,7 @@ def _finish(
     error: str | None,
     results: list[dict[str, Any]],
     task_id: str | None,
+    settings: Settings | None = None,
 ) -> None:
     with sessions.begin() as db:
         b = db.get(Batch, plan.batch_id, with_for_update=True)
@@ -1064,6 +1066,8 @@ def _finish(
         b.status, b.error, b.results = status, error, results
         b.finished_at, b.deploy_job_id = datetime.now(UTC), task_id
         if status == "deployed":
+            if settings is not None:
+                open_watch(db, b, settings, b.finished_at)
             remaining = db.scalar(
                 select(Batch.id)
                 .where(Batch.changeset_id == cs.id, Batch.status != "deployed")
@@ -1228,6 +1232,7 @@ async def execute_batch(
         error=None,
         results=writer.results,
         task_id=task_id,
+        settings=settings,
     )
     return {
         "ok": True,

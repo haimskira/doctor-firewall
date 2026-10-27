@@ -208,6 +208,11 @@ def test_cluster_ace_limit(client: TestClient, admin: dict[str, str]) -> None:
     hit = next(f for f in findings["rows"] if f["details"]["cluster"]["id"] == cluster["fmc_id"])
     assert hit["severity"] == "high"
     assert hit["details"]["limit_verified"] is True
+    # The fix of an ACE budget: the recommendations that save the most ACEs, best first.
+    recs = client.get(f"/api/snapshots/{sid}/recommendations?sort=ace_delta&order=asc&limit=5")
+    best = [r["id"] for r in recs.json()["rows"] if r["ace_delta"] < 0]
+    assert best
+    assert [x["id"] for x in hit["fixes"]] == best
     make_user("p2-opt", ["optimizer"])
     with TestClient(client.app, base_url="https://testserver") as opt:
         h = {"X-CSRF-Token": login(opt, "p2-opt")}

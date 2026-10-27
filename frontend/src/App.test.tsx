@@ -155,24 +155,26 @@ describe('App', () => {
     expect(change?.headers['X-CSRF-Token']).toBe('csrf-abc');
   });
 
-  it('shows high-severity findings on the bell and searches objects from the top bar', async () => {
+  it('shows high and medium findings on the bell and searches objects from the top bar', async () => {
     const calls = mockFetch((req) => {
       if (req.url === '/api/snapshots?limit=20') {
         return { status: 200, body: [{ id: 4, status: 'complete', analyzed_at: '2026-10-20T10:00:00Z' }] };
       }
-      if (req.url === '/api/snapshots/4/findings?severity=high&limit=1') {
-        return { status: 200, body: { total: 12, offset: 0, summary: {}, rows: [] } };
+      if (req.url === '/api/snapshots/4/findings?limit=1') {
+        // Counted from the summary: high and medium, every kind (info / low are not on the bell).
+        const summary = { shadowed_rule: { high: 5, low: 40 }, dead_rule: { medium: 7, info: 3 } };
+        return { status: 200, body: { total: 55, offset: 0, summary, rows: [] } };
       }
       return NO_SNAPSHOTS(req.url) ?? { status: 200, body: me(['viewer'], ['policy:read']) };
     });
     renderApp();
-    const bell = await screen.findByRole('button', { name: '12 high-severity findings' });
+    const bell = await screen.findByRole('button', { name: '12 high and medium severity findings' });
     expect(bell).toHaveTextContent('12');
     const user = userEvent.setup();
     await user.type(screen.getByRole('searchbox', { name: 'Search objects' }), 'H_GOLD{Enter}');
     // The search opens the object explorer filtered by the query.
     expect(await screen.findByText('Object Management', { selector: '[aria-current="page"]' })).toBeInTheDocument();
-    expect(calls.some((c) => c.url === '/api/snapshots/4/findings?severity=high&limit=1')).toBe(true);
+    expect(calls.some((c) => c.url === '/api/snapshots/4/findings?limit=1')).toBe(true);
   });
 
   it('signs out', async () => {

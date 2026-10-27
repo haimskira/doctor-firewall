@@ -17,7 +17,7 @@ from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
 from app.enforce.revert import later_batches, revert_blocker
-from app.models.enforce import Batch, Changeset
+from app.models.enforce import Batch, Changeset, DeployWatch
 from app.runtime import get_audit
 from app.workers import jobs
 
@@ -47,6 +47,7 @@ class HistoryEntry(BaseModel):
     proof: dict[str, Any] | None
     proof_after: dict[str, Any] | None
     revert_blocker: str | None
+    watch: dict[str, Any] | None = None
 
 
 class FieldChange(BaseModel):
@@ -131,7 +132,26 @@ def _entry(db: Session, b: Batch, cs: Changeset) -> HistoryEntry:
         proof=b.proof,
         proof_after=b.proof_after,
         revert_blocker=revert_blocker(db, b) if b.status == "deployed" else None,
+        watch=_watch(db, b.id),
     )
+
+
+def _watch(db: Session, batch_id: int) -> dict[str, Any] | None:
+    w = db.scalar(select(DeployWatch).where(DeployWatch.batch_id == batch_id))
+    if w is None:
+        return None
+    return {
+        "status": w.status,
+        "started_at": w.started_at,
+        "until": w.until,
+        "checks": w.checks,
+        "last_at": w.last_at,
+        "rules": len(w.rules),
+        "blocks": sum(1 for r in w.rules if r.get("role") == "block_behind"),
+        "alerts": w.alerts,
+        "error": w.error,
+        "dismissed_by": w.dismissed_by,
+    }
 
 
 @router.get("/history", response_model=list[HistoryEntry])
@@ -225,6 +245,31 @@ def revert(
     db.commit()
     run_id = jobs.enqueue_revert([batch.id], who.username, f"{cs.title} · {seq}")
     return {"run_id": run_id, "batches": [{"changeset_id": cs.id, "batch": seq}]}
+
+
+@router.post(
+    "/changesets/{changeset_id}/batches/{seq}/watch/dismiss", response_model=dict[str, Any]
+)
+def dismiss_watch(
+    changeset_id: int, seq: int, request: Request, db: DbDep, audit: AuditDep, who: ApproverDep
+) -> dict[str, Any] | JSONResponse:
+    """The alert is understood (expected blocks, or handled otherwise): stop showing it."""
+    batch, cs = _batch(db, changeset_id, seq)
+    w = db.scalar(select(DeployWatch).where(DeployWatch.batch_id == batch.id).with_for_update())
+    if w is None or w.status != "alert":
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": "no_alert"})
+    w.status, w.dismissed_by = "dismissed", who.username
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        "changeset.watch_dismissed",
+        cs.title,
+        {"changeset_id": cs.id, "batch": seq, "alerts": len(w.alerts)},
+    )
+    db.commit()
+    return {"status": w.status}
 
 
 @router.post(

@@ -513,6 +513,22 @@ def build_write_router(
         state.writes = 0
         return Response(status_code=204)
 
+    @router.post("/mock/hits")
+    async def add_hits(request: Request) -> Response:
+        """Traffic on a rule: ``{"rule": <name>, "hits": n}`` adds n hits on the active unit."""
+        if not token_ok(request):
+            return _error(401, "Access token invalid.")
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("hits"), int):
+            return _error(400, "rule and hits expected")
+        found = 0
+        for counts in data.hitcounts.values():
+            for item in counts:
+                if item["rule"]["name"] == body.get("rule") and item["lastHitTimeStamp"] != " ":
+                    item["hitCount"] += body["hits"]
+                    found += 1
+        return Response(status_code=204 if found else 404)
+
     @router.post("/mock/faults")
     async def faults(request: Request) -> Response:
         if not token_ok(request):

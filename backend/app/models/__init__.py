@@ -2,7 +2,7 @@
 
 from app.models.assets import Asset, AssetGroup, ClusterSetting, RuleScore
 from app.models.audit import AuditRecord
-from app.models.enforce import Batch, Changeset, ChangesetItem
+from app.models.enforce import Batch, Changeset, ChangesetItem, DeployWatch
 from app.models.fmc import FmcConnection
 from app.models.inventory import (
     Bgp,
@@ -40,6 +40,7 @@ __all__ = [
     "Cluster",
     "ClusterPolicy",
     "ClusterSetting",
+    "DeployWatch",
     "Finding",
     "FmcConnection",
     "FwObject",

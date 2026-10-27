@@ -955,6 +955,8 @@ export interface JobRun {
 }
 
 export interface JobsList {
+  /** Deployed batches whose after-deploy watch raised an alert. */
+  alerts?: number;
   active: number;
   rows: JobRun[];
 }

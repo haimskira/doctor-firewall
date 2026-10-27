@@ -980,3 +980,14 @@ a.button-link:hover { background: var(--primary-soft); }
 }
 .chip.kind-sgt, .chip.kind-dynamic { border-color: var(--primary); }
 .atk-conditions .chip { margin-inline-start: 0.25rem; }
+
+.bar-fix { margin-inline-start: 0.5rem; font-size: 0.78rem; }
+
+/* after-deploy watch */
+.watch-alert {
+  display: inline-flex; align-items: center; padding: 0.2rem 0.7rem; border-radius: 999px;
+  background: var(--danger); color: #fff; font-weight: 600; font-size: 0.82rem; text-decoration: none;
+}
+.watch-alert:hover { filter: brightness(1.1); }
+.watch-state { margin-block-start: 0.3rem; }
+.watch-state ul { margin: 0.2rem 0 0; }

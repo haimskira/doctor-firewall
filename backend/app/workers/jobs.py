@@ -19,6 +19,7 @@ from app.analysis.semantic import analyze_semantics
 from app.collector.runner import SnapshotBusyError, request_collection, run_collection
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
+from app.enforce import watch
 from app.enforce.batch_proof import prove_changeset
 from app.enforce.executor import execute_batch, redis_lock, resume_rollback
 from app.enforce.revert import revert_batch
@@ -249,6 +250,26 @@ def execute_batch_job(batch_id: int, run_id: int | None = None) -> dict[str, Any
     return result
 
 
+def check_deploy_watches() -> dict[str, Any]:
+    """Read the hit counters of every deployed batch whose watch is due (scheduled)."""
+    sessions = get_sessionmaker()
+    now = datetime.now(UTC)
+    outcome: dict[str, int] = {}
+    for watch_id in watch.due(sessions, now):
+        status = asyncio.run(
+            watch.check(
+                watch_id,
+                sessions=sessions,
+                box=get_secretbox(),
+                audit=get_audit(),
+                settings=get_settings(),
+                now=now,
+            )
+        )
+        outcome[status] = outcome.get(status, 0) + 1
+    return outcome
+
+
 def enqueue_proof(changeset_id: int, requested_by: str) -> int:
     with get_sessionmaker()() as session:
         cs = session.get(Changeset, changeset_id)
@@ -355,6 +376,7 @@ def resume_rollback_job(batch_id: int, run_id: int | None = None) -> dict[str, A
 ALLOWED_JOBS: frozenset[str] = frozenset(
     {
         "app.workers.jobs.execute_batch_job",
+        "app.workers.jobs.check_deploy_watches",
         "app.workers.jobs.resume_rollback_job",
         "app.workers.jobs.prove_changeset_job",
         "app.workers.jobs.revert_batches_job",

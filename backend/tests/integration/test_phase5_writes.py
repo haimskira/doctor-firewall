@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +15,11 @@ from sqlalchemy import func, select
 
 from app.core.config import get_settings, read_secret_file
 from app.db.session import get_sessionmaker
-from app.enforce import executor
+from app.enforce import executor, watch
 from app.enforce.executor import execute_batch, redis_lock, resume_rollback
 from app.fmc.client import FmcSession, build_ssl_context
 from app.models.audit import AuditRecord
-from app.models.enforce import Batch
+from app.models.enforce import Batch, DeployWatch
 from app.models.fmc import FmcConnection
 from app.models.recommendations import behavior
 from app.runtime import get_audit, get_redis, get_secretbox
@@ -285,6 +286,65 @@ def test_compact_group_writes_fewer_members_and_keeps_every_flow(
     assert len(group["objects"]) == 3
     ranges = {r["value"] for r in mock("GET", CONFIG + "/object/ranges")["items"]}
     assert "10.70.1.1-10.70.1.4" in ranges
+    flow.close()
+
+
+def _check(watch_id: int, now: datetime) -> str:
+    return asyncio.run(
+        watch.check(
+            watch_id,
+            sessions=get_sessionmaker(),
+            box=get_secretbox(),
+            audit=get_audit(),
+            settings=get_settings(),
+            now=now,
+        )
+    )
+
+
+def test_deploy_watch_alerts_when_blocks_behind_a_change_fire(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    assert _run(batch_id)["ok"] is True
+    with get_sessionmaker()() as s:
+        w = s.scalar(select(DeployWatch).where(DeployWatch.batch_id == batch_id))
+        assert w is not None
+        watch_id = w.id
+    assert w.status == "watching"
+    # The scheduled job takes the due watch: the first check reads the baseline.
+    assert jobs.check_deploy_watches().get("watching", 0) >= 1
+    with get_sessionmaker()() as s:
+        w = s.get(DeployWatch, watch_id)
+        assert w is not None
+        roles = {r["name"]: r["role"] for r in w.rules}
+        assert w.baseline_at is not None
+    assert roles["MIXED_TIERS_SQL"] == "changed"
+    assert roles["EXPLICIT_DEFAULT_DENY"] == "block_behind"  # any -> any, behind the change
+
+    now = datetime.now(UTC)
+    assert _check(watch_id, now + timedelta(minutes=20)) == "watching"  # quiet: no new blocks
+    alerts_before = client.get("/api/jobs").json()["alerts"]
+    mock("POST", "/mock/hits", {"rule": "EXPLICIT_DEFAULT_DENY", "hits": 500})
+    assert _check(watch_id, now + timedelta(minutes=40)) == "alert"
+
+    entry = next(h for h in client.get("/api/history").json() if h["changeset_id"] == cs_id)
+    assert entry["watch"]["status"] == "alert"
+    [alert] = entry["watch"]["alerts"]
+    assert (alert["name"], alert["new_hits"], alert["expected"]) == (
+        "EXPLICIT_DEFAULT_DENY",
+        500,
+        0,
+    )
+    assert client.get("/api/jobs").json()["alerts"] == alerts_before + 1
+    # The revert sits next to it; here the approver dismisses it instead (expected blocks).
+    url = f"/api/changesets/{cs_id}/batches/1/watch/dismiss"
+    assert flow.opt.post(url, headers=flow.oh).status_code == 403
+    assert flow.appr.post(url, headers=flow.ah).json() == {"status": "dismissed"}
+    assert flow.appr.post(url, headers=flow.ah).status_code == 409
+    assert client.get("/api/jobs").json()["alerts"] == alerts_before
     flow.close()
 
 

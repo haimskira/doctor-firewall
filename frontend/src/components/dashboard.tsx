@@ -17,6 +17,8 @@ export interface BarRow {
   display?: string;
   tone?: BarTone;
   to?: string;
+  /** A second link after the label (e.g. the recommendations that fix a finding type). */
+  fix?: { to: string; label: string } | undefined;
 }
 
 /** Relative "last updated" text from an ISO timestamp. */
@@ -125,7 +127,14 @@ export function BarTable({
       >
         {(r) => (
           <tr key={r.key}>
-            <td>{r.to !== undefined ? <Link to={r.to}>{r.label}</Link> : r.label}</td>
+            <td>
+              {r.to !== undefined ? <Link to={r.to}>{r.label}</Link> : r.label}
+              {r.fix !== undefined && (
+                <Link className="bar-fix" to={r.fix.to}>
+                  {r.fix.label}
+                </Link>
+              )}
+            </td>
             <td className="num">
               <span className="bar-cell">
                 <span

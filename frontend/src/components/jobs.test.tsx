@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobRun, JobsList } from '../api/types';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
-import { JobsIndicator, JobsProvider } from './jobs';
+import { JobsIndicator, JobsProvider, WatchAlert } from './jobs';
 
 const RUNNING: JobRun = {
   id: 7,
@@ -95,4 +95,20 @@ describe('JobsProvider / JobsIndicator', () => {
     expect(await screen.findByRole('button', { name: 'Jobs' })).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  it('shows blocked traffic after a deployment in the top bar', async () => {
+    mockFetch((req) => (req.url.startsWith('/api/jobs') ? { status: 200, body: { active: 0, rows: [], alerts: 2 } } : { status: 404 }));
+    render(
+      <I18nProvider initial="en">
+        <MemoryRouter>
+          <JobsProvider username="opt" enabled>
+            <WatchAlert />
+          </JobsProvider>
+        </MemoryRouter>
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Blocked traffic after a deployment (2)');
+    expect(screen.getByRole('link', { name: /Blocked traffic/ })).toHaveAttribute('href', '/history');
+  });
 });
+
