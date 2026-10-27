@@ -12,11 +12,21 @@ permits adds an ``any -> any`` hop for everything its rules do not decide.
 * **Blast radius** (``mode="from"``): everything a compromised source reaches, then everything
   those destinations reach, and so on.
 
+What narrows a hop (only where it is certain, so the view stays an upper bound):
+
+* **Zones** — a rule with source / destination zones only carries traffic from / to the
+  networks routed behind those zones (interface subnets and routes through the zones'
+  interfaces, runtime routes included). With a default route behind a zone nothing is narrowed.
+* **Prefilter** — the prefilter policy of an access policy decides first. A hop whose traffic the
+  first prefilter rule it meets blocks entirely is cut; one that a prefilter BLOCK rule decides
+  in part is marked ``partial``.
+* SGTs, dynamic objects and users cannot be resolved to addresses: such hops are kept and list
+  those conditions ("only for ...").
+
 The search runs on address sets (the sources / destinations of rules) and is then shown on the
 asset systems of the connectivity map. Traffic inside one network never crosses the firewall
 and is not a hop. An earlier rule with the opposite verdict that overlaps a hop's rule marks
-the hop ``partial`` (part of that traffic is decided earlier). Rules are evaluated per policy;
-prefilter decisions in front of an access policy are not subtracted (documented limitation).
+the hop ``partial`` (part of that traffic is decided earlier). Rules are evaluated per policy.
 Every search is capped (depth, frontier, edges, paths) and says when it was truncated.
 """
 
@@ -41,8 +51,9 @@ from app.analysis.connectivity import (
     rule_risk,
 )
 from app.analysis.expand import Resolver, rule_spaces
+from app.analysis.recommend import load_zone_networks
 from app.analysis.score import AssetIndex
-from app.analysis.space import AddressSet
+from app.analysis.space import AddressSet, MatchSpace, TokenSet
 from app.models.assets import RuleScore
 from app.models.inventory import ClusterPolicy, Finding, FwObject, Policy, Rule, RuleRef
 
@@ -175,15 +186,25 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
         )
     }
     resolver = Resolver.load(session, snapshot_id)
+    prefilters = _prefilters(session, snapshot_id, policies, resolver)
+    zones = _ZoneNetworks(session, snapshot_id)
     hops: list[Hop] = []
     for policy in policies:
         allowed = PERMIT_ACTIONS[policy.kind]
+        prefilter = prefilters.get(policy.fmc_id, [])
         for rs in rule_spaces(session, snapshot_id, policy.fmc_id, resolver):
             if not rs.enabled or rs.action not in allowed:
                 continue
             shadowed_by, reasons = scores.get(rs.rule_id, (None, []))
             if shadowed_by is not None:
                 continue
+            blocked, part_blocked = _prefilter_verdict(prefilter, rs.space)
+            if blocked:
+                continue  # the prefilter drops all of it before the access policy
+            src = zones.narrow(policy.fmc_id, rs.space.src_net, rs.space.token("src_zone"))
+            dst = zones.narrow(policy.fmc_id, rs.space.dst_net, rs.space.token("dst_zone"))
+            if src.empty or dst.empty:
+                continue  # nothing routed behind the rule's zones matches its addresses
             services, apps = labels.get(rs.rule_id, ((), ()))
             conditions = condition_labels.get(rs.rule_id, ())
             hops.append(
@@ -195,12 +216,12 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
                     policy_fmc_id=policy.fmc_id,
                     policy_name=policy.name,
                     action=rs.action,
-                    src=rs.space.src_net,
-                    dst=rs.space.dst_net,
+                    src=src,
+                    dst=dst,
                     services=services or ("any",),
                     apps=apps,
                     inspected=inspected.get(rs.rule_id, False),
-                    partial=rs.fmc_id in partial,
+                    partial=rs.fmc_id in partial or part_blocked,
                     risk=rule_risk(reasons),
                     hits=rs.hit_count,
                     conditions=conditions,
@@ -253,6 +274,77 @@ def _service_labels(
 
 
 CONDITION_FIELDS = ("src_sgt", "dst_sgt", "src_dyn", "dst_dyn", "user")
+PREFILTER_BLOCK = frozenset({"BLOCK"})
+
+
+def _prefilters(
+    session: Session, snapshot_id: int, policies: list[Policy], resolver: Resolver
+) -> dict[str, list[tuple[str, MatchSpace]]]:
+    """Access policy -> its prefilter policy's enabled rules (action, space), in order."""
+    out: dict[str, list[tuple[str, MatchSpace]]] = {}
+    loaded: dict[str, list[tuple[str, MatchSpace]]] = {}
+    for policy in policies:
+        if policy.kind != "access":
+            continue
+        link = next(
+            (
+                str(x.get("id"))
+                for x in policy.links
+                if "prefilter" in str(x.get("relation", "")).lower() and x.get("id")
+            ),
+            None,
+        )
+        if link is None:
+            continue
+        if link not in loaded:
+            loaded[link] = [
+                (rs.action, rs.space)
+                for rs in rule_spaces(session, snapshot_id, link, resolver)
+                if rs.enabled
+            ]
+        out[policy.fmc_id] = loaded[link]
+    return out
+
+
+def _prefilter_verdict(rules: list[tuple[str, MatchSpace]], space: MatchSpace) -> tuple[bool, bool]:
+    """(all of the traffic blocked first, part of it blocked) by the prefilter rules."""
+    partial, first = False, True
+    for action, pspace in rules:
+        if not pspace.intersects(space):
+            continue
+        covers = pspace.covers(space)
+        if action in PREFILTER_BLOCK:
+            if covers and first:
+                return True, False
+            partial = True
+        first = False
+        if covers:
+            break  # every packet of the hop is decided by now
+    return False, partial
+
+
+class _ZoneNetworks:
+    """Networks behind a rule's zones (per policy, cached); None: cannot narrow."""
+
+    def __init__(self, session: Session, snapshot_id: int) -> None:
+        self.session, self.snapshot_id = session, snapshot_id
+        self.cache: dict[tuple[str, frozenset[str]], AddressSet | None] = {}
+
+    def narrow(self, policy_id: str, addresses: AddressSet, zones: TokenSet) -> AddressSet:
+        if zones.any or not zones.tokens:
+            return addresses
+        key = (policy_id, zones.tokens)
+        if key not in self.cache:
+            nets = load_zone_networks(self.session, self.snapshot_id, policy_id, set(zones.tokens))
+            self.cache[key] = None if nets is None else AddressSet.build([n for n, _, _ in nets])
+        behind = self.cache[key]
+        if behind is None:
+            return addresses
+        if addresses.any:
+            return behind
+        narrowed = addresses.intersection(behind)
+        # Opaque members (FQDNs) cannot be placed behind a zone: they stay.
+        return AddressSet(v4=narrowed.v4, v6=narrowed.v6, tokens=addresses.tokens)
 
 
 def _condition_labels(session: Session, snapshot_id: int) -> dict[int, tuple[tuple[str, str], ...]]:

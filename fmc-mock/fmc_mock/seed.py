@@ -830,6 +830,88 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             "metadata": {"section": "Default", "category": "--Undefined--"},
         },
     )
+
+    # Port compaction: three consecutive ports, a port inside a range, another protocol —
+    # the same services fit in 3 members.
+    def port(name: str, proto: str, value: str) -> Json:
+        item = {
+            "id": fixed(name),
+            "name": name,
+            "type": "ProtocolPortObject",
+            "protocol": proto,
+            "port": value,
+        }
+        b.data.objects.setdefault("protocolportobjects", []).append(item)
+        return item
+
+    port_group = {
+        "id": fixed("PG_COMPACT_ME"),
+        "name": "PG_COMPACT_ME",
+        "type": "PortObjectGroup",
+        "objects": [
+            _ref(m)
+            for m in (
+                *(port(f"SVC_CMP_{n}", "TCP", str(n)) for n in (8080, 8081, 8082)),
+                port("SVC_CMP_RANGE", "TCP", "9000-9100"),
+                port("SVC_CMP_IN_RANGE", "TCP", "9050"),
+                port("SVC_CMP_DNS", "UDP", "53"),
+            )
+        ],
+        "overridable": False,
+    }
+    b.data.objects.setdefault("portobjectgroups", []).append(port_group)
+    chain_rules.insert(
+        at,
+        {
+            "id": fixed("COMPACT_PORT_RULE"),
+            "type": "AccessRule",
+            "name": "COMPACT_PORT_RULE",
+            "enabled": True,
+            "action": "ALLOW",
+            "logBegin": False,
+            "logEnd": True,
+            "sendEventsToFMC": True,
+            "sourceNetworks": {"objects": [_ref(network("NET_CMP_PORT_SRC", "10.72.0.0/24"))]},
+            "destinationNetworks": {"objects": [_ref(host("H_CMP_DST2", "10.71.0.11"))]},
+            "destinationPorts": {"objects": [_ref(port_group)]},
+            "metadata": {"section": "Default", "category": "--Undefined--"},
+        },
+    )
+
+    # Attack surface: an allow the prefilter blocks entirely (BLOCK_BOGONS takes 0.0.0.0/8), one
+    # it blocks in part, and one bounded only by its source zone.
+    def allow(name: str, **fields: Any) -> None:
+        chain_rules.insert(
+            at,
+            {
+                "id": fixed(name),
+                "type": "AccessRule",
+                "name": name,
+                "enabled": True,
+                "action": "ALLOW",
+                "logBegin": False,
+                "logEnd": True,
+                "sendEventsToFMC": True,
+                "metadata": {"section": "Default", "category": "--Undefined--"},
+                **fields,
+            },
+        )
+
+    allow(
+        "BOGON_ALLOW",
+        sourceNetworks={"objects": [_ref(network("NET_ATK_BOGON", "0.1.0.0/16"))]},
+        destinationNetworks={"objects": [_ref(host("H_ATK_DST1", "10.71.0.21"))]},
+    )
+    allow(
+        "HALF_BOGON_ALLOW",
+        sourceNetworks={"objects": [_ref(network("NET_ATK_HALF_BOGON", "0.0.0.0/7"))]},
+        destinationNetworks={"objects": [_ref(host("H_ATK_DST2", "10.71.0.22"))]},
+    )
+    allow(
+        "USERS_ZONE_ANY",
+        sourceZones=objs(zones["users"]),
+        destinationNetworks={"objects": [_ref(host("H_ATK_DST3", "10.71.0.23"))]},
+    )
     for index, r in enumerate(chain_rules, start=1):
         r["metadata"]["ruleIndex"] = index
 

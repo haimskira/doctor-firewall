@@ -1081,18 +1081,22 @@ def _zone_networks(
     """(canonical network, object id, label) reachable through these zones; None on default."""
     key = (policy.fmc_id, tuple(sorted(zone_ids)))
     if key not in estate.zone_networks:
-        estate.zone_networks[key] = _load_zone_networks(estate, policy, zone_ids)
+        estate.zone_networks[key] = load_zone_networks(
+            estate.session, estate.snapshot_id, policy.fmc_id, zone_ids
+        )
     return estate.zone_networks[key]
 
 
-def _load_zone_networks(
-    estate: Estate, policy: Policy, zone_ids: set[str]
+def load_zone_networks(
+    session: Session, sid: int, policy_id: str, zone_ids: set[str]
 ) -> list[tuple[str, str | None, str]] | None:
-    session, sid = estate.session, estate.snapshot_id
+    """Networks behind these zones on the clusters a policy governs: interface subnets and
+    routes through the zones' interfaces. None when it cannot be known (a default route or an
+    unresolved route behind a zone, or no interface in the zones)."""
     clusters = set(
         session.scalars(
             select(ClusterPolicy.cluster_fmc_id).where(
-                ClusterPolicy.snapshot_id == sid, ClusterPolicy.policy_fmc_id == policy.fmc_id
+                ClusterPolicy.snapshot_id == sid, ClusterPolicy.policy_fmc_id == policy_id
             )
         )
     )

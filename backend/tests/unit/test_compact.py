@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import cast
 
 from app.analysis.compact import (
+    PORTS,
+    _block_port,
     _block_value,
     _drop_covered,
     _intervals,
@@ -110,3 +112,30 @@ def test_block_values() -> None:
     # Four addresses not on a /30 boundary: a range, never a wider network.
     assert _value("10.0.0.2-10.0.0.5") == ("range", "10.0.0.2-10.0.0.5")
     assert _value("2001:db8::1/128") == ("host", "2001:db8::1/128")
+
+
+def test_ports_cover_and_merge_per_protocol_and_leave_icmp_alone() -> None:
+    estate = _Estate(
+        {
+            "a": ("port", "TCP/8080"),
+            "b": ("port", "TCP/8081"),
+            "range": ("port", "TCP/9000-9100"),
+            "inside": ("port", "TCP/9050"),
+            "udp": ("port", "UDP/8082"),  # another protocol: never merged with TCP
+            "ping": ("port", "ICMP/8"),
+            "all": ("port", "ALL/any"),
+        },
+        {},
+    )
+    members = [_member(cast(Estate, estate), Ref(i, i), PORTS) for i in estate.objects]
+    assert {m.ref.name for m in members if not m.candidate} == {"ping", "all"}
+    covered = {m.ref.name for m in _drop_covered(members)}
+    assert covered == {"inside"}
+    rest = [m for m in members if m.candidate and m.ref.name not in covered]
+    blocks = {value: sorted(m.ref.name for m in ms) for value, ms in _merge_blocks(rest, PORTS)}
+    assert blocks == {
+        ("port", "TCP/8080-8081"): ["a", "b"],
+        ("port", "TCP/9000-9100"): ["range"],
+        ("port", "UDP/8082"): ["udp"],
+    }
+    assert _block_port("TCP", 0, 65535) == ("port", "TCP/any")

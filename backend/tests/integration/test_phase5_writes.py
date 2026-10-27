@@ -289,6 +289,36 @@ def test_compact_group_writes_fewer_members_and_keeps_every_flow(
     flow.close()
 
 
+def test_compact_port_group_merges_consecutive_ports(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    flow = Flow(client, admin)
+    rec = flow.find("compact_group", "PG_COMPACT_ME")
+    detail = client.get(f"/api/snapshots/{flow.sid}/recommendations/{rec['id']}").json()
+    compact = detail["preview"]["compact"]
+    # 9050 is inside 9000-9100; 8080-8082 become one object; UDP/53 stays: 6 -> 3.
+    assert compact["covered"] == ["SVC_CMP_IN_RANGE"]
+    assert [m["value"] for m in compact["merged"]] == ["TCP/8080-8082"]
+    assert (compact["members_before"], compact["members_after"]) == (6, 3)
+    assert detail["ace_delta"] == -3  # COMPACT_PORT_RULE: 1 x 1 x 6 services -> 3
+    cs_id, batch_id = flow.approved_batch([rec])
+    assert _run(batch_id)["ok"] is True
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["batches"][0]["proof_after"]["behavior"] == "preserves"
+    group = next(
+        g
+        for g in mock("GET", CONFIG + "/object/portobjectgroups")["items"]
+        if g["name"] == "PG_COMPACT_ME"
+    )
+    assert len(group["objects"]) == 3
+    ports = {
+        (o["protocol"], o.get("port"))
+        for o in mock("GET", CONFIG + "/object/protocolportobjects")["items"]
+    }
+    assert ("TCP", "8080-8082") in ports
+    flow.close()
+
+
 def _check(watch_id: int, now: datetime) -> str:
     return asyncio.run(
         watch.check(

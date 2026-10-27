@@ -72,10 +72,14 @@ extra hop, and adds for each of these, shown as reasons:
 
 * Depth ≤ 4; at most 400 sets expanded per layer, 1 500 edges and 200 paths. When a cap is hit
   the page says so — narrow it with a cluster, a smaller depth or a smaller target.
-* Rules are evaluated per policy. A prefilter BLOCK in front of an access policy is not
-  subtracted from the access rules behind it; partly overridden hops are marked, not cut.
-* Zones, users, SGTs and URLs of a rule are not used to cut paths: addresses and services are.
-  The view is therefore an upper bound — what the rulebase *could* allow.
+* Rules are evaluated per policy, the prefilter first: a hop the first prefilter rule it meets
+  blocks entirely is cut; one a prefilter BLOCK decides in part is marked *partly decided*.
+* Zones narrow a rule's "any" (or wide) side to the networks routed behind them (interface
+  subnets, static / connected / runtime routes); with a default route behind a zone nothing is
+  narrowed.
+* SGTs, dynamic objects, users and URLs cannot be placed on addresses: they never cut a path,
+  the hop lists them ("only for ..."). The view stays an upper bound — what the rulebase *could*
+  allow.
 
 ## API
 

@@ -89,3 +89,19 @@ def test_identity_conditions_and_dynamic_mappings(
     assert dyn.attrs["mappings_total"] == 3
     detail = client.get(f"/api/snapshots/{sid}/objects/{dyn.fmc_id}").json()
     assert detail["attrs"]["mappings_total"] == 3
+
+
+def test_prefilter_blocks_cut_hops_and_zones_narrow_them(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    sid = _analysed(client, admin)
+    with get_sessionmaker()() as s:
+        hops = {h.name: h for h in load_hops(s, sid)}
+    # BLOCK_BOGONS (prefilter, 0.0.0.0/8) drops all of it before the access policy: no hop.
+    assert "BOGON_ALLOW" not in hops
+    # 0.0.0.0/7 is half bogons: still a hop, marked as partly decided earlier.
+    assert hops["HALF_BOGON_ALLOW"].partial is True
+    # "any" source from the users zone is only what is routed behind that zone.
+    users = hops["USERS_ZONE_ANY"]
+    assert not users.src.any
+    assert not users.src.empty
