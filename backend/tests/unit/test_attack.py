@@ -126,3 +126,25 @@ def test_set_operations() -> None:
     assert AddressSet(any=True).intersection(a) == a
     assert a.intersection(AddressSet.build(["192.0.2.1/32"])).empty
     assert not AddressSet(any=True).empty
+
+
+def test_blast_radius_through_an_any_destination_reaches_every_system() -> None:
+    """An allow-any-destination rule (e.g. a forgotten TEMP any-any) exposes everything."""
+    hops = [*HOPS, hop("r7", None, None, ("any",), risk="red")]
+    from_a = describe(search(hops, A, "from", 4), ASSETS, LABELS)
+    depth = {n["id"]: n["depth"] for n in from_a["nodes"]}
+    assert depth == {
+        "GOLD|A": 0,
+        "SILVER|B": 1,
+        "USERS|C": 1,
+        "BRONZE|D": 1,
+        "ANY": 1,
+    }
+    assert from_a["summary"]["anywhere"] is True
+    assert from_a["summary"]["reached"] == 4
+    edge = next(e for e in from_a["edges"] if e["dst"] == "USERS|C")
+    assert edge["rules"][0]["name"] == "r7"
+    assert all(n["networks"] != ["any"] for n in from_a["nodes"])
+    # Paths to a target keep "anywhere" as one entry: any source is anyone.
+    to_a = describe(search(hops, A, "to", 2), ASSETS, LABELS)
+    assert {n["id"] for n in to_a["nodes"] if n["depth"] == 1} >= {"ANY", "SILVER|B"}

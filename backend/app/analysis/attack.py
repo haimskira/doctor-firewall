@@ -32,7 +32,14 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analysis.connectivity import ANY, UNCLASSIFIED, NodeMapper, node_tier, rule_risk
+from app.analysis.connectivity import (
+    ANY,
+    UNCLASSIFIED,
+    NodeMapper,
+    node_id,
+    node_tier,
+    rule_risk,
+)
 from app.analysis.expand import Resolver, rule_spaces
 from app.analysis.score import AssetIndex
 from app.analysis.space import AddressSet
@@ -353,10 +360,19 @@ def cidrs(addresses: AddressSet, limit: int = 6) -> list[str]:
 
 def describe(surface: Surface, assets: AssetIndex, labels: dict[str, str]) -> dict[str, Any]:
     """Systems, the edges between them, ranked paths and a summary for the UI."""
-    nodes_of = NodeMapper(assets).nodes
+    mode = surface.mode
+    mapped = NodeMapper(assets).nodes
+    # A blast radius that reaches "any" destination reaches every system (and the rest of
+    # the world): show them all, not one "anywhere" dot.
+    everything = (*sorted({node_id(e.tier, e.system) for e in assets.entries}), ANY)
+
+    def nodes_of(addresses: AddressSet) -> tuple[str, ...]:
+        if mode == "from" and addresses.any:
+            return everything
+        return mapped(addresses)
+
     origin_nodes = set(nodes_of(surface.origin))
     paths, paths_truncated = _paths(surface)
-    mode = surface.mode
 
     node_depth: dict[str, int] = dict.fromkeys(origin_nodes, 0)
     node_nets: dict[str, set[str]] = defaultdict(set)
@@ -367,6 +383,8 @@ def describe(surface: Surface, assets: AssetIndex, labels: dict[str, str]) -> di
             node_depth[n] = min(node_depth.get(n, e.depth), e.depth)
         src, dst = e.flow(mode)
         for addresses in (src, dst):
+            if addresses.any:
+                continue  # "any" says nothing about a system's own networks
             for n in nodes_of(addresses):
                 node_nets[n].update(cidrs(addresses, 3))
         for s in nodes_of(src):

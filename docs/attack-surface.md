@@ -35,7 +35,14 @@ Layered, from the target (paths to it) or the source (blast radius):
 1. hops whose destinations (sources) meet the current set → their sources (destinations) are one
    hop further;
 2. repeat up to the chosen depth (1–4, default 3);
-3. sources that are `any` are drawn as **Anywhere** (which includes the internet) and end a path.
+3. sources that are `any` are drawn as **Anywhere** (which includes the internet) and end a path;
+4. in a blast radius, a hop whose destination is `any` (e.g. a forgotten `TEMP any-any` allow)
+   reaches **every system** of the asset table plus *Anywhere* — the map shows them all on that
+   ring, so one such rule is visible as what it is: everything exposed in one hop.
+
+When the rings stop before the chosen depth, nothing new is reachable further out: every system
+the next hop would reach is already on an inner ring (checked on the lab rulebase: servers rarely
+start connections, so chains end after two hops once the any-any rule is removed).
 
 Paths are listed most dangerous first. The score starts from where the path begins
 (Anywhere 100, users 80, BRONZE 70, unclassified networks 60, SILVER 40, others 30), loses 10 per
