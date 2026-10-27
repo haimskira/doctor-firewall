@@ -811,3 +811,54 @@ th.num button.th-sort { justify-content: flex-end; }
 .sort-icon { display: inline-flex; color: var(--muted); opacity: 0.55; font-size: 0.85em; }
 .sort-icon.active { color: var(--primary); opacity: 1; }
 th.sortable:hover .sort-icon { opacity: 1; }
+
+/* ---- attack surface ---- */
+.atk-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
+.atk-controls form { display: flex; gap: 0.4rem; align-items: end; }
+.atk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.6rem; margin-block-end: 0.6rem; }
+.atk-kpi { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 0.55rem 0.75rem; background: var(--band); }
+.atk-kpi-value { font-size: 1.45rem; font-weight: 700; }
+.atk-kpi-label { color: var(--muted); font-size: 0.82rem; }
+.atk-kpi.tone-bad { border-color: var(--danger); }
+.atk-kpi.tone-bad .atk-kpi-value { color: var(--danger); }
+.atk-kpi.tone-good .atk-kpi-value { color: var(--ok); }
+.attack-map { inline-size: 100%; block-size: auto; max-block-size: 78vh; display: block; }
+.atk-ring circle { fill: none; stroke: var(--border); stroke-dasharray: 4 6; }
+.atk-ring text { fill: var(--muted); font-size: 11px; }
+.atk-edge { fill: none; stroke-width: 1.4; opacity: 0.38; cursor: pointer; transition: opacity 120ms; }
+.atk-edge.risk-red { opacity: 0.6; }
+.atk-edge.risk-red { stroke: var(--block); }
+.atk-edge.risk-yellow { stroke: var(--risk-yellow); }
+.atk-edge.risk-green { stroke: var(--allow); }
+.atk-edge.on { stroke-width: 3.5; opacity: 1; }
+.atk-edge:hover, .atk-edge:focus-visible { opacity: 1; stroke-width: 3.5; outline: none; }
+.atk-arrow.risk-red { fill: var(--block); }
+.atk-arrow.risk-yellow { fill: var(--risk-yellow); }
+.atk-arrow.risk-green { fill: var(--allow); }
+.atk-node { cursor: pointer; transition: opacity 120ms; }
+.atk-node circle { fill: var(--surface); stroke: var(--border-strong); stroke-width: 2; }
+.atk-node text { fill: var(--text); font-size: 12px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.atk-node.tier-gold circle { fill: color-mix(in srgb, var(--tier-gold) 22%, var(--surface)); stroke: var(--tier-gold); }
+.atk-node.tier-silver circle { fill: color-mix(in srgb, var(--tier-silver) 22%, var(--surface)); stroke: var(--tier-silver); }
+.atk-node.tier-bronze circle { fill: color-mix(in srgb, var(--tier-bronze) 22%, var(--surface)); stroke: var(--tier-bronze); }
+.atk-node.tier-core circle { fill: color-mix(in srgb, var(--primary) 22%, var(--surface)); stroke: var(--primary); }
+.atk-node.tier-users circle { fill: color-mix(in srgb, var(--inspect) 18%, var(--surface)); stroke: var(--inspect); }
+.atk-node.kind-anywhere circle { fill: color-mix(in srgb, var(--danger) 25%, var(--surface)); stroke: var(--danger); }
+.atk-node.kind-origin circle { stroke-width: 3; }
+.atk-node .atk-halo { fill: none; stroke: var(--primary); stroke-dasharray: 3 3; }
+.atk-node:focus-visible circle { stroke: var(--primary); stroke-width: 4; outline: none; }
+.atk-node.dim, .atk-edge.dim { opacity: 0.12; }
+.atk-side { max-block-size: 82vh; overflow: auto; }
+.atk-paths { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.atk-paths > li { border-block-end: 1px solid var(--border); padding-block: 0.35rem; }
+.atk-paths > li.open { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.atk-path { text-align: start; font-weight: 500; }
+.atk-reasons { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-block-start: 0.25rem; }
+.chip.reason-anywhere, .chip.reason-tier_skip, .chip.reason-default_action { border-color: var(--danger); color: var(--danger); }
+.chip.reason-uninspected, .chip.reason-any_service { border-color: var(--warn); color: var(--warn); }
+.chip.chip-any { border-color: var(--warn); color: var(--warn); }
+.atk-hops { padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: 0.5rem; margin-block: 0.5rem; }
+.atk-detail { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.atk-detail h2 { font-size: 1rem; margin: 0; }
+.atk-legend { gap: 0.9rem; margin-block-start: 0.4rem; }
+@media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } }

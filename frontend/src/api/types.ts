@@ -806,3 +806,79 @@ export interface Changeset {
 export interface ChangesetDetail extends Changeset {
   items: ChangesetItem[];
 }
+
+/* ---- attack surface / blast radius ---- */
+
+export type AttackMode = 'to' | 'from';
+
+export interface AttackTarget {
+  id: string;
+  label: string;
+  tier: string;
+  networks: string[];
+}
+
+export interface AttackRule {
+  policy_id: string;
+  policy: string;
+  id: string;
+  name: string;
+  index: number;
+  action: string;
+  inspected: boolean;
+  partial: boolean;
+  default: boolean;
+  hits: number | null;
+}
+
+export interface AttackNode {
+  id: string;
+  label: string;
+  tier: string | null;
+  kind: 'origin' | 'anywhere' | 'unclassified' | 'system';
+  depth: number;
+  networks: string[];
+}
+
+export interface AttackEdge {
+  id: string;
+  src: string;
+  dst: string;
+  depth: number;
+  services: string[];
+  apps: string[];
+  rules: AttackRule[];
+  rule_count: number;
+  risk: 'green' | 'yellow' | 'red';
+}
+
+export interface AttackHop {
+  services: string[];
+  apps: string[];
+  rules: AttackRule[];
+  rule_count: number;
+}
+
+export interface AttackPath {
+  score: number;
+  reasons: string[];
+  steps: { nodes: string[]; networks: string[] }[];
+  hops: AttackHop[];
+}
+
+export interface AttackSurface {
+  mode: AttackMode;
+  origin: { nodes: string[]; networks: string[] };
+  nodes: AttackNode[];
+  edges: AttackEdge[];
+  paths: AttackPath[];
+  summary: {
+    paths: number;
+    entry_points: number;
+    anywhere: boolean;
+    shortest: number | null;
+    services: string[];
+    reached: number;
+    truncated: boolean;
+  };
+}

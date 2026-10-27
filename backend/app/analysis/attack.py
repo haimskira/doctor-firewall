@@ -43,7 +43,7 @@ Mode = Literal["to", "from"]
 
 MAX_DEPTH = 4
 MAX_FRONTIER = 400  # distinct address sets expanded per layer
-MAX_PATHS = 200
+MAX_PATHS = 2000
 MAX_EDGES = 1500
 PERMIT_ACTIONS = {"access": {"ALLOW", "TRUST"}, "prefilter": {"FASTPATH"}}
 PERMIT_DEFAULTS = {"PERMIT", "TRUST", "NETWORK_DISCOVERY", "ALLOW"}
@@ -309,25 +309,22 @@ class _Path:
 
 
 def _paths(surface: Surface) -> tuple[list[_Path], bool]:
-    """All simple paths from the origin, shortest first, capped; every prefix is a path."""
-    adjacency: dict[AddressSet, list[_Edge]] = defaultdict(list)
-    for e in surface.edges:
-        adjacency[e.near].append(e)
+    """The shortest path to every address set the search reached (one per set; an entry from
+    "anywhere" once per set it reaches), shortest first and capped."""
+    best: dict[AddressSet, _Path] = {surface.origin: _Path(sets=[surface.origin], edges=[])}
     paths: list[_Path] = []
-    layer = [_Path(sets=[surface.origin], edges=[])]
-    for _ in range(surface.depth):
-        following: list[_Path] = []
-        for path in layer:
-            for e in adjacency.get(path.sets[-1], []):
-                if e.far in path.sets:
-                    continue
-                longer = _Path(sets=[*path.sets, e.far], edges=[*path.edges, e])
-                paths.append(longer)
-                if len(paths) >= MAX_PATHS:
-                    return paths, True
-                if not e.far.any:
-                    following.append(longer)
-        layer = following
+    for e in sorted(surface.edges, key=lambda e: e.depth):
+        base = best.get(e.near)
+        if base is None or e.far in base.sets:
+            continue
+        path = _Path(sets=[*base.sets, e.far], edges=[*base.edges, e])
+        if not e.far.any:
+            if e.far in best:
+                continue
+            best[e.far] = path
+        paths.append(path)
+        if len(paths) >= MAX_PATHS:
+            return paths, True
     return paths, False
 
 
@@ -364,39 +361,38 @@ def describe(surface: Surface, assets: AssetIndex, labels: dict[str, str]) -> di
     node_depth: dict[str, int] = dict.fromkeys(origin_nodes, 0)
     node_nets: dict[str, set[str]] = defaultdict(set)
     edge_out: dict[tuple[str, str], dict[str, Any]] = {}
-    for p in paths:
-        for distance, addresses in enumerate(p.sets):
+    # The map shows the whole search graph; the path list explains it one path per entry.
+    for e in sorted(surface.edges, key=lambda e: e.depth):
+        for n in nodes_of(e.far):
+            node_depth[n] = min(node_depth.get(n, e.depth), e.depth)
+        src, dst = e.flow(mode)
+        for addresses in (src, dst):
             for n in nodes_of(addresses):
-                node_depth[n] = min(node_depth.get(n, distance), distance)
-        for e in p.edges:
-            src, dst = e.flow(mode)
-            for addresses in (src, dst):
-                for n in nodes_of(addresses):
-                    node_nets[n].update(cidrs(addresses, 3))
-            for s in nodes_of(src):
-                for d in nodes_of(dst):
-                    if s == d:
-                        continue
-                    out = edge_out.setdefault(
-                        (s, d),
-                        {
-                            "id": f"{s}->{d}",
-                            "src": s,
-                            "dst": d,
-                            "depth": e.depth,
-                            "services": set(),
-                            "apps": set(),
-                            "rules": {},
-                            "risk": "green",
-                        },
-                    )
-                    out["depth"] = min(out["depth"], e.depth)
-                    for hop in e.hops:
-                        out["services"].update(hop.services)
-                        out["apps"].update(hop.apps)
-                        out["rules"].setdefault(hop.fmc_id, hop.describe())
-                        if RISK_ORDER.get(hop.risk, 0) > RISK_ORDER.get(out["risk"], 0):
-                            out["risk"] = hop.risk
+                node_nets[n].update(cidrs(addresses, 3))
+        for s in nodes_of(src):
+            for d in nodes_of(dst):
+                if s == d:
+                    continue
+                out = edge_out.setdefault(
+                    (s, d),
+                    {
+                        "id": f"{s}->{d}",
+                        "src": s,
+                        "dst": d,
+                        "depth": e.depth,
+                        "services": set(),
+                        "apps": set(),
+                        "rules": {},
+                        "risk": "green",
+                    },
+                )
+                out["depth"] = min(out["depth"], e.depth)
+                for hop in e.hops:
+                    out["services"].update(hop.services)
+                    out["apps"].update(hop.apps)
+                    out["rules"].setdefault(hop.fmc_id, hop.describe())
+                    if RISK_ORDER.get(hop.risk, 0) > RISK_ORDER.get(out["risk"], 0):
+                        out["risk"] = hop.risk
     edges = [
         {
             **e,
