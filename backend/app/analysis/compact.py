@@ -358,8 +358,10 @@ def recommend_compact_groups(
             estate, infos, group.fmc_id, old_leaves, new_leaves, family
         )
         removed_count = len(members) - len(kept_refs)
-        title = f"{group.name}: {len(members)} -> {len(kept_refs)} members, same addresses" + (
-            f" (~{ace_delta:,} ACEs in {rules} rule(s))" if ace_delta else ""
+        title = (
+            f"{group.name}: {len(members)} -> {len(kept_refs)} members, same "
+            + ("ports" if family is PORTS else "addresses")
+            + (f" (~{ace_delta:,} ACEs in {rules} rule(s))" if ace_delta else "")
         )
         drafts.append(
             Draft(
