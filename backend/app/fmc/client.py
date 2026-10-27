@@ -13,6 +13,10 @@ Procedures implemented here (Cisco FMC REST API Quick Start Guide 10.1):
 * Hard API limits (300 GET/min per IP, 10 concurrent connections) are respected with
   a client-side token bucket (default 240/min) and a concurrency cap (default 4);
   HTTP 429 is retried with exponential backoff (``Retry-After`` honoured).
+* A connection that could not be opened (``ConnectError``: refused, no route, name not
+  resolved) is retried ``connect_retries`` times with exponential backoff — the request
+  never reached the FMC, so this is safe for writes too. Failures after the request may
+  have been sent (read errors, timeouts) are never retried: a write might have landed.
 * Collections are read with ``offset``/``limit`` paging (max 1000 per page).
 
 TLS: the server certificate is always verified against the internal trust store,
@@ -80,6 +84,7 @@ class ThrottlePolicy:
     max_retries: int = 5  # on HTTP 429
     backoff_base: float = 2.0
     max_backoff: float = 60.0
+    connect_retries: int = 0  # brief network loss; the services pass settings.fmc_connect_retries
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep, compare=False)
 
 
@@ -223,15 +228,31 @@ class FmcSession:
 
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         attempt = 0
+        connect_attempt = 0
         while True:
             await self._bucket.acquire()
+            response: httpx.Response | None = None
             async with self._concurrency:
                 try:
                     response = await self._client.request(method, path, **kwargs)
                 except httpx.TransportError as exc:
                     if _is_tls_failure(exc):
                         raise FmcTlsError("TLS verification of the FMC failed") from exc
-                    raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
+                    # Only a connection that never opened is safe to repeat (writes too).
+                    if (
+                        type(exc) is not httpx.ConnectError
+                        or connect_attempt >= self._throttle.connect_retries
+                    ):
+                        raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
+            if response is None:
+                delay = min(
+                    self._throttle.backoff_base * float(2**connect_attempt),
+                    self._throttle.max_backoff,
+                )
+                log.warning("FMC connection failed; retrying", extra={"delay_s": delay})
+                await self._throttle.sleep(delay)
+                connect_attempt += 1
+                continue
             if response.status_code != 429:
                 break
             if attempt >= self._throttle.max_retries:

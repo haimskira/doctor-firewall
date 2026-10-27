@@ -19,6 +19,7 @@ from app.auth.rbac import Permission
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.enforce.batching import Item, ItemTooLargeError, batch, conflicts
+from app.enforce.executor import rollback_resumable, stale_after_run
 from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.inventory import Cluster, ClusterPolicy, Snapshot
@@ -55,6 +56,9 @@ class BatchOut(BaseModel):
     finished_at: datetime | None
     error: str | None
     results: list[dict[str, Any]]
+    # Undo steps saved for this batch that are not undone yet (a rollback can be resumed).
+    undo_pending: int
+    rollback_resumable: bool
 
 
 class ItemOut(BaseModel):
@@ -123,6 +127,12 @@ def _batch_out(b: Batch) -> BatchOut:
         finished_at=b.finished_at,
         error=b.error,
         results=b.results,
+        undo_pending=sum(1 for step in b.journal if step.get("state") != "undone")
+        if b.status != "deployed"
+        else 0,
+        rollback_resumable=rollback_resumable(
+            b, datetime.now(UTC), stale_after_run(get_settings())
+        ),
     )
 
 
@@ -454,6 +464,48 @@ def run_batch(
     )
     db.commit()
     jobs.enqueue_batch(target.id)
+    return _out(db, cs)
+
+
+@router.post(
+    "/changesets/{changeset_id}/batches/{seq}/rollback",
+    response_model=ChangesetOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def resume_batch_rollback(
+    changeset_id: int, seq: int, request: Request, db: DbDep, audit: AuditDep, who: ApproverDep
+) -> ChangesetOut:
+    """Finish the rollback of a batch that could not be fully undone (asynchronous).
+
+    Only restores the configuration the batch started from, so any approver may run it
+    (the author included): it never writes anything that was not there before.
+    """
+    cs = db.get(Changeset, changeset_id)
+    if cs is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    target = db.scalar(
+        select(Batch).where(Batch.changeset_id == cs.id, Batch.seq == seq).with_for_update()
+    )
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    if not rollback_resumable(target, datetime.now(UTC), stale_after_run(get_settings())):
+        raise HTTPException(status.HTTP_409_CONFLICT, "nothing_to_undo")
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        "changeset.batch_rollback",
+        cs.title,
+        {
+            "changeset_id": cs.id,
+            "batch": seq,
+            "ticket_id": cs.ticket_id,
+            "steps": sum(1 for step in target.journal if step.get("state") != "undone"),
+        },
+    )
+    db.commit()
+    jobs.enqueue_rollback(target.id)
     return _out(db, cs)
 
 

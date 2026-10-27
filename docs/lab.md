@@ -68,6 +68,8 @@ deployment, automatic rollback on any failure. Pull again to confirm the result.
 
 ## Notes from the real FMC 10.1 lab
 
+The lab network dropped the FMC for seconds at a time, which is what the resumable rollback
+(see [enforcement.md](enforcement.md#when-the-fmc-goes-away-mid-batch)) was built and tested on.
 See [architecture.md](architecture.md#payload-validation-before-production). In particular: object
 names are unique **ignoring case** (a built-in `TCP_high_ports` blocks `TCP_HIGH_PORTS`), and the
 `section` and `category` query parameters may not be combined when inserting a rule.

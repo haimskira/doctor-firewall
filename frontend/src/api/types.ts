@@ -771,6 +771,10 @@ export interface ChangesetBatch {
   finished_at: string | null;
   error: string | null;
   results: BatchResult[];
+  /** Saved undo steps not yet undone. */
+  undo_pending: number;
+  /** The rollback was interrupted (FMC unreachable) and can be finished. */
+  rollback_resumable: boolean;
 }
 
 export interface ChangesetItem {

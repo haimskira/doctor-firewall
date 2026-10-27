@@ -8,10 +8,15 @@ This module is the only code that changes FMC configuration. Guarantees:
 * Before every write it re-reads the object and compares it with the plan's ``expect``
   (name, field / member identities). Any difference — someone changed it since the snapshot —
   stops the batch before that write ("drift").
-* Every write is logged with what is needed to undo it. If a write, the verification or the
-  deploy fails, the writes already made are undone in reverse order (ids of re-created
-  objects are mapped), and the batch ends ``rolled_back`` (or ``failed`` if even the undo
-  could not be completed — reported loudly, with the remaining steps).
+* Every write's undo step is journaled in the database *before* the write is sent. If a
+  write, the verification or the deploy fails, the journal is undone in reverse order (ids
+  of re-created objects are mapped), and the batch ends ``rolled_back`` — or ``failed`` if
+  even the undo could not be completed (FMC unreachable), reported loudly; the journal
+  stays, and :func:`resume_rollback` finishes it later.
+* A write whose answer was lost (the connection dropped after sending) may or may not have
+  landed. Every undo step is therefore idempotent: restoring a pre-image is a PUT, a create
+  is undone by finding the object by name (none found: it never landed), and a deleted
+  object is re-created only if nothing with its name exists.
 * After the writes, every touched object is re-read and checked against the intended state;
   then the affected devices are deployed and the deployment task is polled to completion.
 """
@@ -25,7 +30,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -90,6 +95,7 @@ PROTOCOL_NUMBERS = {"TCP": "6", "UDP": "17", "SCTP": "132"}
 DEFAULT_VARIABLE_SET = "Default-Set"
 READ_ONLY_KEYS = ("id", "links", "metadata")
 DEPLOYED = frozenset({"deployed", "success", "succeeded", "completed"})
+ROLLBACK_ROUNDS = 3  # passes over the journal before a rollback is reported as incomplete
 DEPLOY_FAILED = frozenset({"failed", "error", "aborted", "cancelled"})
 
 
@@ -169,11 +175,29 @@ def _replace_ids(value: Any, mapping: dict[str, str]) -> Any:
     return value
 
 
+def _placement(meta: Any) -> dict[str, str | int]:
+    """Where a rule goes: its category, else its section (the FMC refuses both together)."""
+    if not isinstance(meta, dict):
+        return {}
+    if meta.get("category") and meta["category"] != "--Undefined--":
+        return {"category": str(meta["category"])}
+    if meta.get("section"):
+        return {"section": str(meta["section"]).lower()}
+    return {}
+
+
 class _Created(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
     type: str
     name: str
+
+
+def _created(made: Any, what: str) -> _Created:
+    try:
+        return _Created.model_validate(made)
+    except ValidationError as exc:
+        raise BatchError("unexpected_response", what) from exc
 
 
 # ------------------------------------------------------------------ the writer
@@ -185,10 +209,16 @@ class Writer:
     adapter: FmcAdapter
     domain: str
     temps: dict[str, dict[str, Any]] = field(default_factory=dict)
-    undo: list[dict[str, Any]] = field(default_factory=list)
+    undo: list[dict[str, Any]] = field(default_factory=list)  # the journal
     results: list[dict[str, Any]] = field(default_factory=list)
     checks: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
+    persist: Callable[[list[dict[str, Any]]], None] | None = None
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     _variable_set: dict[str, Any] | None = None
+
+    def save(self) -> None:
+        if self.persist is not None:
+            self.persist(copy.deepcopy(self.undo))
 
     def path(self, suffix: str) -> str:
         return self.adapter.config_path(self.domain, suffix)
@@ -278,6 +308,35 @@ class Writer:
         except FmcWriteRejectedError as exc:
             raise BatchError("write_rejected", exc.description or str(exc)) from exc
 
+    async def journaled(
+        self,
+        step: dict[str, Any],
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        params: dict[str, str | int] | None = None,
+        applied: Callable[[Any], None] | None = None,
+    ) -> Any:
+        """A write whose undo ``step`` is saved first; ``applied`` completes it afterwards.
+
+        Refused by the FMC (4xx): nothing changed, the step is dropped. Any other failure
+        (connection lost, 5xx) leaves the step as ``intent`` — the write may have landed.
+        """
+        step["state"] = "intent"
+        self.undo.append(step)
+        self.save()
+        try:
+            made = await self.write(method, path, body, params)
+        except BatchError:
+            self.undo.remove(step)
+            self.save()
+            raise
+        if applied is not None:
+            applied(made)
+        step["state"] = "applied"
+        self.save()
+        return made
+
     async def create_object(self, op: dict[str, Any]) -> None:
         body: dict[str, Any] = {"name": op["name"], "type": op["type"]}
         kind = op.get("kind")
@@ -294,13 +353,20 @@ class Writer:
             body.update(members)
         else:
             raise BatchError("unsupported_object_kind", str(kind))
-        made = await self.write("POST", self.object_path(op["type"]), body)
-        try:
-            created = _Created.model_validate(made)
-        except ValidationError as exc:
-            raise BatchError("unexpected_response", "object create") from exc
+        step: dict[str, Any] = {
+            "undo": "delete",
+            "find": {"path": self.object_path(op["type"]), "name": op["name"]},
+        }
+
+        def applied(made: Any) -> None:
+            created = _created(made, "object create")
+            step["path"] = self.object_path(created.type, created.id)
+
+        made = await self.journaled(
+            step, "POST", self.object_path(op["type"]), body, applied=applied
+        )
+        created = _created(made, "object create")
         self.temps[op["temp"]] = {"id": created.id, "type": created.type, "name": created.name}
-        self.undo.append({"method": "DELETE", "path": self.object_path(created.type, created.id)})
         self.results.append({"op": "create_object", "name": created.name, "id": created.id})
 
         async def verify() -> None:
@@ -320,8 +386,9 @@ class Writer:
         body.pop("objects", None)
         body.pop("literals", None)
         body.update(_field_json(op["members"], self.temps) or {})
-        await self.write("PUT", path, body)
-        self.undo.append({"method": "PUT", "path": path, "body": self._clean(item)})
+        await self.journaled(
+            {"undo": "restore", "path": path, "body": self._clean(item)}, "PUT", path, body
+        )
         self.results.append(
             {"op": "update_group", "name": op.get("object_name"), "id": op["object"]}
         )
@@ -343,8 +410,12 @@ class Writer:
             raise BatchError("drift", f"object {op.get('object_name')} was renamed in the FMC")
         body = self._clean(item, keep_id=True)
         body["name"] = op["name"]
-        await self.write("PUT", path, body)
-        self.undo.append({"method": "PUT", "path": path, "body": self._clean(item, keep_id=True)})
+        await self.journaled(
+            {"undo": "restore", "path": path, "body": self._clean(item, keep_id=True)},
+            "PUT",
+            path,
+            body,
+        )
         self.results.append({"op": "rename_object", "name": op["name"], "id": op["object"]})
 
         async def verify() -> None:
@@ -358,14 +429,16 @@ class Writer:
         item = await self.get(path)
         if item.get("name") != op["expect"]["name"]:
             raise BatchError("drift", f"object {op.get('object_name')} was renamed in the FMC")
-        await self.write("DELETE", path)
-        self.undo.append(
+        await self.journaled(
             {
-                "method": "POST",
+                "undo": "recreate",
                 "path": self.object_path(op["type"]),
                 "body": self._clean(item),
+                "name": item["name"],
                 "recreates": op["object"],
-            }
+            },
+            "DELETE",
+            path,
         )
         self.results.append(
             {"op": "delete_object", "name": op.get("object_name"), "id": op["object"]}
@@ -387,8 +460,12 @@ class Writer:
         self.apply_fields(body, op.get("set", {}))
         if "name" in op:
             body["name"] = op["name"]
-        await self.write("PUT", path, body)
-        self.undo.append({"method": "PUT", "path": path, "body": self._clean(item, keep_id=True)})
+        await self.journaled(
+            {"undo": "restore", "path": path, "body": self._clean(item, keep_id=True)},
+            "PUT",
+            path,
+            body,
+        )
         self.results.append({"op": "update_rule", "name": body["name"], "id": op["rule"]})
         await self._expect_rule(op, path, body["name"])
 
@@ -400,24 +477,22 @@ class Writer:
         index = (anchor.get("metadata") or {}).get("ruleIndex")
         if not isinstance(index, int):
             raise BatchError("unexpected_response", "rule without ruleIndex")
-        meta = source.get("metadata") or {}
-        params: dict[str, str | int] = {"insertAfter": index}
-        # The FMC refuses section and category together: a category implies its section.
-        if meta.get("category") and meta["category"] != "--Undefined--":
-            params["category"] = str(meta["category"])
-        elif meta.get("section"):
-            params["section"] = str(meta["section"]).lower()
+        params: dict[str, str | int] = {"insertAfter": index, **_placement(source.get("metadata"))}
         body = self._clean(source)
         body["name"] = op["name"]
         self.apply_fields(body, op.get("set", {}))
-        made = await self.write("POST", self.rule_base(op), body, params)
-        try:
-            created = _Created.model_validate(made)
-        except ValidationError as exc:
-            raise BatchError("unexpected_response", "rule create") from exc
+        step: dict[str, Any] = {
+            "undo": "delete",
+            "find": {"path": self.rule_base(op), "name": op["name"]},
+        }
+
+        def applied(made: Any) -> None:
+            step["path"] = f"{self.rule_base(op)}/{_created(made, 'rule create').id}"
+
+        made = await self.journaled(step, "POST", self.rule_base(op), body, params, applied)
+        created = _created(made, "rule create")
         self.temps[op["temp"]] = {"id": created.id, "type": created.type, "name": created.name}
         path = f"{self.rule_base(op)}/{created.id}"
-        self.undo.append({"method": "DELETE", "path": path})
         self.results.append({"op": "create_rule", "name": created.name, "id": created.id})
         await self._expect_rule(op, path, op["name"])
 
@@ -427,19 +502,21 @@ class Writer:
         if item.get("name") != op["expect"]["name"]:
             raise BatchError("drift", f"rule {op.get('rule_name')} was renamed in the FMC")
         meta = item.get("metadata") or {}
-        await self.write("DELETE", path)
         params: dict[str, str | int] = {}
         if isinstance(meta.get("ruleIndex"), int):
             params["insertBefore"] = int(meta["ruleIndex"])
-        if meta.get("section"):
-            params["section"] = str(meta["section"]).lower()
-        self.undo.append(
+        params.update(_placement(meta))
+        await self.journaled(
             {
-                "method": "POST",
+                "undo": "recreate",
                 "path": self.rule_base(op),
                 "body": self._clean(item),
                 "params": params,
-            }
+                "name": item["name"],
+                "recreates": op["rule"],
+            },
+            "DELETE",
+            path,
         )
         self.results.append({"op": "delete_rule", "name": op.get("rule_name"), "id": op["rule"]})
 
@@ -504,8 +581,12 @@ class Writer:
                 body["variableSet"] = dict(await self.default_variable_set())
         if "file" in op:
             body["filePolicy"] = dict(op["file"])
-        await self.write("PUT", path, body)
-        self.undo.append({"method": "PUT", "path": path, "body": self._clean(item, keep_id=True)})
+        await self.journaled(
+            {"undo": "restore", "path": path, "body": self._clean(item, keep_id=True)},
+            "PUT",
+            path,
+            body,
+        )
         self.results.append({"op": "set_inspection", "name": body["name"], "id": op["rule"]})
         wanted = (
             body["action"],
@@ -556,25 +637,74 @@ class Writer:
         for check in self.checks:
             await check()
 
-    async def rollback(self) -> list[str]:
-        """Undo in reverse order; returns the steps that could not be undone."""
-        remap: dict[str, str] = {}
+    async def rollback(self, rounds: int = 1, wait: float = 0.0) -> list[str]:
+        """Undo the journal in reverse order; returns the steps that could not be undone.
+
+        A step that fails is skipped and the pass continues; up to ``rounds`` passes are made
+        (``wait`` seconds apart) so a short outage of the FMC does not leave a half-undone
+        batch. Each finished step is saved as ``undone``, so a later resume skips it.
+        """
         failed: list[str] = []
-        for step in reversed(self.undo):
-            body = _replace_ids(step.get("body"), remap) if step.get("body") is not None else None
-            path = step["path"]
-            for old, new in remap.items():
-                path = path.replace(f"/{old}", f"/{new}")
-            if isinstance(body, dict) and "id" in body:
-                body["id"] = remap.get(body["id"], body["id"])
-            try:
-                made = await self.fmc.write_json(step["method"], path, body, step.get("params"))
-            except FmcError as exc:
-                failed.append(f"{step['method']} {path}: {scrub_text(str(exc))[:120]}")
-                continue
-            if step.get("recreates") and isinstance(made, dict) and isinstance(made.get("id"), str):
-                remap[str(step["recreates"])] = made["id"]
+        for attempt in range(rounds):
+            if attempt:
+                await self.sleep(wait)
+            failed = []
+            for step in reversed(self.undo):
+                if step.get("state") == "undone":
+                    continue
+                remap = {
+                    str(s["recreates"]): str(s["recreated_as"])
+                    for s in self.undo
+                    if s.get("recreated_as") and s.get("recreates")
+                }
+                try:
+                    await self._undo(step, remap)
+                except (BatchError, FmcError) as exc:
+                    what = step.get("name") or step.get("path") or step.get("find", {}).get("name")
+                    failed.append(f"{step.get('undo')} {what}: {scrub_text(str(exc))[:120]}")
+                    continue
+                step["state"] = "undone"
+                self.save()
+            if not failed:
+                break
         return failed
+
+    async def _undo(self, step: dict[str, Any], remap: dict[str, str]) -> None:
+        kind = step.get("undo")
+        path = str(step.get("path") or "")
+        for old, new in remap.items():
+            path = path.replace(f"/{old}", f"/{new}")
+        if kind == "restore":
+            await self.fmc.write_json("PUT", path, _replace_ids(step["body"], remap))
+        elif kind == "delete":
+            if not path:  # the create's answer was lost: did it land?
+                find = step["find"]
+                found = await self._find(str(find["path"]), str(find["name"]))
+                if found is None:
+                    return
+                path = f"{find['path']}/{found}"
+            try:
+                await self.fmc.write_json("DELETE", path)
+            except FmcWriteRejectedError as exc:
+                if exc.status != 404:  # already gone is what we want
+                    raise
+        elif kind == "recreate":
+            existing = await self._find(path, str(step["name"]))
+            if existing is None:
+                body = _replace_ids(step["body"], remap)
+                made = await self.fmc.write_json("POST", path, body, step.get("params"))
+                existing = _created(made, "re-create").id
+            step["recreated_as"] = existing
+        else:
+            raise BatchError("unknown_undo_step", str(kind))
+
+    async def _find(self, collection: str, name: str) -> str | None:
+        """Id of the item named ``name`` in an FMC collection (names are unique there)."""
+        async for _offset, items in self.fmc.iter_pages(collection, params={"expanded": "false"}):
+            for item in items:
+                if item.get("name") == name and isinstance(item.get("id"), str):
+                    return str(item["id"])
+        return None
 
 
 # ------------------------------------------------------------------ deploy
@@ -679,9 +809,7 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
         )
         if b.op_count > limit:
             raise BatchError("exceeds_deploy_limit", f"{b.op_count} > {limit}")
-        conn = db.get(FmcConnection, cs.connection_id) if cs.connection_id else None
-        if conn is None:
-            raise BatchError("connection_deleted")
+        connection, targets = _connection_and_targets(db, cs, b)
         items = list(
             db.scalars(
                 select(ChangesetItem)
@@ -692,15 +820,7 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
         ops = [op for item in items for op in item.plan.get("ops", [])]
         if len(ops) != b.op_count:
             raise BatchError("batch_inconsistent", f"{len(ops)} != {b.op_count}")
-        targets = set(b.clusters)
-        if cs.snapshot_id is not None:
-            for c in db.scalars(
-                select(Cluster).where(
-                    Cluster.snapshot_id == cs.snapshot_id, Cluster.fmc_id.in_(b.clusters)
-                )
-            ):
-                targets |= {str(m.get("id")) for m in c.members if m.get("id")}
-        b.status, b.started_at, b.error = "running", datetime.now(UTC), None
+        b.status, b.started_at, b.error, b.journal = "running", datetime.now(UTC), None, []
         cs.status = "in_progress"
         return _Plan(
             batch_id=b.id,
@@ -708,16 +828,48 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
             title=cs.title,
             ticket=cs.ticket_id,
             approved_by=b.approved_by,
-            connection=(
-                conn.host,
-                conn.port,
-                conn.username,
-                conn.password_enc,
-                FmcConnection.password_context(conn.id),
-            ),
+            connection=connection,
             ops=ops,
             targets=targets,
         )
+
+
+def _connection_and_targets(
+    db: Session, cs: Changeset, b: Batch
+) -> tuple[tuple[str, int, str, str, str], set[str]]:
+    conn = db.get(FmcConnection, cs.connection_id) if cs.connection_id else None
+    if conn is None:
+        raise BatchError("connection_deleted")
+    targets = set(b.clusters)
+    if cs.snapshot_id is not None:
+        for c in db.scalars(
+            select(Cluster).where(
+                Cluster.snapshot_id == cs.snapshot_id, Cluster.fmc_id.in_(b.clusters)
+            )
+        ):
+            targets |= {str(m.get("id")) for m in c.members if m.get("id")}
+    connection = (
+        conn.host,
+        conn.port,
+        conn.username,
+        conn.password_enc,
+        FmcConnection.password_context(conn.id),
+    )
+    return connection, targets
+
+
+def _journal_sink(
+    sessions: sessionmaker[Session], batch_id: int
+) -> Callable[[list[dict[str, Any]]], None]:
+    """Persist the undo journal of a batch (its own short transaction, before each write)."""
+
+    def save(journal: list[dict[str, Any]]) -> None:
+        with sessions.begin() as db:
+            b = db.get(Batch, batch_id, with_for_update=True)
+            if b is not None:
+                b.journal = journal
+
+    return save
 
 
 def _unclaim(sessions: sessionmaker[Session], plan: _Plan, error: str | None = None) -> None:
@@ -785,6 +937,7 @@ async def execute_batch(
     lock: Callable[[str, int], Awaitable[Callable[[], Awaitable[None]] | None]],
     transport: Any = None,
     poll_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> dict[str, Any]:
     """Apply one approved batch. ``lock(key, ttl)`` returns a release callable or None if busy."""
     plan = _load(sessions, batch_id, settings)
@@ -810,11 +963,19 @@ async def execute_batch(
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(
-                requests_per_minute=settings.fmc_requests_per_minute, concurrency=1
+                requests_per_minute=settings.fmc_requests_per_minute,
+                concurrency=1,
+                connect_retries=settings.fmc_connect_retries,
             ),
         ) as fmc:
             adapter = select_adapter(await server_version(fmc))
-            writer = Writer(fmc=fmc, adapter=adapter, domain=fmc.domain_uuid)
+            writer = Writer(
+                fmc=fmc,
+                adapter=adapter,
+                domain=fmc.domain_uuid,
+                persist=_journal_sink(sessions, plan.batch_id),
+                sleep=sleep,
+            )
             try:
                 for op in plan.ops:
                     await writer.run(op)
@@ -836,7 +997,7 @@ async def execute_batch(
                     "batch failed, rolling back",
                     extra={"batch": batch_id, "code": code, "detail": detail},
                 )
-                left = await writer.rollback()
+                left = await writer.rollback(ROLLBACK_ROUNDS, settings.rollback_retry_seconds)
                 if writer.undo and not left:
                     # Restore the devices to the rolled-back configuration as well.
                     try:
@@ -898,6 +1059,140 @@ async def execute_batch(
         "operations": len(writer.results),
         "task": task_id,
     }
+
+
+def rollback_resumable(b: Batch, now: datetime, stale_after: timedelta) -> bool:
+    """A failed batch with undo left to do (journal steps, or the re-deploy after them), or
+    one whose worker died mid-run."""
+    if b.status == "failed":
+        return bool(b.journal) and (
+            any(step.get("state") != "undone" for step in b.journal)
+            or any(r.get("op") == "undo_failed" for r in b.results)
+        )
+    return (
+        b.status == "running"
+        and b.started_at is not None
+        and now - b.started_at > stale_after
+        and bool(b.journal)
+    )
+
+
+async def resume_rollback(
+    batch_id: int,
+    *,
+    sessions: sessionmaker[Session],
+    box: SecretBox,
+    audit: AuditLog,
+    settings: Settings,
+    lock: Callable[[str, int], Awaitable[Callable[[], Awaitable[None]] | None]],
+    transport: Any = None,
+    poll_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> dict[str, Any]:
+    """Finish the rollback of a batch from its saved journal, then re-deploy the devices.
+
+    Every undo step is idempotent, so steps that already took effect (or writes that never
+    landed) are harmless. The batch ends ``rolled_back``, or stays ``failed`` with what is
+    still left.
+    """
+    with sessions.begin() as db:
+        b = db.get(Batch, batch_id, with_for_update=True)
+        cs = db.get(Changeset, b.changeset_id) if b is not None else None
+        if b is None or cs is None:
+            raise BatchError("not_found")
+        if not rollback_resumable(b, datetime.now(UTC), stale_after_run(settings)):
+            raise BatchError("nothing_to_undo")
+        connection, targets = _connection_and_targets(db, cs, b)
+        journal = copy.deepcopy(b.journal)
+        previous = (b.status, b.error)
+        results = [r for r in b.results if r.get("op") != "undo_failed"]
+        b.status = "running"
+        plan = _Plan(
+            batch_id=b.id,
+            changeset_id=cs.id,
+            title=cs.title,
+            ticket=cs.ticket_id,
+            approved_by=b.approved_by or "",
+            connection=connection,
+            ops=[],
+            targets=targets,
+        )
+
+    def put_back(reason: str) -> dict[str, Any]:
+        with sessions.begin() as db:
+            b = db.get(Batch, batch_id, with_for_update=True)
+            if b is not None:
+                b.status = "failed"
+                b.error = f"{previous[1] or ''} | resume: {reason}"[:500]
+        return {"ok": False, "error": reason, "status": "failed"}
+
+    host, port, username, token, context = connection
+    release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
+    if release is None:
+        return put_back("write_lock_busy")
+
+    def password_provider() -> bytearray:
+        return box.decrypt(token, context)
+
+    try:
+        async with FmcSession(
+            host=host,
+            port=port,
+            username=username,
+            password_provider=password_provider,
+            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            timeout=settings.fmc_timeout_seconds,
+            transport=transport,
+            throttle=ThrottlePolicy(
+                requests_per_minute=settings.fmc_requests_per_minute,
+                concurrency=1,
+                connect_retries=settings.fmc_connect_retries,
+            ),
+        ) as fmc:
+            adapter = select_adapter(await server_version(fmc))
+            writer = Writer(
+                fmc=fmc,
+                adapter=adapter,
+                domain=fmc.domain_uuid,
+                undo=journal,
+                persist=_journal_sink(sessions, batch_id),
+                sleep=sleep,
+            )
+            left = await writer.rollback(ROLLBACK_ROUNDS, settings.rollback_retry_seconds)
+            if not left:
+                try:
+                    await deploy(
+                        fmc,
+                        adapter,
+                        fmc.domain_uuid,
+                        targets,
+                        poll_seconds=settings.deploy_poll_seconds
+                        if poll_seconds is None
+                        else poll_seconds,
+                        timeout_seconds=settings.deploy_timeout_seconds,
+                    )
+                except (BatchError, FmcError) as again:
+                    left.append(f"redeploy after rollback: {scrub_text(str(again))[:120]}")
+    except FmcError as exc:
+        return put_back(f"{exc.code}: {scrub_text(str(exc))[:200]}")
+    finally:
+        await release()
+    status = "rolled_back" if not left else "failed"
+    _finish(
+        sessions,
+        audit,
+        plan,
+        status,
+        error=previous[1] if not left else f"{previous[1] or ''} | resume: incomplete"[:500],
+        results=[*results, *({"op": "undo_failed", "detail": x} for x in left)],
+        task_id=None,
+    )
+    return {"ok": not left, "status": status, "undo_failed": left}
+
+
+def stale_after_run(settings: Settings) -> timedelta:
+    """A batch still ``running`` after this long has lost its worker (the job timed out)."""
+    return timedelta(seconds=settings.deploy_timeout_seconds + 3600)
 
 
 def redis_lock(redis: Any) -> Callable[[str, int], Awaitable[Callable[[], Awaitable[None]] | None]]:

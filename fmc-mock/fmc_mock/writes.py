@@ -341,7 +341,9 @@ def build_write_router(
                     return bad
                 params = request.query_params
                 if "section" in params and "category" in params:
-                    return _error(400, "query parameter section and category are not allowed together")
+                    return _error(
+                        400, "query parameter section and category are not allowed together"
+                    )
                 try:
                     if "insertAfter" in params:
                         position = int(params["insertAfter"])
@@ -527,7 +529,15 @@ def build_write_router(
                 k: v
                 for k, v in body.items()
                 if k
-                in ("deploy_fail", "fail_write_on", "cli_unsupported", "device_down", "cli_mixup")
+                in (
+                    "deploy_fail",
+                    "fail_write_on",
+                    "cli_unsupported",
+                    "device_down",
+                    "cli_mixup",
+                    "lost_answer_on",
+                    "outage_on",
+                )
             }
         )
         return JSONResponse({"faults": state.faults, "writes": state.writes})

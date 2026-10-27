@@ -3,6 +3,14 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-031 — Undo journal written before each write, idempotent undo
+In the lab the FMC connection dropped after a write was sent: the FMC applied it, the client never
+saw the answer, and the in-memory undo list could not be replayed once the FMC was reachable
+again. The undo step is now saved in the database *before* the write, every undo step is
+idempotent (restore by PUT, delete-by-name for creates, re-create only if the name is free), and
+an interrupted rollback can be resumed by an approver. Retrying the write itself is only done when
+the connection never opened; a request that may have reached the FMC is never repeated.
+
 ### D-030 — Flow view drawn in-house; theme stored per user
 The connectivity flow (Sankey) view is ~250 lines of our own layout + SVG rather than d3-sankey:
 one dependency less (supply chain), exact RTL mirroring, and colours straight from the CSS theme

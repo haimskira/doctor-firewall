@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     # Client-side throttling towards the FMC (hard limits: 300 GET/min, 10 connections).
     fmc_requests_per_minute: int = Field(default=240, ge=10, le=290)
     fmc_concurrency: int = Field(default=4, ge=1, le=8)
+    # Retries of a connection that could not be opened (a brief network loss mid-batch).
+    fmc_connect_retries: int = Field(default=3, ge=0, le=10)
 
     # Snapshots.
     snapshot_retention: int = Field(default=10, ge=2, le=500)
@@ -84,6 +86,8 @@ class Settings(BaseSettings):
     # Enforcement (phase 5): deploy polling and the cross-worker FMC write lock.
     deploy_poll_seconds: float = Field(default=10.0, ge=0.0, le=300.0)
     deploy_timeout_seconds: int = Field(default=1800, ge=60, le=6 * 3600)
+    # A rollback that could not finish (FMC unreachable) is retried after this pause.
+    rollback_retry_seconds: float = Field(default=30.0, ge=0, le=600)
     write_lock_ttl_seconds: int = Field(default=2 * 3600, ge=300, le=24 * 3600)
 
     # Runtime routing table ("show route" through the FMC, read-only; FMC 7.4.1+). Off: only

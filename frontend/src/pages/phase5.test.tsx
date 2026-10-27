@@ -31,10 +31,12 @@ const CS: ChangesetDetail = {
         { op: 'update_rule', name: 'MIXED', id: 'r12' },
         { op: 'create_rule', name: 'MIXED_SILVER', id: 'r99' },
       ],
+      undo_pending: 0, rollback_resumable: false,
     },
     {
       seq: 2, status: 'pending', op_count: 2, deploy_limit: 2, clusters: ['c1'], approved_by: null,
       approved_at: null, started_at: null, finished_at: null, error: null, results: [],
+      undo_pending: 0, rollback_resumable: false,
     },
   ],
   items: [
@@ -146,5 +148,36 @@ describe('DeployPage', () => {
     expect(within(batch).getByText('Rolled back')).toBeInTheDocument();
     expect(within(batch).getByText('Error: drift: rule MIXED: field dst_net changed in the FMC')).toBeInTheDocument();
     expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('offers to finish an interrupted rollback', async () => {
+    const [first, second] = CS.batches;
+    if (first === undefined || second === undefined) throw new Error('fixture');
+    const stuck: ChangesetDetail = {
+      ...CS,
+      status: 'failed',
+      batches: [
+        {
+          ...first,
+          status: 'failed',
+          error: 'unreachable: FMC unreachable: RemoteProtocolError',
+          results: [{ op: 'undo_failed', detail: 'restore MIXED: FMC unreachable: ConnectError' }],
+          undo_pending: 2,
+          rollback_resumable: true,
+        },
+        second,
+      ],
+    };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const calls = setup(me('appr', ['policy:read', 'deploy:approve']), stuck, (req) =>
+      req.url === '/api/changesets/3/batches/1/rollback' ? { status: 202, body: stuck } : undefined,
+    );
+    const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
+    const batch = within(panel).getByRole('article', { name: 'Batch 1' });
+    expect(within(batch).getByText(/rollback could not be completed \(2 steps left\)/)).toBeInTheDocument();
+    await userEvent.click(within(batch).getByRole('button', { name: 'Finish rollback' }));
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('batch 1 (2 steps)'));
+    expect(await screen.findByText(/Rollback queued/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/batches/1/rollback'))).toBe(true);
   });
 });

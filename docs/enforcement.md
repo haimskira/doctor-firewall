@@ -64,16 +64,35 @@ recommendations cannot enter a changeset.
 2. takes the **write lock** of that FMC (`df:fmc-write:<host>:<port>` in Redis, owner token,
    TTL) — one writer per FMC across all workers; if busy, the batch stays *approved*;
 3. for each operation: `GET` the object, compare with `expect` (**drift** stops the batch before
-   that write), write (one at a time; 429 is retried with back-off), record the undo step;
+   that write), save its undo step in the batch's **journal** (database), then write (one at a
+   time; 429 is retried with back-off; a connection that could not be opened is retried
+   `DF_FMC_CONNECT_RETRIES` times — never a request that may already have reached the FMC);
 4. **verifies** every touched object by reading it back;
 5. **deploys** the affected HA pairs / devices (`deployabledevices` → `deploymentrequests`) and
    polls `job/taskstatuses/{id}` until *Deployed* (timeout `DF_DEPLOY_TIMEOUT_SECONDS`);
-6. on any failure in 3–5: **undo** in reverse order (re-created objects get new ids, which are
-   mapped into later undo steps), redeploy the restored configuration, and end `rolled_back` —
-   or `failed` with the steps that could not be undone, so an operator can finish by hand.
+6. on any failure in 3–5: **undo** the journal in reverse order (re-created objects get new ids,
+   which are mapped into later undo steps; up to 3 passes, `DF_ROLLBACK_RETRY_SECONDS` apart),
+   redeploy the restored configuration, and end `rolled_back` — or `failed` with the steps that
+   could not be undone.
+
+### When the FMC goes away mid-batch
+
+Validated in the lab: the connection to the FMC dropped right after a delete was sent. The FMC
+had applied it, but the answer never arrived, and the rollback could not reach the FMC either.
+Therefore:
+
+* A write whose answer was lost stays in the journal as `intent` — it may have landed. Every undo
+  step is idempotent: a pre-image is restored with a PUT, a create is undone by finding the item
+  by name (nothing found: it never landed; 404 on delete: already gone), and a deleted item is
+  re-created only if nothing with its name exists.
+* The journal survives the worker. A `failed` batch with steps left shows **Finish rollback**
+  (`POST /api/changesets/{id}/batches/{seq}/rollback`, approver role — it only restores what was
+  there before). It resumes from the journal and redeploys. A batch left `running` by a dead
+  worker (older than the job timeout) can be finished the same way.
 
 Every step is audited (`changeset.create`, `batch_approve`, `batch_run`,
-`batch_deployed` / `batch_rolled_back` / `batch_failed` with ticket id, approver and task id).
+`batch_deployed` / `batch_rolled_back` / `batch_failed` with ticket id, approver and task id;
+`batch_rollback` when an operator finishes a rollback).
 
 ## Not done automatically (by design)
 

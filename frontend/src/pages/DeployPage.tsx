@@ -141,6 +141,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
     try {
       await api(path, 'POST');
       if (path.endsWith('/run')) setNotice(t('dep.queued'));
+      if (path.endsWith('/rollback')) setNotice(t('dep.rollbackQueued'));
       onChanged();
     } catch (err) {
       setError(errorCode(err));
@@ -219,9 +220,25 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
                     {t('dep.run')}
                   </button>
                 )}
+                {b.rollback_resumable && can('deploy:approve') && (
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busy}
+                    onClick={() =>
+                      void act(
+                        `${base}/batches/${String(b.seq)}/rollback`,
+                        t('dep.rollbackConfirm', { seq: b.seq, count: b.undo_pending }),
+                      )
+                    }
+                  >
+                    {t('dep.rollback')}
+                  </button>
+                )}
               </div>
             </header>
             {b.error !== null && <Alert kind="error">{t('dep.error', { error: b.error })}</Alert>}
+            {b.rollback_resumable && <Alert kind="error">{t('dep.rollbackPending', { count: b.undo_pending })}</Alert>}
             <div className="batch-body">
               <div>
                 <h3>{t('dep.items')}</h3>

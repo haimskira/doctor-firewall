@@ -114,3 +114,6 @@ class Batch(Base):
     error: Mapped[str | None] = mapped_column(String(512))
     # Per-operation outcome and what is needed to undo it (filled by the writer).
     results: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # Undo journal: each write's undo step, recorded *before* the write (state intent ->
+    # applied -> undone). Kept in the database so an interrupted rollback can be resumed.
+    journal: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)

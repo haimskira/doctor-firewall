@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from fmc_mock.auth import TokenStore
 from fmc_mock.limits import GET_PER_MINUTE, FmcLimitsMiddleware
+from fmc_mock.network import NetworkFaultsMiddleware
 from fmc_mock.resources import build_router
 from fmc_mock.seed import FmcData, generate
 from fmc_mock.writes import build_write_router
@@ -132,4 +133,5 @@ def create_app(
     writes, write_state = build_write_router(data, GLOBAL_DOMAIN_UUID, token_ok, regenerate)
     app.include_router(writes)
     app.state.writes = write_state
+    app.add_middleware(NetworkFaultsMiddleware, state=write_state)
     return app

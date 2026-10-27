@@ -238,6 +238,77 @@ def test_connection_errors_map_to_unavailable_and_tls(store: TokenStore) -> None
         asyncio.run(run(tls))
 
 
+def test_connection_refused_is_retried_then_surfaces(store: TokenStore) -> None:
+    """A brief network loss: the request never left, so it is retried (writes included)."""
+    good = _transport(store)
+    slept: list[float] = []
+    failures = {"left": 0}
+    sent: list[str] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if failures["left"] > 0:
+            failures["left"] -= 1
+            raise httpx.ConnectError("no route to host")
+        sent.append(request.method)
+        return await good.handle_async_request(request)
+
+    def session() -> FmcSession:
+        return FmcSession(
+            host="fmc-mock",
+            port=443,
+            username="api_user",
+            password_provider=lambda: bytearray(PASSWORD.encode()),
+            ssl_context=_ssl(),
+            timeout=5,
+            transport=httpx.MockTransport(handler),
+            throttle=ThrottlePolicy(connect_retries=3, sleep=fake_sleep),
+        )
+
+    async def run(fail: int) -> None:
+        async with session() as fmc:
+            failures["left"] = fail
+            await fmc.get_json(SERVER_VERSION_PATH)
+
+    asyncio.run(run(2))
+    assert [s for s in slept if s >= 1] == [2.0, 4.0]
+    slept.clear()
+    with pytest.raises(FmcUnavailableError):
+        asyncio.run(run(4))
+    assert [s for s in slept if s >= 1] == [2.0, 4.0, 8.0]
+
+
+def test_read_failures_are_never_retried(store: TokenStore) -> None:
+    """After the request may have reached the FMC a retry could repeat a write."""
+    good = _transport(store)
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/write":
+            calls["n"] += 1
+            raise httpx.ReadTimeout("no answer")
+        return await good.handle_async_request(request)
+
+    async def run() -> None:
+        async with FmcSession(
+            host="fmc-mock",
+            port=443,
+            username="api_user",
+            password_provider=lambda: bytearray(PASSWORD.encode()),
+            ssl_context=_ssl(),
+            timeout=5,
+            transport=httpx.MockTransport(handler),
+            throttle=ThrottlePolicy(connect_retries=3),
+        ) as fmc:
+            await fmc.write_json("POST", "/write", {"name": "x"})
+
+    with pytest.raises(FmcUnavailableError):
+        asyncio.run(run())
+    assert calls["n"] == 1
+
+
 def test_build_ssl_context(tmp_path: Path) -> None:
     with pytest.raises(FmcTlsError):
         build_ssl_context(tmp_path / "missing.pem")

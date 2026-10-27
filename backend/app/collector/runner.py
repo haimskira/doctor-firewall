@@ -125,6 +125,7 @@ async def run_collection(
             throttle=ThrottlePolicy(
                 requests_per_minute=settings.fmc_requests_per_minute,
                 concurrency=settings.fmc_concurrency,
+                connect_retries=settings.fmc_connect_retries,
             ),
         ) as fmc:
             version = await server_version(fmc)

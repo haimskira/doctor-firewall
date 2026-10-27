@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings, read_secret_file
 from app.db.session import get_sessionmaker
-from app.enforce.executor import execute_batch, redis_lock
+from app.enforce.executor import execute_batch, redis_lock, resume_rollback
 from app.fmc.client import FmcSession, build_ssl_context
 from app.models.audit import AuditRecord
 from app.models.enforce import Batch
@@ -63,6 +63,10 @@ def admin(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": login(client, "p5w-admin")}
 
 
+async def _no_wait(_seconds: float) -> None:
+    return None
+
+
 def _run(batch_id: int) -> dict[str, Any]:
     return asyncio.run(
         execute_batch(
@@ -73,6 +77,22 @@ def _run(batch_id: int) -> dict[str, Any]:
             settings=get_settings(),
             lock=redis_lock(get_redis()),
             poll_seconds=0,
+            sleep=_no_wait,
+        )
+    )
+
+
+def _resume(batch_id: int) -> dict[str, Any]:
+    return asyncio.run(
+        resume_rollback(
+            batch_id,
+            sessions=get_sessionmaker(),
+            box=get_secretbox(),
+            audit=get_audit(),
+            settings=get_settings(),
+            lock=redis_lock(get_redis()),
+            poll_seconds=0,
+            sleep=_no_wait,
         )
     )
 
@@ -237,6 +257,81 @@ def test_failure_mid_batch_rolls_everything_back(client: TestClient, admin: dict
     flow.close()
 
 
+def test_lost_answer_is_still_undone(client: TestClient, admin: dict[str, str]) -> None:
+    """The FMC applied the rename but the answer never came back: the undo restores it anyway."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    _, batch_id = flow.approved_batch([split, rename])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)["MIXED_TIERS_SQL"]
+    mock("POST", "/mock/faults", {"lost_answer_on": "GRP_APPS"})
+
+    result = _run(batch_id)
+    assert (result["ok"], result["status"]) == (False, "rolled_back"), result
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert "GRP_10.30.0.0" in groups
+    assert "GRP_APPS" not in groups
+    after = flow.rules(policy)
+    assert "MIXED_TIERS_SQL_SILVER" not in after
+    assert after["MIXED_TIERS_SQL"]["destinationNetworks"] == before["destinationNetworks"]
+    with get_sessionmaker()() as s:
+        batch = s.get(Batch, batch_id)
+        assert batch is not None
+        assert [step["state"] for step in batch.journal] == ["undone"] * 3
+    flow.close()
+
+
+def test_outage_mid_batch_keeps_the_journal_and_resumes(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """The lab case: the FMC goes away right after a write; the rollback finishes later."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)["MIXED_TIERS_SQL"]
+    mock("POST", "/mock/faults", {"outage_on": "MIXED_TIERS_SQL_SILVER"})
+
+    result = _run(batch_id)
+    assert (result["ok"], result["status"]) == (False, "failed"), result
+    assert len(result["undo_failed"]) == 2
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert (batch["undo_pending"], batch["rollback_resumable"]) == (2, True)
+    with get_sessionmaker()() as s:
+        saved = s.get(Batch, batch_id)
+        assert saved is not None
+        # The create was sent but never confirmed: its undo finds it by name.
+        assert [(x["undo"], x["state"]) for x in saved.journal] == [
+            ("restore", "applied"),
+            ("delete", "intent"),
+        ]
+    assert "MIXED_TIERS_SQL_SILVER" in flow.rules(policy)  # the FMC did apply it
+
+    url = f"/api/changesets/{cs_id}/batches/1/rollback"
+    assert flow.opt.post(url, headers=flow.oh).status_code == 403  # optimizers cannot
+    assert flow.appr.post(url, headers=flow.ah).status_code == 202  # queued for the worker
+    mock("POST", "/mock/faults", {})  # the FMC is back
+    resumed = _resume(batch_id)
+    assert (resumed["ok"], resumed["status"]) == (True, "rolled_back"), resumed
+    after = flow.rules(policy)
+    assert "MIXED_TIERS_SQL_SILVER" not in after
+    assert after["MIXED_TIERS_SQL"]["destinationNetworks"] == before["destinationNetworks"]
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert (batch["status"], batch["undo_pending"], batch["rollback_resumable"]) == (
+        "rolled_back",
+        0,
+        False,
+    )
+    assert not any(r["op"] == "undo_failed" for r in batch["results"])
+    assert flow.appr.post(url, headers=flow.ah).status_code == 409  # nothing left to undo
+    with get_sessionmaker()() as s:
+        actions = list(s.scalars(select(AuditRecord.action)))
+    assert "changeset.batch_rollback" in actions
+    assert "changeset.batch_rolled_back" in actions
+    flow.close()
+
+
 def test_deploy_failure_rolls_back_and_lock_busy_keeps_batch(
     client: TestClient, admin: dict[str, str]
 ) -> None:
@@ -294,9 +389,11 @@ def test_run_endpoint_enqueues_an_approved_batch(client: TestClient, admin: dict
 
 
 def test_unreachable_fmc_leaves_the_batch_approved(
-    client: TestClient, admin: dict[str, str]
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Nothing written: the batch can run again, and the operator sees why it did not."""
+    monkeypatch.setenv("DF_FMC_CONNECT_RETRIES", "1")  # one short retry, then give up
+    get_settings.cache_clear()
     flow = Flow(client, admin)
     split = flow.find("split_rule", "MIXED_TIERS_SQL")
     _cs, batch_id = flow.approved_batch([split])
