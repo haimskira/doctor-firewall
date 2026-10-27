@@ -97,6 +97,33 @@ function recRoutes(handler: Handler): Handler {
 }
 
 describe('RecommendationsPage', () => {
+  it('accepts a whole kind after a preview of its cost', async () => {
+    const calls = setup(
+      '/recommendations?kind=split_rule',
+      <Route path="/recommendations" element={<RecommendationsPage />} />,
+      recRoutes((req) => {
+        if (req.url === '/api/snapshots/7/recommendations/decisions') {
+          return {
+            status: 200,
+            body: { count: 12, deploy_cost: 240, ace_delta: -80, skipped: { not_executable: 2 }, deploy_limit: 100, batches: 3 },
+          };
+        }
+        return undefined;
+      }),
+      ['policy:read', 'changeset:write'],
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept all: Split rule by destination tier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Confirm a decision for many recommendations' });
+    expect(within(dialog).getByText(/Accept 12 recommendations .*240 changes in the FMC, about 3 deploy batches of up to 100/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Left out: 2 \(2 cannot be executed/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.url.endsWith('/decisions')).map((c) => c.body)).toEqual([
+      { status: 'accepted', kind: 'split_rule', dry_run: true },
+    ]);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Accept 12' }));
+    expect(await screen.findByText('12 recommendations accepted.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.url.endsWith('/decisions')).map((c) => c.body)[1]).toEqual({ status: 'accepted', kind: 'split_rule' });
+  });
+
   it('shows the queue, the inline and split previews, and records a local decision', async () => {
     const calls = setup(
       '/recommendations',

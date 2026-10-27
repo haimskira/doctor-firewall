@@ -903,3 +903,8 @@ th.sortable:hover .sort-icon { opacity: 1; }
 }
 .job-toast.job-failed { border-inline-start-color: var(--danger); }
 .job-toast .grow { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
+
+/* ---- bulk decisions ---- */
+.bulk-decision { display: flex; flex-direction: column; gap: 0.4rem; }
+.bulk-confirm { display: flex; flex-direction: column; gap: 0.4rem; border-inline-start: 4px solid var(--primary); max-inline-size: 42rem; }
+.bulk-confirm p { margin: 0; }

@@ -11,8 +11,10 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
@@ -22,8 +24,11 @@ from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.enforce.staleness import applied_fingerprints, stale_since
+from app.models.assets import ClusterSetting
+from app.models.enforce import Changeset, ChangesetItem
 from app.models.inventory import Policy, Snapshot
 from app.models.recommendations import (
     CONVENTION_KINDS,
@@ -116,6 +121,31 @@ class RecommendationsPage(BaseModel):
 class DecisionIn(StrictModel):
     status: Literal["accepted", "dismissed", "open"]
     note: Annotated[str, Field(max_length=512)] = ""
+
+
+class BulkDecisionIn(StrictModel):
+    """One decision for every recommendation matching a filter (the list's current filter)."""
+
+    status: Literal["accepted", "dismissed", "open"]
+    kind: Annotated[str | None, Field(pattern=KindPattern)] = None
+    policy: Annotated[str | None, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None
+    rule: Annotated[str | None, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None
+    q: Annotated[str | None, Field(max_length=128)] = None
+    note: Annotated[str, Field(max_length=512)] = ""
+    dry_run: bool = False
+
+
+class BulkDecisionOut(BaseModel):
+    count: int
+    deploy_cost: int
+    ace_delta: int
+    # Matching recommendations left alone, by reason.
+    skipped: dict[str, int]
+    deploy_limit: int
+    batches: int
+
+
+BULK_MAX = 5000
 
 
 class ConventionOut(BaseModel):
@@ -385,6 +415,119 @@ def decide(
     if current is not None:
         db.refresh(current)
     return _out(rec, current)
+
+
+@router.post("/snapshots/{snapshot_id}/recommendations/decisions", response_model=BulkDecisionOut)
+def decide_many(
+    snapshot_id: int,
+    body: BulkDecisionIn,
+    request: Request,
+    db: DbDep,
+    audit: AuditDep,
+    who: OptimizerDep,
+) -> BulkDecisionOut | JSONResponse:
+    """Accept or dismiss every open recommendation matching the filter, or reopen the accepted
+    ones (local only — nothing is staged or sent). ``dry_run`` reports what would change."""
+    snap = _snapshot(db, snapshot_id)
+    stale = stale_since(db, snap)
+    if body.status != "open" and stale is not None:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "snapshot_stale", "changeset": stale["changeset_id"]},
+        )
+    current_state = "accepted" if body.status == "open" else "open"
+    rows = db.execute(
+        _filtered(snapshot_id, body.kind, body.policy, current_state, body.q, body.rule)
+        .order_by(Recommendation.priority.desc(), Recommendation.id)
+        .limit(BULK_MAX + 1)
+    ).all()
+    if len(rows) > BULK_MAX:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "too_many", "limit": BULK_MAX},
+        )
+    skipped: dict[str, int] = {}
+    chosen: list[Recommendation] = []
+    if body.status == "accepted":
+        staged = set(
+            db.scalars(
+                select(ChangesetItem.fingerprint)
+                .join(Changeset, Changeset.id == ChangesetItem.changeset_id)
+                .where(Changeset.status.in_(("open", "in_progress")))
+            )
+        )
+        for rec, _decision in rows:
+            reason = (
+                "not_executable"
+                if not rec.plan.get("executable")
+                else "already_staged"
+                if rec.fingerprint in staged
+                else None
+            )
+            if reason is None:
+                chosen.append(rec)
+            else:
+                skipped[reason] = skipped.get(reason, 0) + 1
+    else:
+        chosen = [rec for rec, _decision in rows]
+    settings = get_settings()
+    limits = [
+        s.deploy_change_limit for s in db.scalars(select(ClusterSetting)) if s.deploy_change_limit
+    ]
+    limit = min(limits, default=settings.default_deploy_change_limit)
+    cost = sum(r.deploy_cost for r in chosen)
+    out = BulkDecisionOut(
+        count=len(chosen),
+        deploy_cost=cost,
+        ace_delta=sum(r.ace_delta for r in chosen),
+        skipped=skipped,
+        deploy_limit=limit,
+        batches=-(-cost // limit) if body.status == "accepted" else 0,
+    )
+    if body.dry_run or not chosen:
+        return out
+    fingerprints = [r.fingerprint for r in chosen]
+    if body.status == "open":
+        db.execute(
+            delete(RecommendationDecision).where(
+                RecommendationDecision.fingerprint.in_(fingerprints)
+            )
+        )
+    else:
+        db.execute(
+            pg_insert(RecommendationDecision)
+            .values(
+                [
+                    {
+                        "fingerprint": f,
+                        "status": body.status,
+                        "note": body.note,
+                        "decided_by": who.username,
+                    }
+                    for f in fingerprints
+                ]
+            )
+            .on_conflict_do_update(
+                index_elements=[RecommendationDecision.fingerprint],
+                set_={"status": body.status, "note": body.note, "decided_by": who.username},
+            )
+        )
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        f"recommendation.bulk_{body.status}",
+        snap.connection_name,
+        {
+            "snapshot_id": snapshot_id,
+            "filter": body.model_dump(include={"kind", "policy", "rule", "q"}, exclude_none=True),
+            "count": len(chosen),
+            "deploy_cost": cost,
+        },
+    )
+    db.commit()
+    return out
 
 
 @router.post(

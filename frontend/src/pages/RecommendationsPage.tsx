@@ -14,9 +14,12 @@ import { SortTh, useServerSort } from '../components/sort';
 import type { SortState } from '../components/sort';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
+import type { MessageKey } from '../i18n/messages';
 import { useOpLabel } from './DeployPage';
 
 const PAGE_SIZE = 100;
+// A changeset holds at most this many recommendations (server limit); the highest priority first.
+const STAGE_MAX = 500;
 const SORTS = ['priority', 'title', 'ace_delta', 'deploy_cost'] as const;
 const STATES = ['open', 'accepted', 'dismissed'] as const;
 
@@ -144,8 +147,19 @@ export function RecommendationsPage() {
                 ))}
               </select>
             </label>
+            {can('changeset:write') && snapshotId !== null && page.data.stale == null && (
+              <BulkDecision
+                snapshotId={snapshotId}
+                filter={{ kind, rule }}
+                acceptedView={state === 'accepted'}
+                onDone={(message) => {
+                  setNotice(message);
+                  page.reload();
+                }}
+              />
+            )}
             {accepted !== undefined && accepted.count > 0 && can('changeset:write') && snapshotId !== null && (
-              <StageForm snapshotId={snapshotId} />
+              <StageForm snapshotId={snapshotId} accepted={accepted.count} />
             )}
             {accepted !== undefined && (
               <span className="pe-total">
@@ -454,8 +468,133 @@ function Detail({
   );
 }
 
+interface BulkResult {
+  count: number;
+  deploy_cost: number;
+  ace_delta: number;
+  skipped: Record<string, number>;
+  deploy_limit: number;
+  batches: number;
+}
+
+/** Accept every open recommendation the list shows (its kind / rule filter), or reopen the
+    accepted ones — after a preview of how many, how many FMC changes and deploy batches. */
+function BulkDecision({
+  snapshotId,
+  filter,
+  acceptedView,
+  onDone,
+}: {
+  snapshotId: number;
+  filter: { kind: string | null; rule: string | null };
+  acceptedView: boolean;
+  onDone: (message: string) => void;
+}) {
+  const { t, tError } = useI18n();
+  const [preview, setPreview] = useState<{ status: 'accepted' | 'open'; result: BulkResult } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const url = `/api/snapshots/${String(snapshotId)}/recommendations/decisions`;
+  const scope = { ...(filter.kind === null ? {} : { kind: filter.kind }), ...(filter.rule === null ? {} : { rule: filter.rule }) };
+  const what = filter.kind === null ? t('rec.bulk.everything') : t(`rec.kind.${filter.kind}` as MessageKey);
+
+  async function ask(status: 'accepted' | 'open') {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<BulkResult>(url, 'POST', { status, ...scope, dry_run: true });
+      setPreview({ status, result });
+    } catch (err) {
+      setError(errorCode(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm() {
+    if (preview === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<BulkResult>(url, 'POST', { status: preview.status, ...scope });
+      setPreview(null);
+      onDone(t(preview.status === 'accepted' ? 'rec.bulk.accepted' : 'rec.bulk.reopened', { count: result.count }));
+    } catch (err) {
+      setError(errorCode(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const skipped = preview === null ? 0 : Object.values(preview.result.skipped).reduce((a, b) => a + b, 0);
+  return (
+    <div className="bulk-decision">
+      {preview === null ? (
+        <>
+          {!acceptedView && (
+            <button type="button" disabled={busy} onClick={() => void ask('accepted')}>
+              {t('rec.bulk.accept', { what })}
+            </button>
+          )}
+          {acceptedView && (
+            <button type="button" className="secondary" disabled={busy} onClick={() => void ask('open')}>
+              {t('rec.bulk.reopen', { what })}
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="bulk-confirm card" role="dialog" aria-label={t('rec.bulk.confirmTitle')}>
+          {preview.result.count === 0 ? (
+            <p>{t('rec.bulk.nothing')}</p>
+          ) : preview.status === 'accepted' ? (
+            <p>
+              {t('rec.bulk.previewAccept', {
+                count: preview.result.count,
+                what,
+                cost: preview.result.deploy_cost,
+                batches: preview.result.batches,
+                limit: preview.result.deploy_limit,
+              })}
+            </p>
+          ) : (
+            <p>{t('rec.bulk.previewReopen', { count: preview.result.count, what })}</p>
+          )}
+          {skipped > 0 && (
+            <p className="muted small">
+              {t('rec.bulk.skipped', {
+                count: skipped,
+                blocked: preview.result.skipped['not_executable'] ?? 0,
+                staged: preview.result.skipped['already_staged'] ?? 0,
+              })}
+            </p>
+          )}
+          <p className="muted small">{t('rec.bulk.safety')}</p>
+          <div className="row">
+            {preview.result.count > 0 && (
+              <button type="button" disabled={busy} onClick={() => void confirm()}>
+                {t(preview.status === 'accepted' ? 'rec.bulk.confirmAccept' : 'rec.bulk.confirmReopen', { count: preview.result.count })}
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy}
+              onClick={() => {
+                setPreview(null);
+              }}
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+    </div>
+  );
+}
+
 /** Stage every accepted recommendation of the snapshot into a new changeset (local only). */
-function StageForm({ snapshotId }: { snapshotId: number }) {
+function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: number }) {
   const { t, tError } = useI18n();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -470,7 +609,7 @@ function StageForm({ snapshotId }: { snapshotId: number }) {
     setError(null);
     try {
       const page = await api<Page>(
-        `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&limit=500`,
+        `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&limit=${String(STAGE_MAX)}`,
       );
       const made = await api<{ id: number }>('/api/changesets', 'POST', {
         snapshot_id: snapshotId,
@@ -500,6 +639,7 @@ function StageForm({ snapshotId }: { snapshotId: number }) {
   }
   return (
     <form className="row stage-form" onSubmit={(e) => void submit(e)}>
+      {accepted > STAGE_MAX && <p className="muted small grow">{t('dep.stageCapped', { count: accepted, max: STAGE_MAX })}</p>}
       <label className="inline-field">
         {t('dep.stageTitle')}
         <input
