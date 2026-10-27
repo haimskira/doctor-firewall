@@ -75,6 +75,25 @@ def test_accept_and_reopen_a_whole_kind(client: TestClient, admin: dict[str, str
         assert other["id"] not in {r["id"] for r in _all(opt, sid, state="accepted")}
         assert everything["count"] >= 1
 
+        # Without a kind, only what keeps traffic as it is is swept up; a kind that changes
+        # traffic by design needs an explicit acknowledgement.
+        assert "changes_behavior" in everything["skipped"]
+        assert everything["changing"] == 0
+        dead = "remove_dead_rule"
+        assert _all(opt, sid, kind=dead)
+        assert all(r["behavior"] == "changes" for r in _all(opt, sid, kind=dead))
+        ask = opt.post(url, headers=h, json={"status": "accepted", "kind": dead, "dry_run": True})
+        assert ask.json()["changing"] == ask.json()["count"] > 0
+        refused = opt.post(url, headers=h, json={"status": "accepted", "kind": dead})
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "behavior_change_unacknowledged"
+        assert _all(opt, sid, kind=dead, state="accepted") == []
+        ok = opt.post(
+            url, headers=h, json={"status": "accepted", "kind": dead, "acknowledge_change": True}
+        )
+        assert ok.json()["count"] == ask.json()["count"]
+        opt.post(url, headers=h, json={"status": "open", "kind": dead})
+
         reopened = opt.post(url, headers=h, json={"status": "open", "kind": kind})
         assert reopened.json()["count"] == len(wanted)
         assert _all(opt, sid, state="accepted") == []
@@ -86,5 +105,6 @@ def test_accept_and_reopen_a_whole_kind(client: TestClient, admin: dict[str, str
                 select(AuditRecord.action).where(AuditRecord.action.like("recommendation.bulk_%"))
             )
         )
-    assert actions.count("recommendation.bulk_accepted") == 1  # nothing matched: no record
+    # Two acceptances (duplicates, acknowledged dead rules); the empty one leaves no record.
+    assert actions.count("recommendation.bulk_accepted") == 2
     assert "recommendation.bulk_open" in actions

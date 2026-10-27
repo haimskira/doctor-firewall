@@ -524,6 +524,8 @@ export interface Recommendation {
   blocked: string[];
   /** A batch deployed after this snapshot already carried it out. */
   applied?: boolean;
+  /** 'preserves': no flow's verdict changes; 'changes': by design (less access, more inspection). */
+  behavior?: 'preserves' | 'changes';
 }
 
 export type RowStatus = 'unchanged' | 'modified' | 'new' | 'removed';

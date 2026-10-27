@@ -50,6 +50,25 @@ RECOMMENDATION_KINDS = (
     "remove_redundant_reference",
     "remove_redundant_member",
 )
+# What a recommendation does to traffic. Behaviour-preserving changes leave every flow's verdict
+# (and inspection) as it was — the batch verifier proves it before and after deployment.
+# Behaviour-changing ones exist to change it (less access, more inspection, removing rules that
+# saw no traffic) and are never accepted in bulk without an explicit acknowledgement.
+BEHAVIOR_CHANGING = frozenset(
+    {
+        "remove_dead_rule",
+        "tighten_source",
+        "tighten_ports",
+        "add_inspection",
+        "ssl_decrypt_inbound",
+    }
+)
+
+
+def behavior(kind: str) -> str:
+    return "changes" if kind in BEHAVIOR_CHANGING else "preserves"
+
+
 DECISIONS = ("accepted", "dismissed")
 # Object kinds a naming convention can be defined for ("rule" = access rules).
 CONVENTION_KINDS = (

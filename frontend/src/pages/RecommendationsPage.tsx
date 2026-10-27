@@ -281,6 +281,11 @@ function RecRow({ rec, selected, onSelect }: { rec: Recommendation; selected: bo
         <button type="button" className="link finding-title" aria-pressed={selected} onClick={onSelect}>
           <bdi>{rec.title}</bdi>
         </button>
+        {rec.behavior === 'changes' && (
+          <span className="badge behavior-changes" title={t('rec.behavior.changesHint')}>
+            {t('rec.behavior.changes')}
+          </span>
+        )}
       </td>
       <td>
         <Impact rec={rec} />
@@ -469,6 +474,7 @@ function Detail({
 }
 
 interface BulkResult {
+  changing: number;
   count: number;
   deploy_cost: number;
   ace_delta: number;
@@ -494,6 +500,7 @@ function BulkDecision({
   const [preview, setPreview] = useState<{ status: 'accepted' | 'open'; result: BulkResult } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
   const url = `/api/snapshots/${String(snapshotId)}/recommendations/decisions`;
   const scope = { ...(filter.kind === null ? {} : { kind: filter.kind }), ...(filter.rule === null ? {} : { rule: filter.rule }) };
   const what = filter.kind === null ? t('rec.bulk.everything') : t(`rec.kind.${filter.kind}` as MessageKey);
@@ -503,6 +510,7 @@ function BulkDecision({
     setError(null);
     try {
       const result = await api<BulkResult>(url, 'POST', { status, ...scope, dry_run: true });
+      setAcknowledged(false);
       setPreview({ status, result });
     } catch (err) {
       setError(errorCode(err));
@@ -516,7 +524,11 @@ function BulkDecision({
     setBusy(true);
     setError(null);
     try {
-      const result = await api<BulkResult>(url, 'POST', { status: preview.status, ...scope });
+      const result = await api<BulkResult>(url, 'POST', {
+        status: preview.status,
+        ...scope,
+        ...(preview.result.changing > 0 ? { acknowledge_change: acknowledged } : {}),
+      });
       setPreview(null);
       onDone(t(preview.status === 'accepted' ? 'rec.bulk.accepted' : 'rec.bulk.reopened', { count: result.count }));
     } catch (err) {
@@ -565,13 +577,31 @@ function BulkDecision({
                 count: skipped,
                 blocked: preview.result.skipped['not_executable'] ?? 0,
                 staged: preview.result.skipped['already_staged'] ?? 0,
+                changing: preview.result.skipped['changes_behavior'] ?? 0,
               })}
             </p>
+          )}
+          {preview.result.changing > 0 && (
+            <div className="behavior-warning">
+              <p>
+                <strong>{t('rec.bulk.changingTitle', { count: preview.result.changing })}</strong> {t('rec.bulk.changingText')}
+              </p>
+              <label className="inline-field">
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(e) => {
+                    setAcknowledged(e.target.checked);
+                  }}
+                />
+                {t('rec.bulk.acknowledge')}
+              </label>
+            </div>
           )}
           <p className="muted small">{t('rec.bulk.safety')}</p>
           <div className="row">
             {preview.result.count > 0 && (
-              <button type="button" disabled={busy} onClick={() => void confirm()}>
+              <button type="button" disabled={busy || (preview.result.changing > 0 && !acknowledged)} onClick={() => void confirm()}>
                 {t(preview.status === 'accepted' ? 'rec.bulk.confirmAccept' : 'rec.bulk.confirmReopen', { count: preview.result.count })}
               </button>
             )}

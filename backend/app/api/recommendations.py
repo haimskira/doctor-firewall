@@ -38,6 +38,7 @@ from app.models.recommendations import (
     NamingConvention,
     Recommendation,
     RecommendationDecision,
+    behavior,
 )
 from app.runtime import get_audit
 from app.workers import jobs
@@ -87,6 +88,8 @@ class RecommendationOut(BaseModel):
     blocked: list[str]
     # A batch deployed after this snapshot already carried it out.
     applied: bool = False
+    # "preserves": no flow's verdict changes (proved per batch); "changes": by design.
+    behavior: str = "preserves"
 
 
 class RecommendationDetail(RecommendationOut):
@@ -133,6 +136,8 @@ class BulkDecisionIn(StrictModel):
     q: Annotated[str | None, Field(max_length=128)] = None
     note: Annotated[str, Field(max_length=512)] = ""
     dry_run: bool = False
+    # Accepting recommendations that change traffic by design needs a deliberate yes.
+    acknowledge_change: bool = False
 
 
 class BulkDecisionOut(BaseModel):
@@ -141,6 +146,8 @@ class BulkDecisionOut(BaseModel):
     ace_delta: int
     # Matching recommendations left alone, by reason.
     skipped: dict[str, int]
+    # How many of the chosen ones change traffic by design.
+    changing: int
     deploy_limit: int
     batches: int
 
@@ -212,6 +219,7 @@ def _out(
 ) -> RecommendationOut:
     return RecommendationOut(
         applied=applied,
+        behavior=behavior(r.kind),
         id=r.id,
         kind=r.kind,
         policy_fmc_id=r.policy_fmc_id,
@@ -462,6 +470,9 @@ def decide_many(
                 if not rec.plan.get("executable")
                 else "already_staged"
                 if rec.fingerprint in staged
+                # Without a kind filter only what keeps traffic as it is is swept up.
+                else "changes_behavior"
+                if body.kind is None and behavior(rec.kind) == "changes"
                 else None
             )
             if reason is None:
@@ -476,7 +487,9 @@ def decide_many(
     ]
     limit = min(limits, default=settings.default_deploy_change_limit)
     cost = sum(r.deploy_cost for r in chosen)
+    changing = sum(1 for r in chosen if behavior(r.kind) == "changes")
     out = BulkDecisionOut(
+        changing=changing if body.status == "accepted" else 0,
         count=len(chosen),
         deploy_cost=cost,
         ace_delta=sum(r.ace_delta for r in chosen),
@@ -486,6 +499,11 @@ def decide_many(
     )
     if body.dry_run or not chosen:
         return out
+    if out.changing and not body.acknowledge_change:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "behavior_change_unacknowledged", "count": out.changing},
+        )
     fingerprints = [r.fingerprint for r in chosen]
     if body.status == "open":
         db.execute(

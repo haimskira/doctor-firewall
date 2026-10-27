@@ -908,3 +908,7 @@ th.sortable:hover .sort-icon { opacity: 1; }
 .bulk-decision { display: flex; flex-direction: column; gap: 0.4rem; }
 .bulk-confirm { display: flex; flex-direction: column; gap: 0.4rem; border-inline-start: 4px solid var(--primary); max-inline-size: 42rem; }
 .bulk-confirm p { margin: 0; }
+
+.badge.behavior-changes { border-color: var(--warn); color: var(--warn); margin-inline-start: 0.4rem; }
+.behavior-warning { border: 1px solid var(--warn); border-radius: var(--radius); padding: 0.5rem 0.7rem; background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.behavior-warning p { margin: 0 0 0.3rem; }

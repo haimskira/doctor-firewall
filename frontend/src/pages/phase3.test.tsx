@@ -105,7 +105,7 @@ describe('RecommendationsPage', () => {
         if (req.url === '/api/snapshots/7/recommendations/decisions') {
           return {
             status: 200,
-            body: { count: 12, deploy_cost: 240, ace_delta: -80, skipped: { not_executable: 2 }, deploy_limit: 100, batches: 3 },
+            body: { count: 12, changing: 0, deploy_cost: 240, ace_delta: -80, skipped: { not_executable: 2 }, deploy_limit: 100, batches: 3 },
           };
         }
         return undefined;

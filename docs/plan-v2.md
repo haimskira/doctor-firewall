@@ -96,6 +96,28 @@ check, scheduled pulls — is visible with its progress, without refreshing, and
       (pulls, re-analysis, batch run).
 - [x] Tests (worker progress, lost-worker reconciliation, API, UI), docs.
 
+## Stage 6 — Traffic guarantee, history and rollback to any point `[~]`
+
+The system may only improve the policy, never hurt production traffic.
+
+- [x] **6a Behaviour class**: every recommendation is *preserves* (no flow's verdict changes) or
+      *changes* (less access, more inspection, removing a rule without hits). Bulk accept without a
+      type filter takes only *preserves*; a *changes* type needs an explicit acknowledgement.
+- [ ] **6b Traffic proof per batch**: build the rulebase as it will be after the batch (plan applied
+      to the snapshot model) and run probe flows — generated from the boundaries of every rule the
+      batch touches and of the rules overlapping them — through both, first match. Any flow whose
+      verdict or inspection changes is listed. At staging (report per batch), before running (a
+      *preserves* batch with a difference is refused) and after deployment (the same proof on what
+      the FMC actually holds, read back).
+- [ ] **6c History and rollback**: every batch with its before / after per rule and object (journal
+      pre-images + read-back after-images), readable diffs; revert a deployed batch (refused if the
+      FMC changed since), revert to any point (later batches first); snapshots behind changes are
+      never deleted, so the previous policy is always there.
+- [ ] **6d After deployment**: hit counters of touched rules and of the block rules behind them
+      compared with before; an alert with a one-click revert when blocked traffic appears.
+- [ ] **6e Device check** (if the FMC API allows it — verify in the lab): packet-tracer on the FTD for
+      critical flows before / after deployment.
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
