@@ -28,19 +28,19 @@ finding kind gets a plain-language view instead:
 - [x] Raw JSON removed from the page; headlines localised; route and group details carry names
       (cluster, group) instead of ids. Tests.
 
-## Stage 3 — Sortable tables `[ ]`
+## Stage 3 — Sortable tables `[x]`
 
-- [ ] Shared `SortableHeader` + `useSort` (click toggles descending ↔ ascending, `aria-sort`,
+- [x] Shared `SortableHeader` + `useSort` (click toggles descending ↔ ascending, `aria-sort`,
       keyboard, numbers / dates / text compared correctly, Hebrew collation).
-- [ ] Tables loaded whole sort in the browser: assets, clusters, FMC connections, inspection,
+- [x] Tables loaded whole sort in the browser: assets, clusters, FMC connections, inspection,
       naming, users, snapshots, deploy, dashboard, object detail.
-- [ ] Paged tables sort on the server (`sort` / `order` query parameters, whitelisted columns,
+- [x] Paged tables sort on the server (`sort` / `order` query parameters, whitelisted columns,
       parameterised SQL): objects (incl. rule / group counts), findings, recommendations,
-      scores, audit.
-- [ ] The policy editor stays in evaluation order: the first match decides, so a sorted
+      scores (audit pages by time on the server and sorts the loaded rows).
+- [x] The policy editor stays in evaluation order: the first match decides, so a sorted
       rulebase would misrepresent the policy (its search still filters).
 
-## Stage 4 — Attack surface and blast radius `[ ]`
+## Stage 4 — Attack surface and blast radius `[~]`
 
 Pick a target and see every way the policy lets traffic reach it, hop by hop, with the ports and
 applications of each hop; or pick a compromised source and see everything it can reach.
@@ -61,12 +61,12 @@ applications of each hop; or pick a compromised source and see everything it can
 
 ### Work
 
-- [ ] **Engine** (`app/analysis/attack.py`): reachability index per snapshot from rule leaves
+- [x] **Engine** (`app/analysis/attack.py`): reachability index per snapshot from rule leaves
       (address sets, services, apps, zones, effective space); reverse search to a target, forward
       search from a source; path enumeration with pivot checks, caps and ranking. Unit tests
       incl. the `C → B → A` example and first-match cases.
-- [ ] **API**: `GET /snapshots/{sid}/attack-surface?target=&mode=to|from&depth=&cluster=` (target
-      = system, object, IP / CIDR); validated input, RBAC policy:read, response limits.
+- [x] **API**: `GET /snapshots/{sid}/attack-surface?system=|object=|address=&mode=to|from&depth=&cluster=`
+      (+ `/targets`); validated input, RBAC policy:read, response limits.
 - [ ] **UI** "משטח תקיפה" (Monitor): target search, mode (paths to / blast radius from), depth;
       radial layout with the target in the centre and rings by hop distance, edges coloured by
       risk and labelled with services; side panel with ranked paths, each hop's rules linking to

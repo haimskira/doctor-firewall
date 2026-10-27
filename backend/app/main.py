@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api import (
     assets,
+    attack,
     audit,
     auth,
     changesets,
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
     for module in (
         health,
+        attack,
         auth,
         users,
         fmc,

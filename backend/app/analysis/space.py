@@ -56,6 +56,21 @@ def _intersects(a: tuple[Interval, ...], b: tuple[Interval, ...]) -> bool:
     return False
 
 
+def _intersection(a: tuple[Interval, ...], b: tuple[Interval, ...]) -> tuple[Interval, ...]:
+    """The common part of two merged, sorted interval lists."""
+    out: list[Interval] = []
+    i = j = 0
+    while i < len(a) and j < len(b):
+        lo, hi = max(a[i][0], b[j][0]), min(a[i][1], b[j][1])
+        if lo <= hi:
+            out.append((lo, hi))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return tuple(out)
+
+
 def _size(intervals: tuple[Interval, ...]) -> int:
     return sum(hi - lo + 1 for lo, hi in intervals)
 
@@ -106,6 +121,22 @@ class AddressSet:
             or _intersects(self.v6, other.v6)
             or bool(self.tokens & other.tokens)
         )
+
+    def intersection(self, other: AddressSet) -> AddressSet:
+        """The addresses in both sets ("any" is the neutral element)."""
+        if self.any:
+            return other
+        if other.any:
+            return self
+        return AddressSet(
+            v4=_intersection(self.v4, other.v4),
+            v6=_intersection(self.v6, other.v6),
+            tokens=self.tokens & other.tokens,
+        )
+
+    @property
+    def empty(self) -> bool:
+        return not self.any and not self.v4 and not self.v6 and not self.tokens
 
     def size(self) -> int | None:
         """Number of addresses (None for "any"); opaque tokens count as one each."""
