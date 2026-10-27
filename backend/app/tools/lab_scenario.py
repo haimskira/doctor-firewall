@@ -136,7 +136,7 @@ class Scenario:
 
 class _Gen:
     def __init__(self, seed: int) -> None:
-        self.rng = random.Random(seed)  # noqa: S311 - deterministic lab data, not crypto
+        self.rng = random.Random(seed)  # noqa: S311  # nosec B311 - seeded lab data, never secrets
         self.sc = Scenario()
         self.servers: dict[str, list[str]] = {t: [] for t in TIERS}  # tier -> host names
         self.system_nets: dict[str, list[tuple[str, str]]] = {t: [] for t in TIERS}  # (sys, net)
