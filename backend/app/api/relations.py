@@ -266,11 +266,14 @@ def object_relations(snapshot_id: int, object_id: FmcIdPath, db: DbDep, _: Reade
                 )
             )
 
-    # Link each issue to the recommendation that removes it (same snapshot).
+    # Link each issue to the recommendation that removes it (same snapshot). A rule that never
+    # matches gets no reference clean-up: its removal is the fix.
     recs = db.execute(
         select(Recommendation.id, Recommendation.kind, Recommendation.targets).where(
             Recommendation.snapshot_id == snapshot_id,
-            Recommendation.kind.in_(("remove_redundant_reference", "remove_redundant_member")),
+            Recommendation.kind.in_(
+                ("remove_redundant_reference", "remove_redundant_member", "remove_shadowed_rule")
+            ),
         )
     ).all()
     by_target = {
@@ -280,6 +283,8 @@ def object_relations(snapshot_id: int, object_id: FmcIdPath, db: DbDep, _: Reade
     }
     for issue in issues:
         issue.recommendation_id = by_target.get((issue.kind, issue.where_id))
+        if issue.recommendation_id is None and issue.kind == "redundant_reference":
+            issue.recommendation_id = by_target.get(("shadowed_rule", issue.where_id))
 
     # Address objects overlapping the object (outside its own tree).
     own = {object_id} | {c for _, c, _ in down}

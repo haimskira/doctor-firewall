@@ -5,6 +5,11 @@ Firewall Management Center UI** (current versions). Reference: the FMC Policy Ed
 [design/fmc-policy-editor-reference.png](design/fmc-policy-editor-reference.png). Every screen
 follows these conventions; new screens must be designed against them.
 
+## Hebrew terms
+
+An access / prefilter policy is a **חוקה** (plural **חוקות**); the policy editor is **עורך
+החוקה**. IPS, file and password policies keep **מדיניות** — they are not rulebases.
+
 ## Shell
 
 * **Top bar** — dark navy, full width: product name ("Firewall Management Center"-style title with

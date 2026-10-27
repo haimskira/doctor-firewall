@@ -428,10 +428,20 @@ ol.tree li { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 ul.findings { list-style: none; padding: 0; margin: 0; }
 ul.findings li { border-block-end: 1px solid var(--border); padding-block: 0.4rem; }
 .finding-title { text-decoration: none; color: var(--text); text-align: start; }
-pre.details {
-  white-space: pre-wrap; overflow-x: auto; font-size: 0.8rem; background: var(--bg);
-  padding: 0.6rem; border-radius: var(--radius); text-align: left;
+.finding-detail {
+  display: flex; flex-direction: column; gap: 0.45rem; padding: 0.6rem 0.8rem; margin-block: 0.4rem;
+  background: var(--bg); border-radius: var(--radius); border-inline-start: 3px solid var(--border);
 }
+.finding-detail p { margin: 0; }
+.finding-section h4 { margin: 0 0 0.2rem; font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+ul.finding-items { margin: 0; padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: 0.15rem; }
+ul.finding-items li { border: none; padding: 0; }
+.finding-gauge { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.gauge { inline-size: min(22rem, 100%); block-size: 0.6rem; background: var(--border); border-radius: 999px; overflow: hidden; }
+.gauge > span { display: block; block-size: 100%; border-radius: 999px; }
+.gauge-good > span { background: var(--ok); }
+.gauge-warn > span { background: var(--warn); }
+.gauge-bad > span { background: var(--danger); }
 .match-fields { display: flex; flex-direction: column; gap: 0.2rem; }
 .match-field { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
 

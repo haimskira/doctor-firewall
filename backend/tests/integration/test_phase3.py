@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import get_sessionmaker
 from app.models.audit import AuditRecord
@@ -194,6 +194,8 @@ def test_recommendations_cover_the_doctrine(client: TestClient, admin: dict[str,
 
 
 def test_decisions_survive_reanalysis(client: TestClient, admin: dict[str, str]) -> None:
+    with get_sessionmaker()() as s:
+        before = s.scalar(select(func.max(AuditRecord.id))) or 0
     sid = _analysed(client, admin)
     rec = _all(client, sid, kind="split_rule")[0]
     make_user("p3-opt", ["optimizer"])
@@ -252,7 +254,7 @@ def test_decisions_survive_reanalysis(client: TestClient, admin: dict[str, str])
         actions = list(
             s.scalars(
                 select(AuditRecord.action)
-                .where(AuditRecord.action.like("recommendation.%"))
+                .where(AuditRecord.action.like("recommendation.%"), AuditRecord.id > before)
                 .order_by(AuditRecord.id)
             )
         )

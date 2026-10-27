@@ -32,6 +32,7 @@ from app.analysis.graph import (
 )
 from app.fmc.records import GROUP_KINDS, ObjectKind
 from app.models.inventory import (
+    Cluster,
     Finding,
     FwObject,
     GroupMember,
@@ -341,13 +342,22 @@ def inline_literals(session: Session, snapshot_id: int) -> list[FindingRow]:
                 },
             )
         )
-    for literal, kind, groups in session.execute(
+    in_groups = session.execute(
         select(
             GroupMember.literal, GroupMember.literal_kind, func.array_agg(GroupMember.group_fmc_id)
         )
         .where(GroupMember.snapshot_id == snapshot_id, GroupMember.literal.is_not(None))
         .group_by(GroupMember.literal, GroupMember.literal_kind)
-    ):
+    ).all()
+    group_ids = {g for _l, _k, groups in in_groups for g in groups}
+    group_names: dict[str, str] = dict(
+        session.execute(
+            select(FwObject.fmc_id, FwObject.name).where(
+                FwObject.snapshot_id == snapshot_id, FwObject.fmc_id.in_(group_ids)
+            )
+        ).all()
+    )
+    for literal, kind, groups in in_groups:
         findings.append(
             FindingRow(
                 kind="inline_literal",
@@ -357,7 +367,10 @@ def inline_literals(session: Session, snapshot_id: int) -> list[FindingRow]:
                     "literal": literal,
                     "literal_kind": kind,
                     "where": "group",
-                    "groups": sorted(set(groups))[:MAX_LISTED],
+                    "groups": [
+                        {"id": g, "name": group_names.get(g, g)}
+                        for g in sorted(set(groups), key=lambda g: group_names.get(g, g))
+                    ][:MAX_LISTED],
                 },
             )
         )
@@ -368,12 +381,18 @@ def inline_literals(session: Session, snapshot_id: int) -> list[FindingRow]:
                 func.json_build_object(
                     "cluster",
                     Route.cluster_fmc_id,
+                    "cluster_name",
+                    Cluster.name,
                     "interface",
                     Route.interface,
                     "network",
                     Route.network_name,
                 )
             ),
+        )
+        .outerjoin(
+            Cluster,
+            (Cluster.snapshot_id == Route.snapshot_id) & (Cluster.fmc_id == Route.cluster_fmc_id),
         )
         .where(Route.snapshot_id == snapshot_id, Route.gateway_is_literal.is_(True))
         .group_by(Route.gateway)

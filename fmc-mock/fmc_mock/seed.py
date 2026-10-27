@@ -764,7 +764,10 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
         below = group
     first_policy = next(iter(b.data.rules))
     chain_rules = b.data.rules[first_policy]
-    chain_rules.append(
+    # Ahead of ANY_ANY_TEMP: a rule behind it never matches and only gets removed.
+    at = next(i for i, r in enumerate(chain_rules) if r["name"] == "ANY_ANY_TEMP")
+    chain_rules.insert(
+        at,
         {
             "id": fixed("CHAIN_RULE"),
             "type": "AccessRule",
@@ -777,13 +780,11 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             "destinationNetworks": {
                 "objects": [_ref(levels[7]), _ref(levels[3]), _ref(chain_host)]
             },
-            "metadata": {
-                "section": "Default",
-                "category": "--Undefined--",
-                "ruleIndex": len(chain_rules) + 1,
-            },
-        }
+            "metadata": {"section": "Default", "category": "--Undefined--"},
+        },
     )
+    for index, r in enumerate(chain_rules, start=1):
+        r["metadata"]["ruleIndex"] = index
 
     # Built-in objects as the FMC ships them: read-only (metadata.readOnly SYSTEM); "any-ipv6"
     # is a Host whose value is a prefix.

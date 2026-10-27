@@ -255,30 +255,50 @@ describe('SnapshotsPage', () => {
 });
 
 describe('FindingsPage', () => {
-  it('summarises by kind and filters on the server', async () => {
+  const CLUSTER = 'b2df6764-d187-11f1-b30a-a73697fa156f';
+  const rows = [
+    { id: 1, kind: 'group_cycle', severity: 'high', policy_fmc_id: null, title: 'Group cycle: A -> B', details: { groups: [{ id: 'g1', name: 'A' }, { id: 'g2', name: 'B' }] } },
+    {
+      id: 2, kind: 'ace_cluster_limit', severity: 'medium', policy_fmc_id: null, title: 'raw title',
+      details: { aces: 896315, limit: 1000000, cluster: { id: CLUSTER, name: 'FTDv-Cluster' }, limit_verified: false },
+    },
+    {
+      id: 3, kind: 'shadowed_rule', severity: 'high', policy_fmc_id: 'p1', title: 'raw title',
+      details: { rule: { id: 'r9', name: 'LATE', index: 9 }, by: { id: 'r2', name: 'EARLY', index: 2 }, conflict: true, policy_kind: 'access' },
+    },
+  ];
+
+  it('summarises by kind, filters on the server and explains each finding in plain words', async () => {
     const calls = setup('/findings', <Route path="/findings" element={<FindingsPage />} />, (req) => {
       if (req.url.startsWith('/api/snapshots/7/findings')) {
         return {
           status: 200,
-          body: {
-            total: 1,
-            offset: 0,
-            summary: { group_cycle: { high: 1 }, unused_object: { info: 4 } },
-            rows: [{ id: 1, kind: 'group_cycle', severity: 'high', policy_fmc_id: null, title: 'Group cycle: A -> B', details: { groups: ['A', 'B'] } }],
-          },
+          body: { total: 3, offset: 0, summary: { group_cycle: { high: 1 }, unused_object: { info: 4 } }, rows },
         };
       }
       return undefined;
     });
-    expect(await screen.findByText('Group cycle: A -> B')).toBeInTheDocument();
+    expect(await screen.findByText('Group cycle: A → B')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Unused objects (4)' })).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Group cycles (1)' }));
     await waitFor(() => {
       expect(calls.some((c) => c.url.includes('kind=group_cycle'))).toBe(true);
     });
-    await user.click(screen.getByText('Group cycle: A -> B'));
-    expect(screen.getByText(/"groups"/)).toBeInTheDocument();
+
+    await user.click(screen.getByText('FTDv-Cluster: 896,315 of 1,000,000 access-list entries (90%)'));
+    expect(screen.getByRole('meter', { name: 'Access-list entries used' })).toHaveAttribute('aria-valuenow', '896315');
+    expect(screen.getByText(/not verified for this platform/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set the real limit for this cluster' })).toHaveAttribute(
+      'href',
+      `/clusters?snapshot=7&cluster=${CLUSTER}`,
+    );
+    expect(screen.queryByText(new RegExp(CLUSTER))).not.toBeInTheDocument();
+    expect(screen.queryByText(/"aces"/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('Rule #9 LATE never matches'));
+    expect(screen.getByRole('link', { name: '#2 EARLY' })).toHaveAttribute('href', '/rules?snapshot=7&policy=p1&q=EARLY');
+    expect(screen.getByText(/this rule's intent is not enforced/)).toBeInTheDocument();
   });
 });
 

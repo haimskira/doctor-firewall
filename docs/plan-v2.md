@@ -1,0 +1,82 @@
+# Plan v2 — terminology, sortable tables, readable findings, attack surface
+
+Tracked implementation plan for the requests of 2026-10-27. Each stage ships with tests, passes
+CI and is pushed before the next starts. Status: `[ ]` open · `[~]` in progress · `[x]` done.
+
+## Stage 1 — Hebrew terminology `[x]`
+
+An access / prefilter policy is a **חוקה** in the Hebrew UI.
+
+- [x] "מדיניות" → "חוקה" where it means the access/prefilter rulebase (nav, policy list, rule
+      table column, dashboard tile, clusters page, back links).
+- [x] "עורך מדיניות" → "עורך החוקה"; "מדיניות אבטחה" → "חוקות".
+- [x] IPS policy, file policy, password policy keep "מדיניות" (they are not rulebases).
+- [x] Tests updated; `docs/ui-design.md` glossary.
+
+## Stage 2 — Readable findings `[x]`
+
+Today a finding expands to its raw JSON (e.g. `ace_cluster_limit` shows a cluster UUID). Every
+finding kind gets a plain-language view instead:
+
+- [x] One renderer per kind: what was found, why it matters, where it comes from, what to do —
+      names (never internal ids), links to the rule in the policy editor / the object in the
+      explorer, numbers formatted.
+- [x] `ace_cluster_limit`: "FTDv-Cluster uses 896,315 of 1,000,000 access-list entries (90 %)"
+      with a gauge; explains that ACEs are the system's expansion of the rules (sources ×
+      destinations × services) and that the limit is the configured value for the platform
+      (marked *unverified* until set per cluster under Settings).
+- [x] Raw JSON removed from the page; headlines localised; route and group details carry names
+      (cluster, group) instead of ids. Tests.
+
+## Stage 3 — Sortable tables `[ ]`
+
+- [ ] Shared `SortableHeader` + `useSort` (click toggles descending ↔ ascending, `aria-sort`,
+      keyboard, numbers / dates / text compared correctly, Hebrew collation).
+- [ ] Tables loaded whole sort in the browser: assets, clusters, FMC connections, inspection,
+      naming, users, snapshots, deploy, dashboard, object detail.
+- [ ] Paged tables sort on the server (`sort` / `order` query parameters, whitelisted columns,
+      parameterised SQL): objects (incl. rule / group counts), findings, recommendations,
+      scores, audit.
+- [ ] The policy editor stays in evaluation order: the first match decides, so a sorted
+      rulebase would misrepresent the policy (its search still filters).
+
+## Stage 4 — Attack surface and blast radius `[ ]`
+
+Pick a target and see every way the policy lets traffic reach it, hop by hop, with the ports and
+applications of each hop; or pick a compromised source and see everything it can reach.
+
+### Semantics
+
+- A **hop** is a flow an effective permit rule allows: enabled ALLOW / TRUST access rule (and
+  prefilter FASTPATH), restricted to the part not taken by earlier rules (first match). Services,
+  applications, zones and the policy / cluster are kept per hop.
+- **Pivoting**: `C → B → A` is a path only when the addresses of B that C may reach overlap the
+  addresses of B allowed to reach A (address-level, not just "same system").
+- Sources that are `any` are shown as **Anywhere** (incl. the internet); unclassified addresses
+  as their networks. Nodes are grouped by the asset table (tier / system) and can be opened down
+  to networks.
+- Traffic inside one segment never crosses the firewall: shown as a note, not as a path.
+- Depth: up to 4 hops (default 3); results ranked by risk — entry from Anywhere / users / BRONZE,
+  shortest paths, tier skips, missing IPS first.
+
+### Work
+
+- [ ] **Engine** (`app/analysis/attack.py`): reachability index per snapshot from rule leaves
+      (address sets, services, apps, zones, effective space); reverse search to a target, forward
+      search from a source; path enumeration with pivot checks, caps and ranking. Unit tests
+      incl. the `C → B → A` example and first-match cases.
+- [ ] **API**: `GET /snapshots/{sid}/attack-surface?target=&mode=to|from&depth=&cluster=` (target
+      = system, object, IP / CIDR); validated input, RBAC policy:read, response limits.
+- [ ] **UI** "משטח תקיפה" (Monitor): target search, mode (paths to / blast radius from), depth;
+      radial layout with the target in the centre and rings by hop distance, edges coloured by
+      risk and labelled with services; side panel with ranked paths, each hop's rules linking to
+      the policy editor; summary (entry points, exposure from Anywhere, shortest path, exposed
+      services). Dark mode, RTL, same design language as the connectivity map.
+- [ ] **Docs** `docs/attack-surface.md`; integration test against the mock; screenshots.
+
+## Running work outside the plan
+
+- [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
+- [x] Shadowed rules are never split / merged / tightened / renamed (found on the lab FMC).
+- [x] Resumable rollback with an undo journal (found when the lab VPN dropped mid-batch).
+- [ ] Docker Hub 0.7.0 — blocked on the base-image OpenSSL fix (decision pending).

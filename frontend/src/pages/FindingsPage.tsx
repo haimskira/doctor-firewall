@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import type { FindingsPage as Page, Severity } from '../api/types';
 import { Alert } from '../components/common';
+import { FindingDetails, useFindingHeadline } from '../components/findings';
 import { SeverityBadge, SnapshotPicker } from '../components/inventory';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
@@ -20,6 +21,7 @@ export function FindingsPage() {
   const [kind, setKind] = useQueryParam('kind');
   const [severity, setSeverity] = useQueryParam('severity');
   const [open, setOpen] = useState<number | null>(null);
+  const headline = useFindingHeadline();
   const params = new URLSearchParams({ limit: '500' });
   if (kind !== null) params.set('kind', kind);
   if (severity !== null) params.set('severity', severity);
@@ -90,9 +92,9 @@ export function FindingsPage() {
                       setOpen(open === f.id ? null : f.id);
                     }}
                   >
-                    <SeverityBadge severity={f.severity} /> <bdi>{f.title}</bdi>
+                    <SeverityBadge severity={f.severity} /> <bdi>{headline(f)}</bdi>
                   </button>
-                  {open === f.id && <pre dir="ltr" className="details">{JSON.stringify(f.details, null, 2)}</pre>}
+                  {open === f.id && snapshotId !== null && <FindingDetails finding={f} snapshotId={snapshotId} />}
                 </li>
               ))}
             </ul>
