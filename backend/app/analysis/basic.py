@@ -37,6 +37,7 @@ from app.models.inventory import (
     FwObject,
     GroupMember,
     Interface,
+    Policy,
     Route,
     Rule,
     RuleRef,
@@ -413,6 +414,36 @@ def inline_literals(session: Session, snapshot_id: int) -> list[FindingRow]:
     return findings
 
 
+def disabled_rules(session: Session, snapshot_id: int) -> list[FindingRow]:
+    """Rules left disabled: they match nothing, but clutter the policy and its review."""
+    rows = session.execute(
+        select(Rule.policy_fmc_id, Rule.fmc_id, Rule.name, Rule.rule_index, Rule.modified_at)
+        .join(
+            Policy,
+            (Policy.snapshot_id == Rule.snapshot_id) & (Policy.fmc_id == Rule.policy_fmc_id),
+        )
+        .where(
+            Rule.snapshot_id == snapshot_id,
+            Rule.enabled.is_(False),
+            Policy.kind.in_(("access", "prefilter")),
+        )
+        .order_by(Rule.policy_fmc_id, Rule.rule_index)
+    )
+    return [
+        FindingRow(
+            kind="disabled_rule",
+            severity="info",
+            policy_fmc_id=policy,
+            title=f"#{index} {name} is disabled",
+            details={
+                "rule": {"id": fid, "name": name, "index": index},
+                "modified_at": modified.isoformat() if modified else None,
+            },
+        )
+        for policy, fid, name, index, modified in rows
+    ]
+
+
 def unused_objects(session: Session, snapshot_id: int) -> list[FindingRow]:
     o = FwObject
     used_by_rule = exists().where(
@@ -471,6 +502,7 @@ def analyze(session: Session, snapshot_id: int) -> dict[str, int]:
     findings += rule_membership_findings(session, snapshot_id, graph, counts, names)
     findings += inline_literals(session, snapshot_id)
     findings += unused_objects(session, snapshot_id)
+    findings += disabled_rules(session, snapshot_id)
     if findings:
         session.execute(
             insert(Finding),

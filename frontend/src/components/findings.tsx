@@ -125,6 +125,7 @@ export function useFindingHeadline(): (f: FindingRow) => string {
       case 'shadowed_rule':
       case 'dead_rule':
       case 'overlap_conflict':
+      case 'disabled_rule':
         if (r === null) break;
         return t(`finding.${f.kind}.head`, { rule: ruleLabel });
       case 'ace_heavy_rule': {
@@ -246,6 +247,22 @@ export function FindingDetails({ finding, snapshotId }: { finding: FindingRow; s
         </p>,
         <p key="rule">
           {t('finding.rule')}: <RuleLink r={r} links={links} />
+        </p>,
+      );
+      break;
+    }
+    case 'disabled_rule': {
+      if (r === null) break;
+      const changed = str(d['modified_at']);
+      body.push(
+        <p key="rule">
+          {t('finding.rule')}: <RuleLink r={r} links={links} />
+          {changed !== null && (
+            <span className="muted">
+              {' '}
+              · {t('finding.disabled_rule.changed')} <DateTime value={changed} />
+            </span>
+          )}
         </p>,
       );
       break;
@@ -448,6 +465,8 @@ export function FindingDetails({ finding, snapshotId }: { finding: FindingRow; s
 
   const why = `finding.${finding.kind}.why`;
   const fix = `finding.${finding.kind}.fix`;
+  const fixes = finding.fixes ?? [];
+  const noFix = `finding.${finding.kind}.noFix`;
   return (
     <div className="finding-detail">
       {body}
@@ -458,8 +477,32 @@ export function FindingDetails({ finding, snapshotId }: { finding: FindingRow; s
       )}
       {isMessageKey(fix) && (
         <p>
-          <strong>{t('finding.fixLabel')}</strong> {t(fix)}{' '}
-          <Link to={`/recommendations?snapshot=${String(snapshotId)}`}>{t('finding.toRecommendations')}</Link>
+          <strong>{t('finding.fixLabel')}</strong> {t(fix)}
+        </p>
+      )}
+      {fixes.length > 0 ? (
+        <div className="finding-fixes">
+          <strong>{t('finding.fixes')}</strong>
+          {fixes.map((f) => {
+            const key = `rec.kind.${f.kind}`;
+            return (
+              <Link
+                key={f.id}
+                className="button-link"
+                to={`/recommendations?snapshot=${String(snapshotId)}&kind=${f.kind}&rec=${String(f.id)}`}
+                title={f.title}
+              >
+                {isMessageKey(key) ? t(key) : f.kind}
+              </Link>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="muted small">
+          {isMessageKey(noFix) ? t(noFix) : t('finding.noFix')}{' '}
+          {finding.kind === 'ace_cluster_limit' && (
+            <Link to={`/recommendations?snapshot=${String(snapshotId)}&sort=ace_delta&order=asc`}>{t('finding.byAceSaving')}</Link>
+          )}
         </p>
       )}
     </div>

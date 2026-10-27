@@ -386,6 +386,8 @@ export interface FindingRow {
   policy_fmc_id: string | null;
   title: string;
   details: Record<string, unknown>;
+  /** Recommendations acting on what the finding is about (same snapshot). */
+  fixes?: { id: number; kind: string; title: string }[];
 }
 
 export interface FindingsPage {
@@ -465,7 +467,8 @@ export type RecommendationKind =
   | 'ssl_exempt_core'
   | 'ssl_decrypt_inbound'
   | 'remove_redundant_reference'
-  | 'remove_redundant_member';
+  | 'remove_redundant_member'
+  | 'remove_disabled_rule';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -486,6 +489,7 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'ssl_decrypt_inbound',
   'remove_redundant_reference',
   'remove_redundant_member',
+  'remove_disabled_rule',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';

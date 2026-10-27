@@ -265,6 +265,7 @@ describe('FindingsPage', () => {
     {
       id: 3, kind: 'shadowed_rule', severity: 'high', policy_fmc_id: 'p1', title: 'raw title',
       details: { rule: { id: 'r9', name: 'LATE', index: 9 }, by: { id: 'r2', name: 'EARLY', index: 2 }, conflict: true, policy_kind: 'access' },
+      fixes: [{ id: 41, kind: 'remove_shadowed_rule', title: 'Remove #9 LATE' }],
     },
   ];
 
@@ -299,6 +300,11 @@ describe('FindingsPage', () => {
     await user.click(screen.getByText('Rule #9 LATE never matches'));
     expect(screen.getByRole('link', { name: '#2 EARLY' })).toHaveAttribute('href', '/rules?snapshot=7&policy=p1&q=EARLY');
     expect(screen.getByText(/this rule's intent is not enforced/)).toBeInTheDocument();
+    // The finding leads to its fix: the recommendation for that rule.
+    expect(screen.getByRole('link', { name: 'Remove shadowed rule' })).toHaveAttribute(
+      'href',
+      '/recommendations?snapshot=7&kind=remove_shadowed_rule&rec=41',
+    );
   });
 });
 

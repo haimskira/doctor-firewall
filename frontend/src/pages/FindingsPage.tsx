@@ -12,7 +12,7 @@ import type { MessageKey } from '../i18n/messages';
 const KINDS = [
   'ace_cluster_limit', 'shadowed_rule', 'group_cycle', 'identical_rules', 'dead_rule',
   'overlap_conflict', 'deep_nesting', 'ace_heavy_rule', 'duplicate_object', 'duplicate_membership',
-  'inline_literal', 'unused_object',
+  'inline_literal', 'unused_object', 'disabled_rule',
 ] as const;
 const SEVERITIES: Severity[] = ['high', 'medium', 'low', 'info'];
 const SORTS = ['severity', 'kind', 'title'] as const;

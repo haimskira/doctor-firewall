@@ -227,9 +227,12 @@ def test_batch_is_written_verified_and_deployed(client: TestClient, admin: dict[
 
     # The snapshot no longer matches the FMC: its recommendations say so, the ones carried out
     # are marked applied, and no new changeset may be staged from it (lab: changeset #4).
-    page = flow.opt.get(f"/api/snapshots/{flow.sid}/recommendations?limit=500").json()
-    assert page["stale"]["changeset_id"] == cs_id
-    applied = {r["id"] for r in page["rows"] if r["applied"]}
+    applied: set[int] = set()
+    for kind in ("split_rule", "rename_role", "remove_unused_object"):
+        url = f"/api/snapshots/{flow.sid}/recommendations?limit=500&kind={kind}"
+        page = flow.opt.get(url).json()
+        assert page["stale"]["changeset_id"] == cs_id
+        applied |= {r["id"] for r in page["rows"] if r["applied"]}
     assert {split["id"], rename["id"], unused["id"]} <= applied
     other = flow.find("merge_rules", "WEB_FIN_USERS")
     flow.opt.put(

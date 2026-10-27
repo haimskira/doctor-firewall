@@ -66,6 +66,22 @@ def test_recommendations_cover_the_doctrine(client: TestClient, admin: dict[str,
         "literal_to_object",
         "remove_unused_object",
     } <= kinds
+    # Findings lead to their fix: the shadowed NESTED_LOOP finding offers its removal.
+    shadow_findings = client.get(
+        f"/api/snapshots/{sid}/findings?kind=shadowed_rule&limit=500"
+    ).json()["rows"]
+    nested_finding = next(
+        f for f in shadow_findings if f["details"]["rule"]["name"] == "NESTED_LOOP"
+    )
+    assert any(x["kind"] == "remove_shadowed_rule" for x in nested_finding["fixes"])
+    # A disabled rule is a finding, and its removal is offered (it changes no flow).
+    disabled = client.get(f"/api/snapshots/{sid}/findings?kind=disabled_rule&limit=500").json()
+    assert disabled["rows"]
+    assert all(
+        any(x["kind"] == "remove_disabled_rule" for x in f["fixes"]) for f in disabled["rows"]
+    )
+    assert {r["behavior"] for r in recs if r["kind"] == "remove_disabled_rule"} == {"preserves"}
+
     # A rule that never matches (shadowed) is only ever proposed for removal.
     shadowed = {t["id"] for r in recs if r["kind"] == "remove_shadowed_rule" for t in r["targets"]}
     assert shadowed

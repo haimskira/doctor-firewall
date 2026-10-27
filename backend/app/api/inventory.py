@@ -241,6 +241,53 @@ class FindingOut(BaseModel):
     policy_fmc_id: str | None
     title: str
     details: dict[str, Any]
+    # Recommendations of the same snapshot that act on what the finding is about.
+    fixes: list[dict[str, Any]] = []
+
+
+def _finding_targets(details: dict[str, Any]) -> list[str]:
+    """FMC ids a finding is about: its rule(s) and object(s)."""
+    out: list[str] = []
+
+    def take(value: Any) -> None:
+        if isinstance(value, dict) and isinstance(value.get("id"), str):
+            out.append(value["id"])
+
+    for key in ("rule", "object", "group"):
+        take(details.get(key))
+    for key in ("rules", "objects", "groups"):
+        for item in details.get(key) or []:
+            take(item)
+    return out
+
+
+def _fixes(
+    db: Session, snapshot_id: int, findings: list[Finding]
+) -> dict[int, list[dict[str, Any]]]:
+    wanted = {t for f in findings for t in _finding_targets(f.details)}
+    if not wanted:
+        return {}
+    by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for rec_id, kind, title, targets in db.execute(
+        select(Recommendation.id, Recommendation.kind, Recommendation.title, Recommendation.targets)
+        .where(Recommendation.snapshot_id == snapshot_id)
+        .order_by(Recommendation.priority.desc(), Recommendation.id)
+    ):
+        for t in targets:
+            tid = t.get("id") if isinstance(t, dict) else None
+            if tid in wanted and len(by_target[tid]) < 5:
+                by_target[tid].append({"id": rec_id, "kind": kind, "title": title[:160]})
+    out: dict[int, list[dict[str, Any]]] = {}
+    for f in findings:
+        seen: set[int] = set()
+        fixes: list[dict[str, Any]] = []
+        for tid in _finding_targets(f.details):
+            for fix in by_target.get(tid, []):
+                if fix["id"] not in seen:
+                    seen.add(fix["id"])
+                    fixes.append(fix)
+        out[f.id] = fixes[:5]
+    return out
 
 
 class FindingsPage(BaseModel):
@@ -968,7 +1015,8 @@ def list_findings(
         "title": Finding.title,
     }
     terms = order_by(sort, order, columns, [severity_order, Finding.kind, Finding.id])
-    rows = db.scalars(query.order_by(*terms).offset(offset).limit(limit))
+    found = list(db.scalars(query.order_by(*terms).offset(offset).limit(limit)))
+    fixes = _fixes(db, snapshot_id, found)
     return FindingsPage(
         total=total,
         offset=offset,
@@ -981,8 +1029,9 @@ def list_findings(
                 policy_fmc_id=f.policy_fmc_id,
                 title=f.title,
                 details=f.details,
+                fixes=fixes.get(f.id, []),
             )
-            for f in rows
+            for f in found
         ],
     )
 

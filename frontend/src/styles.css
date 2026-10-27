@@ -963,3 +963,12 @@ table.change-fields ins { color: var(--allow); text-decoration: none; }
 .toolbar-panel.bulk-confirm { border-inline-start: 4px solid var(--primary); flex-direction: column; align-items: stretch; }
 .toolbar-panel .row { gap: 0.6rem; }
 .toolbar-panel button { min-block-size: 2.25rem; }
+
+a.button-link {
+  display: inline-flex; align-items: center; min-block-size: 2rem; padding-inline: 0.75rem;
+  border: 1px solid var(--primary); border-radius: var(--radius); color: var(--primary);
+  text-decoration: none; font-weight: 500;
+}
+a.button-link:hover { background: var(--primary-soft); }
+
+.finding-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }

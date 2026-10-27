@@ -739,6 +739,28 @@ def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) ->
     drafts: list[Draft] = []
     for info in rules:
         r = info.rule
+        if not r.enabled and policy.kind in ("access", "prefilter"):
+            drafts.append(
+                Draft(
+                    kind="remove_disabled_rule",
+                    principle="never_match",
+                    title=f"Remove #{r.rule_index} {r.name}: disabled, matches nothing",
+                    priority=45,
+                    display="inline",
+                    deploy_cost=1,
+                    targets=[_rule_target(info)],
+                    preview={
+                        "policy": _policy_ref(policy),
+                        "before": [rule_view(info)],
+                        "after": [with_status(rule_view(info), "removed")],
+                        "modified_at": r.modified_at.isoformat() if r.modified_at else None,
+                    },
+                    policy_fmc_id=policy.fmc_id,
+                    ace_delta=0,
+                    plan=_plan(lambda pb, info=info: pb.delete_rule(_rule_dict(info))),
+                )
+            )
+            continue
         ace = info.ace if policy.kind in ACE_KINDS and r.enabled else 0
         shadow_id = info.score.shadowed_by if info.score else None
         if shadow_id is not None and r.enabled:
