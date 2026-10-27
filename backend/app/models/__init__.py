@@ -19,6 +19,7 @@ from app.models.inventory import (
     Snapshot,
     SnapshotCheckpoint,
 )
+from app.models.jobs import JobRun
 from app.models.map import MapEdge
 from app.models.recommendations import (
     InspectionProfile,
@@ -45,6 +46,7 @@ __all__ = [
     "GroupMember",
     "InspectionProfile",
     "Interface",
+    "JobRun",
     "MapEdge",
     "NamingConvention",
     "Policy",

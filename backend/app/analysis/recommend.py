@@ -62,6 +62,7 @@ from app.models.inventory import (
     Snapshot,
 )
 from app.models.recommendations import NamingConvention, Recommendation
+from app.workers import progress
 
 TIER_ORDER = ("GOLD", "SILVER", "BRONZE", "CORE", "USERS", "UNCLASSIFIED")
 UNCLASSIFIED = "UNCLASSIFIED"
@@ -1793,7 +1794,9 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     renames, naming_stats = recommend_renames(estate)
     profiles = inspection.load_profiles(session)
     ssl = inspection.SslAdvisor(estate)
-    for policy in sorted(estate.policies.values(), key=lambda p: (p.kind, p.name)):
+    ordered = sorted(estate.policies.values(), key=lambda p: (p.kind, p.name))
+    for n, policy in enumerate(ordered):
+        progress.advance(n, len(ordered))
         if policy.kind not in ("access", "prefilter", "decryption"):
             continue
         rules = load_policy_rules(estate, policy.fmc_id)

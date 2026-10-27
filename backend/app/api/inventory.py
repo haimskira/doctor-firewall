@@ -368,7 +368,7 @@ def start_collection(
         raise HTTPException(status.HTTP_409_CONFLICT, "collection_in_progress") from exc
     _audit(audit, db, who, request, "collect.request", conn.name, {"snapshot_id": snap.id})
     db.commit()
-    jobs.enqueue_collection(snap.id)
+    jobs.enqueue_collection(snap.id, who.username)
     return _snapshot_out(snap)
 
 
@@ -392,7 +392,7 @@ def resume_collection(
         audit, db, who, request, "collect.resume", snap.connection_name, {"snapshot_id": snap.id}
     )
     db.commit()
-    jobs.enqueue_collection(snap.id)
+    jobs.enqueue_collection(snap.id, who.username)
     return _snapshot_out(snap)
 
 

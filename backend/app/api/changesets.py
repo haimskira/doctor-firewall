@@ -463,7 +463,7 @@ def run_batch(
         },
     )
     db.commit()
-    jobs.enqueue_batch(target.id)
+    jobs.enqueue_batch(target.id, who.username)
     return _out(db, cs)
 
 
@@ -505,7 +505,7 @@ def resume_batch_rollback(
         },
     )
     db.commit()
-    jobs.enqueue_rollback(target.id)
+    jobs.enqueue_rollback(target.id, who.username)
     return _out(db, cs)
 
 

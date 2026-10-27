@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { JobProgress, useJobText, useJobs } from '../components/jobs';
 import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
@@ -23,7 +24,11 @@ export function SnapshotsPage() {
   const snapshots = useApi<Snapshot[]>('/api/snapshots?limit=100');
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
   const reloadSnapshots = snapshots.reload;
-  const active = (snapshots.data ?? []).some((s) => s.status === 'pending' || s.status === 'running');
+  const jobs = useJobs();
+  const jobText = useJobText();
+  const pulling = (snapshots.data ?? []).some((s) => s.status === 'pending' || s.status === 'running');
+  // Keep following while a pull or its analysis runs (the analysis ends after the pull).
+  const active = pulling || jobs.jobs.some((j) => j.snapshot_id !== null && (j.status === 'queued' || j.status === 'running'));
 
   useEffect(() => {
     if (!active) return;
@@ -39,6 +44,7 @@ export function SnapshotsPage() {
       await api<Snapshot>(path, 'POST');
       setMessage({ kind: 'success', text: t('snap.started') });
       reloadSnapshots();
+      jobs.kick();
     } catch (err: unknown) {
       setMessage({ kind: 'error', text: tError(errorCode(err)) });
     }
@@ -78,7 +84,7 @@ export function SnapshotsPage() {
                   {th('created', t('snap.created'), true)}
                   {th('finished', t('snap.finished'), true)}
                   {th('by', t('snap.by'))}
-                  <th>t('common.actions')</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >
@@ -106,6 +112,17 @@ export function SnapshotsPage() {
                       </div>
                     )}
                     {s.error !== null && <div className="bad small">{tError(s.error)}</div>}
+                    {jobs.jobs
+                      .filter((j) => j.snapshot_id === s.id && (j.status === 'queued' || j.status === 'running'))
+                      .slice(0, 1)
+                      .map((j) => (
+                        <div key={j.id} className="small">
+                          <JobProgress job={j} />
+                          <span className="muted">
+                            {jobText.kind(j)}: {jobText.step(j)}
+                          </span>
+                        </div>
+                      ))}
                   </td>
                   <td>
                     <DateTime value={s.created_at} />

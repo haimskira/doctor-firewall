@@ -38,10 +38,10 @@ export function InspectionPage() {
               head={(th) => (
                 <tr>
                   {th('tier', t('inspection.tier'))}
-                  <th>t('inspection.doctrine')</th>
+                  <th>{t('inspection.doctrine')}</th>
                   {th('ips', t('inspection.ips'))}
                   {th('file', t('inspection.file'))}
-                  <th>t('common.actions')</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >

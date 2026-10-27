@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { BatchResult, Changeset, ChangesetBatch, ChangesetDetail, PlanOp } from '../api/types';
 import { useAuth, useMe } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
+import { JobProgress, useJobText, useJobs } from '../components/jobs';
 import { tagGroup } from '../components/recommendations';
+import { SortedTable } from '../components/sort';
 import { useApi, useQueryParam } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 
@@ -130,6 +131,9 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
   const { t, tError } = useI18n();
   const { can } = useAuth();
   const me = useMe();
+  const jobs = useJobs();
+  const jobText = useJobText();
+  const running = jobs.jobs.find((j) => j.changeset_id === cs.id && (j.status === 'queued' || j.status === 'running'));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -144,6 +148,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
     setNotice(null);
     try {
       await api(path, 'POST');
+      jobs.kick();
       if (path.endsWith('/run')) setNotice(t('dep.queued'));
       if (path.endsWith('/rollback')) setNotice(t('dep.rollbackQueued'));
       onChanged();
@@ -242,6 +247,12 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
               </div>
             </header>
             {b.error !== null && <Alert kind="error">{t('dep.error', { error: b.error })}</Alert>}
+            {running !== undefined && (b.status === 'running' || b.status === 'approved') && running.title.endsWith(` · ${String(b.seq)}`) && (
+              <div className="batch-job">
+                <JobProgress job={running} />
+                <span className="muted small">{jobText.step(running)}</span>
+              </div>
+            )}
             {b.rollback_resumable && <Alert kind="error">{t('dep.rollbackPending', { count: b.undo_pending })}</Alert>}
             <div className="batch-body">
               <div>

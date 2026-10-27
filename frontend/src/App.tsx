@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 import { useI18n } from './i18n/I18nProvider';
 import { AssetsPage } from './pages/AssetsPage';
 import { AttackSurfacePage } from './pages/AttackSurfacePage';
+import { JobsPage } from './pages/JobsPage';
 import { AuditPage } from './pages/AuditPage';
 import { DeployPage } from './pages/DeployPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
@@ -71,6 +72,7 @@ export function App() {
             ['recommendations', <RecommendationsPage key="m" />],
             ['map', <MapPage key="g" />],
             ['attack', <AttackSurfacePage key="t" />],
+            ['jobs', <JobsPage key="j" />],
             ['deploy', <DeployPage key="y" />],
             ['naming', <NamingPage key="n" />],
             ['inspection', <InspectionPage key="i" />],

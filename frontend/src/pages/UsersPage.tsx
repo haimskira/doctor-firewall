@@ -129,7 +129,7 @@ export function UsersPage() {
                 {th('roles', t('users.roles'))}
                 {th('active', t('users.active'))}
                 {th('login', t('users.lastLogin'), true)}
-                <th>t('common.actions')</th>
+                <th>{t('common.actions')}</th>
               </tr>
             )}
           >

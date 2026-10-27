@@ -52,6 +52,7 @@ from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.fmc import FmcConnection
 from app.models.inventory import Cluster
+from app.workers import progress
 
 log = logging.getLogger(__name__)
 
@@ -634,7 +635,8 @@ class Writer:
         return body
 
     async def verify(self) -> None:
-        for check in self.checks:
+        for n, check in enumerate(self.checks):
+            progress.advance(n, len(self.checks))
             await check()
 
     async def rollback(self, rounds: int = 1, wait: float = 0.0) -> list[str]:
@@ -649,7 +651,8 @@ class Writer:
             if attempt:
                 await self.sleep(wait)
             failed = []
-            for step in reversed(self.undo):
+            for done, step in enumerate(reversed(self.undo)):
+                progress.advance(done, len(self.undo))
                 if step.get("state") == "undone":
                     continue
                 remap = {
@@ -758,12 +761,16 @@ async def deploy(
     task_id = task.get("id")
     if not isinstance(task_id, str):
         raise BatchError("unexpected_response", "deployment request without task id")
-    deadline = time.monotonic() + timeout_seconds
+    started = time.monotonic()
+    deadline = started + timeout_seconds
     while True:
         status_body = await fmc.get_json(
             adapter.config_path(domain, f"/job/taskstatuses/{task_id}")
         )
         state = str((status_body or {}).get("status", "")).lower()
+        elapsed = int(time.monotonic() - started)
+        # A deployment on FTDv takes about a minute: creep towards the end, never reach it.
+        progress.advance(min(elapsed, 170), 180, state=state[:24], seconds=elapsed)
         if state in DEPLOYED:
             return task_id
         if state in DEPLOY_FAILED:
@@ -977,9 +984,13 @@ async def execute_batch(
                 sleep=sleep,
             )
             try:
-                for op in plan.ops:
+                progress.phase("batch_write", 2, 60)
+                for n, op in enumerate(plan.ops):
+                    progress.advance(n, len(plan.ops))
                     await writer.run(op)
+                progress.phase("batch_verify", 60, 66)
                 await writer.verify()
+                progress.phase("deploying", 66, 98)
                 task_id = await deploy(
                     fmc,
                     adapter,
@@ -997,8 +1008,10 @@ async def execute_batch(
                     "batch failed, rolling back",
                     extra={"batch": batch_id, "code": code, "detail": detail},
                 )
+                progress.phase("rolling_back", 66, 85)
                 left = await writer.rollback(ROLLBACK_ROUNDS, settings.rollback_retry_seconds)
                 if writer.undo and not left:
+                    progress.phase("deploying", 85, 98)
                     # Restore the devices to the rolled-back configuration as well.
                     try:
                         await deploy(
@@ -1158,8 +1171,10 @@ async def resume_rollback(
                 persist=_journal_sink(sessions, batch_id),
                 sleep=sleep,
             )
+            progress.phase("rolling_back", 2, 60)
             left = await writer.rollback(ROLLBACK_ROUNDS, settings.rollback_retry_seconds)
             if not left:
+                progress.phase("deploying", 60, 98)
                 try:
                     await deploy(
                         fmc,

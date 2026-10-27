@@ -17,5 +17,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
+    // jsdom renders of the larger pages take ~1.5 s alone; under a loaded CI machine they can
+    // pass the 5 s default.
+    testTimeout: 15000,
   },
 });

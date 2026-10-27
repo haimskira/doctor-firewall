@@ -46,7 +46,7 @@ export function ClustersPage() {
                   {th('policy', t('clusters.policy'))}
                   {th('rules', t('clusters.rules'), true)}
                   {th('ace', t('limits.ace'), true)}
-                  <th>t('common.actions')</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >

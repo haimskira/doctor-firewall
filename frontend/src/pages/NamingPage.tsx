@@ -45,8 +45,8 @@ export function NamingPage() {
                   {th('template', t('naming.template'))}
                   {th('case', t('naming.case'))}
                   {th('enabled', t('naming.enabled'))}
-                  <th>t('naming.tokens')</th>
-                  <th>t('common.actions')</th>
+                  <th>{t('naming.tokens')}</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >

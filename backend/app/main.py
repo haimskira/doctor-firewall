@@ -15,6 +15,7 @@ from app.api import (
     fmc,
     health,
     inventory,
+    jobs,
     recommendations,
     relations,
     users,
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
         dashboard,
         changesets,
         audit,
+        jobs,
     ):
         app.include_router(module.router)
     app.add_middleware(SecurityMiddleware, max_body_bytes=settings.max_request_bytes)

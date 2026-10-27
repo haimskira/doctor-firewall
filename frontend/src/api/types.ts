@@ -882,3 +882,32 @@ export interface AttackSurface {
     truncated: boolean;
   };
 }
+
+/* ---- background jobs ---- */
+
+export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify';
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+
+export interface JobRun {
+  id: number;
+  kind: JobKind;
+  title: string;
+  requested_by: string;
+  status: JobStatus;
+  progress: number;
+  step: string;
+  step_args: Record<string, string | number>;
+  error: string | null;
+  snapshot_id: number | null;
+  batch_id: number | null;
+  changeset_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string | null;
+  finished_at: string | null;
+}
+
+export interface JobsList {
+  active: number;
+  rows: JobRun[];
+}

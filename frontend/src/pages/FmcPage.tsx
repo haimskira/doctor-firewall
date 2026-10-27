@@ -159,7 +159,7 @@ export function FmcPage() {
                   {th('domain', t('fmc.domain'))}
                   {th('tested', t('fmc.lastTest'), true)}
                   {th('sync', t('fmc.sync'), true)}
-                  <th>t('common.actions')</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >

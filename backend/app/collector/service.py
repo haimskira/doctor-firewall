@@ -40,6 +40,7 @@ from app.fmc.records import (
     PolicyRecord,
 )
 from app.models.inventory import Interface, Policy, Snapshot
+from app.workers import progress
 
 log = logging.getLogger(__name__)
 
@@ -175,13 +176,19 @@ class Collector:
 
     async def run(self) -> dict[str, Any]:
         await self._objects()
+        progress.phase("collect_topology", 30, 35)
         clusters, assignments = await self._topology()
         await self._policies(clusters, assignments)
-        for cluster in clusters:
+        progress.phase("collect_network", 85, 93)
+        for n, cluster in enumerate(clusters):
             await self._cluster_network(cluster)
+            progress.advance(n + 1, len(clusters))
         # One device at a time (never concurrent): the FMC may mix up concurrent CLI answers.
-        for cluster in clusters:
+        progress.phase("collect_routes", 93, 99)
+        for n, cluster in enumerate(clusters):
             await self._runtime_routes(cluster)
+            progress.advance(n + 1, len(clusters))
+        progress.phase("saving", 99, 99)
         with self.sessions.begin() as session:
             self.stats.stubs = store.add_stub_objects(
                 session, self.snapshot_id, self.adapter.kind_of
@@ -191,7 +198,10 @@ class Collector:
         return self.stats.as_dict()
 
     async def _objects(self) -> None:
-        for resource in self.adapter.OBJECT_RESOURCES:
+        resources = list(self.adapter.OBJECT_RESOURCES)
+        progress.phase("collect_objects", 2, 30)
+        for n, resource in enumerate(resources):
+            progress.advance(n, len(resources), objects=self.stats.objects)
 
             def handle(
                 session: Session,
@@ -258,11 +268,18 @@ class Collector:
             store.replace_cluster_policies(session, self.snapshot_id, governed)
 
         enforced_access = {c["policy_fmc_id"] for c in clusters if c["policy_fmc_id"]}
-        for kind, policies in inventory.items():
-            for policy in policies:
-                if kind is PolicyKind.ACCESS and policy.fmc_id not in enforced_access:
-                    continue  # unassigned access policies are not enforced anywhere
-                await self._policy(kind, policy, clusters)
+        todo = [
+            (kind, policy)
+            for kind, policies in inventory.items()
+            for policy in policies
+            # unassigned access policies are not enforced anywhere
+            if kind is not PolicyKind.ACCESS or policy.fmc_id in enforced_access
+        ]
+        progress.phase("collect_policies", 35, 85)
+        for n, (kind, policy) in enumerate(todo):
+            progress.advance(n, len(todo), rules=self.stats.rules)
+            await self._policy(kind, policy, clusters)
+        progress.advance(len(todo), len(todo), rules=self.stats.rules)
 
     async def _policy(
         self, kind: PolicyKind, policy: PolicyRecord, clusters: list[dict[str, Any]]

@@ -75,6 +75,27 @@ applications of each hop; or pick a compromised source and see everything it can
 - [x] **Docs** `docs/attack-surface.md`; integration test against the mock; checked on the lab
       snapshot (3 000 rules: ~3 s to load the rules once per snapshot, then ~0.2 s per query).
 
+## Stage 5 — Job status with live progress `[x]`
+
+Every background job — FMC pull, analysis, batch write + deploy, finishing a rollback, audit-chain
+check, scheduled pulls — is visible with its progress, without refreshing, and says when it ends.
+
+- [x] **Job record** (`job_runs`): kind, subject (snapshot / batch), title, requested by, status
+      (queued / running / done / failed), progress 0–100 %, current step, started / finished,
+      error (scrubbed). Created when the job is queued; updated by the worker at each step.
+- [x] **Progress from the work itself**: pull — resources and policies collected out of the total;
+      analysis — policies analysed and recommendation steps; batch — operations written, then
+      verification and deployment (FMC task state); rollback — steps undone.
+- [x] **Lost workers**: a job still "running" whose worker is gone is marked failed, not left
+      spinning.
+- [x] **API**: `GET /api/jobs` (active + recent, filter by kind / status), RBAC on what the job
+      touches (audit-chain jobs only for audit readers).
+- [x] **UI**: a jobs indicator in the top bar (running count, progress bars, elapsed time) that
+      updates itself every 2 s while something runs; a notice when a job ends, with a link to
+      its result; a full *Jobs* page (history, sortable); inline progress where a job is started
+      (pulls, re-analysis, batch run).
+- [x] Tests (worker progress, lost-worker reconciliation, API, UI), docs.
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.

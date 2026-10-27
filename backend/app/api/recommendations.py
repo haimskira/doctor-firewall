@@ -384,7 +384,7 @@ def reanalyze(
         audit, db, who, request, "analysis.request", snap.connection_name, {"snapshot_id": snap.id}
     )
     db.commit()
-    jobs.enqueue_analysis(snap.id)
+    jobs.enqueue_analysis(snap.id, who.username)
     return {"snapshot_id": snap.id}
 
 

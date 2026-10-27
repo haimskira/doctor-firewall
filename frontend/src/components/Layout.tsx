@@ -22,6 +22,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 
 import { api } from '../api/client';
 import { ErrorBoundary } from './ErrorBoundary';
+import { JobsIndicator, JobsProvider } from './jobs';
 import type { FindingsPage, Me, Permission, Snapshot } from '../api/types';
 import { applyTheme, effectiveTheme, useAuth, useMe } from '../auth/AuthProvider';
 import { useApi } from '../hooks';
@@ -69,6 +70,7 @@ const NAV: NavGroup[] = [
         icon: PulseIcon,
         children: [
           { to: '/findings', label: 'nav.findings', permission: 'policy:read' },
+          { to: '/jobs', label: 'nav.jobs', permission: 'policy:read' },
           { to: '/audit', label: 'nav.audit', permission: 'audit:read' },
         ],
       },
@@ -218,6 +220,7 @@ export function Layout() {
     high.snapshotId === null ? '/findings' : `/findings?snapshot=${String(high.snapshotId)}&severity=high`;
 
   return (
+    <JobsProvider username={me.username} enabled={readable}>
     <div className={`fmc-shell${collapsed ? ' collapsed' : ''}`}>
       <header className="fmc-top">
         <Link to="/" className="fmc-brand" aria-label={t('app.title')}>
@@ -270,6 +273,7 @@ export function Layout() {
               )}
             </button>
           )}
+          {readable && <JobsIndicator />}
           <ThemeToggle />
           <span className="fmc-top-divider" aria-hidden="true" />
           <div className="fmc-user" ref={userRef}>
@@ -380,6 +384,7 @@ export function Layout() {
         </ErrorBoundary>
       </main>
     </div>
+    </JobsProvider>
   );
 }
 

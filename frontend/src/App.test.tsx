@@ -89,8 +89,10 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Administration' }));
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Users' })).not.toBeInTheDocument();
-    // Without the audit log, Events & Logs has a single entry: a direct link, no flyout.
-    expect(screen.getByRole('link', { name: 'Events & Logs' })).toHaveAttribute('href', '/findings');
+    // Events & Logs: findings and jobs, but no audit log without audit:read.
+    await user.click(screen.getByRole('button', { name: 'Events & Logs' }));
+    expect(screen.getByRole('menuitem', { name: 'Findings' })).toHaveAttribute('href', '/findings');
+    expect(screen.getByRole('menuitem', { name: 'Jobs' })).toHaveAttribute('href', '/jobs');
     expect(screen.queryByRole('menuitem', { name: 'Audit log' })).not.toBeInTheDocument();
   });
 

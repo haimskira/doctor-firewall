@@ -9,6 +9,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import { RecommendationPreviewView, signed, tagGroup } from '../components/recommendations';
+import { useJobs } from '../components/jobs';
 import { SortTh, useServerSort } from '../components/sort';
 import type { SortState } from '../components/sort';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
@@ -32,6 +33,7 @@ export function RecommendationsPage() {
   const [rule] = useQueryParam('rule');
   const [recParam, setRecParam] = useQueryParam('rec');
   const [offset, setOffset] = useState(0);
+  const jobs = useJobs();
   const sort = useServerSort(SORTS);
   const onSort = (next: SortState) => {
     sort.onSort(next);
@@ -62,6 +64,7 @@ export function RecommendationsPage() {
     try {
       await api(`/api/snapshots/${String(snapshotId)}/analyze`, 'POST');
       setNotice(t('rec.reanalyzeQueued'));
+      jobs.kick();
     } catch (err) {
       setActionError(errorCode(err));
     }

@@ -22,6 +22,7 @@ from app.analysis.shadow import analyse_order
 from app.core.config import Settings
 from app.models.assets import ClusterSetting, RuleScore
 from app.models.inventory import Cluster, ClusterPolicy, Finding, Policy, Rule, RuleRef, Snapshot
+from app.workers import progress
 
 ORDERED_KINDS = ("access", "prefilter", "decryption")  # first-match rule lists
 ACE_KINDS = ("access", "prefilter")  # rules that compile into Lina ACEs
@@ -74,7 +75,8 @@ def analyze_semantics(
     policies = session.scalars(
         select(Policy).where(Policy.snapshot_id == snapshot_id, Policy.kind.in_(ORDERED_KINDS))
     ).all()
-    for policy in policies:
+    for n, policy in enumerate(policies):
+        progress.advance(n, len(policies))
         spaces = rule_spaces(session, snapshot_id, policy.fmc_id, resolver)
         shadows, overlaps = analyse_order(spaces)
         shadowed_by = {s.rule.rule_id: s.by.fmc_id for s in shadows}
