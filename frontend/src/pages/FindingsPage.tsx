@@ -5,15 +5,12 @@ import { Alert } from '../components/common';
 import { FindingDetails, useFindingHeadline } from '../components/findings';
 import { useServerSort } from '../components/sort';
 import { SeverityBadge, SnapshotPicker } from '../components/inventory';
+import { FINDING_KINDS } from '../components/catalog';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 
-const KINDS = [
-  'ace_cluster_limit', 'shadowed_rule', 'group_cycle', 'identical_rules', 'dead_rule',
-  'overlap_conflict', 'deep_nesting', 'ace_heavy_rule', 'duplicate_object', 'duplicate_membership',
-  'inline_literal', 'unused_object', 'disabled_rule',
-] as const;
+const KINDS = FINDING_KINDS;
 const SEVERITIES: Severity[] = ['high', 'medium', 'low', 'info'];
 const SORTS = ['severity', 'kind', 'title'] as const;
 const SORT_OPTIONS = ['severity:desc', 'severity:asc', 'kind:asc', 'kind:desc', 'title:asc', 'title:desc'] as const;

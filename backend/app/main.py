@@ -12,6 +12,7 @@ from app.api import (
     changesets,
     connectivity,
     dashboard,
+    developer,
     fmc,
     health,
     history,
@@ -33,11 +34,12 @@ def create_app() -> FastAPI:
     configure_logging(settings.log_level)
     app = FastAPI(
         title="Doctor Firewall",
-        version="0.1.0",
+        version="0.7",
         # Interactive docs only in dev; production exposes no schema browser.
         docs_url="/api/docs" if settings.is_dev else None,
         redoc_url=None,
-        openapi_url="/api/openapi.json" if settings.is_dev else None,
+        # The served schema is /api/openapi.json (signed in, read API only: app.api.developer).
+        openapi_url="/api/dev/openapi.json" if settings.is_dev else None,
     )
     register_error_handlers(app)
     for module in (
@@ -57,6 +59,7 @@ def create_app() -> FastAPI:
         jobs,
         history,
         roadmap,
+        developer,
     ):
         app.include_router(module.router)
     app.add_middleware(SecurityMiddleware, max_body_bytes=settings.max_request_bytes)

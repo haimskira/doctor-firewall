@@ -17,6 +17,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.audit.chain import AuditEvent, AuditLog
+from app.auth import tokens
 from app.auth.rbac import Permission, Role, parse_roles, permissions_for
 from app.auth.sessions import SESSION_COOKIE, SessionStore
 from app.db.session import get_db, get_sessionmaker
@@ -40,6 +41,7 @@ class Principal:
     csrf_token: str
     must_change_password: bool
     language: str
+    token_id: int | None = None  # set when the request came with an API token
 
 
 def client_ip(request: Request) -> str:
@@ -58,6 +60,9 @@ def get_principal(
     store: Annotated[SessionStore, Depends(get_session_store)],
 ) -> Principal:
     session_id = request.cookies.get(SESSION_COOKIE, "")
+    bearer = request.headers.get("Authorization", "")
+    if not session_id and bearer.startswith("Bearer "):
+        return _token_principal(request, db, bearer.removeprefix("Bearer ").strip())
     data = store.get(session_id) if session_id else None
     if data is None:
         raise _unauthorized()
@@ -79,6 +84,30 @@ def get_principal(
         csrf_token=data.csrf_token,
         must_change_password=user.must_change_password,
         language=user.language,
+    )
+
+
+def _token_principal(request: Request, db: Session, token: str) -> Principal:
+    """A read-only API token (app.auth.tokens): GET / HEAD, the owner's read permissions only."""
+    row = tokens.lookup(db, token)
+    if row is None:
+        raise _unauthorized()
+    user = db.get(User, row.user_id)
+    if user is None or not user.is_active:
+        raise _unauthorized()
+    if request.method not in ("GET", "HEAD"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "token_read_only")
+    roles = parse_roles(user.roles)
+    return Principal(
+        user_id=user.id,
+        username=user.username,
+        roles=roles,
+        permissions=permissions_for(roles) & tokens.READ_PERMISSIONS,
+        session_id="",
+        csrf_token="",
+        must_change_password=user.must_change_password,
+        language=user.language,
+        token_id=row.id,
     )
 
 

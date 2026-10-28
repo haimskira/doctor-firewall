@@ -27,9 +27,10 @@ from app.models.recommendations import (
     Recommendation,
     RecommendationDecision,
 )
-from app.models.user import User
+from app.models.user import ApiToken, User
 
 __all__ = [
+    "ApiToken",
     "Asset",
     "AssetGroup",
     "AuditRecord",

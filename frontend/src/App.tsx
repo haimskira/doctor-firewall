@@ -10,6 +10,7 @@ import { AttackSurfacePage } from './pages/AttackSurfacePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { JobsPage } from './pages/JobsPage';
 import { RoadmapPage } from './pages/RoadmapPage';
+import { ApiDocsPage } from './pages/ApiDocsPage';
 import { AuditPage } from './pages/AuditPage';
 import { DeployPage } from './pages/DeployPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
@@ -73,6 +74,7 @@ export function App() {
             ['assets', <AssetsPage key="a" />],
             ['recommendations', <RecommendationsPage key="m" />],
             ['roadmap', <RoadmapPage key="rm" />],
+            ['api-docs', <ApiDocsPage key="ad" />],
             ['map', <MapPage key="g" />],
             ['attack', <AttackSurfacePage key="t" />],
             ['jobs', <JobsPage key="j" />],

@@ -117,6 +117,7 @@ const NAV: NavGroup[] = [
         children: [
           { to: '/fmc', label: 'nav.fmc', permission: 'fmc:manage' },
           { to: '/snapshots', label: 'nav.snapshots', permission: 'policy:read' },
+          { to: '/api-docs', label: 'nav.apiDocs', permission: 'policy:read' },
         ],
       },
     ],

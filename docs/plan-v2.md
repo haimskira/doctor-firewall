@@ -173,6 +173,16 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
       the most problematic firewall possible, covering every kind the system fixes; then take it
       through the whole roadmap from phase 0 and verify each kind of change end to end.
 
+- [x] **9.3 Public API with an explorer** (`docs/api.md`; done 2026-10-28) (requested 2026-10-28): a new `api-docs` page (sign-in
+      required) with an interactive API explorer, so developers and other systems can pull all of
+      the system's data; it documents every finding kind and every capability. Needs: tokens for
+      systems (service accounts / API keys, read scopes) beside the browser session, a stable
+      versioned read API, OpenAPI served only to signed-in users, the explorer bundled offline
+      (no CDN).
+
+- [x] **9.4 Sign-in page** laid out like the FMC's (own mark and an original night-city backdrop — no vendor assets).
+- [x] **9.5 Unassigned access policies** are collected and analysed (staging), never on the map or in the attack surface (found by the dry run).
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.

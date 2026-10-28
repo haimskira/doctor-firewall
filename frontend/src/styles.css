@@ -1011,3 +1011,53 @@ a.button-link:hover { background: var(--primary-soft); }
 .road-open { margin-block-start: 0.5rem; }
 .road-phase .chips-inline { margin-block-start: 0.3rem; }
 .badge.behavior-preserves { border-color: var(--ok); color: var(--ok); }
+
+/* ---- sign-in: a city at night, one white card (as the firewall manager's own) ---- */
+.login-page {
+  min-block-size: 100vh; display: grid; place-items: center; padding: 24px;
+  background: #0d1519 url('/login-bg.svg') center / cover no-repeat;
+}
+.login-card {
+  position: relative; inline-size: min(700px, 100%); background: #ffffff; color: #1d1f24;
+  border-radius: 6px; padding: 56px 24px 56px; box-shadow: 0 20px 60px rgb(0 0 0 / 0.45);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.login-language { position: absolute; inset-block-start: 14px; inset-inline-end: 18px; font-size: 0.85rem; color: #1d69cc; }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-block-end: 44px; }
+.login-mark { inline-size: 42px; block-size: 42px; }
+.login-brand-name { font-weight: 700; letter-spacing: 0.18em; font-size: 1.05rem; color: #1d2b4f; }
+.login-brand-accent { font-size: 2.1rem; letter-spacing: 0.06em; color: #6abf4b; font-weight: 500; }
+.login-title {
+  display: flex; flex-direction: column; gap: 6px; margin: 0 0 40px;
+  font-size: clamp(1.7rem, 4vw, 2.6rem); line-height: 1.25; font-weight: 600; color: #1d1f24;
+}
+.login-form { inline-size: min(312px, 100%); display: flex; flex-direction: column; gap: 18px; text-align: start; }
+.login-form label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 0.95rem; color: #1d1f24; }
+.login-form input {
+  block-size: 42px; border: 1.5px solid #8e939b; border-radius: 6px; padding-inline: 10px;
+  font-size: 1rem; background: #ffffff; color: #1d1f24;
+}
+.login-form input:focus { outline: none; border-color: #1d69cc; box-shadow: 0 0 0 3px rgb(29 105 204 / 0.18); }
+.login-submit {
+  align-self: center; margin-block-start: 14px; min-inline-size: 94px; block-size: 40px; border: 0;
+  border-radius: 6px; background: #1d69cc; color: #ffffff; font-weight: 600; font-size: 1rem; cursor: pointer;
+}
+.login-submit:disabled { background: #a8c8f5; cursor: default; }
+@media (max-width: 560px) { .login-card { padding: 44px 16px; } .login-brand-accent { font-size: 1.6rem; } }
+
+/* ---- API for developers ---- */
+.apidocs-code {
+  background: var(--band); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; text-align: left; white-space: pre;
+}
+.apidocs-response { max-block-size: 60vh; overflow: auto; }
+.apidocs-points li { padding-block: 0.2rem; }
+.apidocs-capabilities li { margin-block: 0.4rem; }
+.apidocs-capabilities code { margin-inline-start: 0.35rem; font-size: 0.75rem; }
+.apidocs-explorer { display: grid; grid-template-columns: minmax(260px, 1fr) 2fr; gap: 12px; align-items: start; }
+.apidocs-list { max-block-size: 78vh; overflow: auto; }
+.apidocs-tag { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 12px 0 4px; }
+.apidocs-path { text-align: start; font-size: 0.85rem; }
+.apidocs-path.active { font-weight: 700; }
+.apidocs-get { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 0 0.35rem; border-radius: 4px; background: var(--primary-soft); color: var(--primary); }
+@media (max-width: 900px) { .apidocs-explorer { grid-template-columns: 1fr; } }

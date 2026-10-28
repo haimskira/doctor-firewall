@@ -192,7 +192,7 @@ describe('App', () => {
     // Sign-out lives in the user menu of the top bar, as in the FMC.
     await user.click(await screen.findByRole('button', { name: 'Alice' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
-    expect(await screen.findByRole('button', { name: /Sign in|כניסה/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Log In|כניסה/ })).toBeInTheDocument();
   });
 });
 

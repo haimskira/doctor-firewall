@@ -27,6 +27,13 @@ export const PHASE_OF: Record<RecommendationKind, Phase> = {
   remove_unused_object: 'closing',
 };
 
+const PHASE_BY_KIND = new Map<string, Phase>(Object.entries(PHASE_OF));
+
+/** The roadmap phase of a recommendation kind. */
+export function phaseOf(kind: RecommendationKind): Phase {
+  return PHASE_BY_KIND.get(kind) ?? 'closing';
+}
+
 export function isPhase(value: string | null): value is Phase {
   return value !== null && (PHASES as readonly string[]).includes(value);
 }
@@ -34,8 +41,7 @@ export function isPhase(value: string | null): value is Phase {
 /** True when ``kind`` belongs to a phase after ``current`` (its turn has not come yet). */
 export function isAhead(kind: RecommendationKind, current: string | null): boolean {
   if (!isPhase(current)) return false;
-  const phase = new Map<string, Phase>(Object.entries(PHASE_OF)).get(kind);
-  return phase !== undefined && PHASES.indexOf(phase) > PHASES.indexOf(current);
+  return PHASES.indexOf(phaseOf(kind)) > PHASES.indexOf(current);
 }
 
 export interface RoadmapCounts {
