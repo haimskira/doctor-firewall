@@ -130,12 +130,37 @@ def test_an_unassigned_policy_is_cleaned_up_but_opens_nothing(
     rules = {r["name"] for e in chosen["edges"] for r in e["rules"]}
     assert rules == {"STAGE_WEB"}
     assert not any(r["name"] == "STAGE_WEB" for e in by_default["edges"] for r in e["rules"])
-    # Dashboard and roadmap narrowed to the policy: its rules, plus the shared object work.
+    # Dashboard and roadmap narrowed to the policy's world: its rules and the two objects they
+    # use. Unused objects belong to no policy, other policies' objects are not its work.
     dash = client.get(f"/api/snapshots/{sid}/dashboard", params={"policy": staging["id"]}).json()
     assert dash["totals"]["rules"] == 3
     assert dash["totals"]["clusters"] == 0
+    assert dash["totals"]["objects"] == 2  # NET_STAGE_SRC, H_STAGE_DST
     kinds = {k["key"] for k in dash["recommendations_by_kind"]}
-    assert {"remove_shadowed_rule", "remove_disabled_rule", "remove_unused_object"} <= kinds
+    assert {"remove_shadowed_rule", "remove_disabled_rule"} <= kinds
+    assert "remove_unused_object" not in kinds
+    everything = client.get(f"/api/snapshots/{sid}/dashboard").json()
+    assert "remove_unused_object" in {k["key"] for k in everything["recommendations_by_kind"]}
+    page = client.get(
+        f"/api/snapshots/{sid}/recommendations", params={"policy": staging["id"], "limit": 1}
+    ).json()
+    assert sum(k["count"] for k in page["summary"].values()) == page["total"]
+    found = client.get(
+        f"/api/snapshots/{sid}/findings", params={"policy_id": staging["id"], "limit": 500}
+    ).json()
+    assert found["total"] == sum(sum(v.values()) for v in found["summary"].values())
+    assert {f["kind"] for f in found["rows"]} <= {
+        "shadowed_rule",
+        "disabled_rule",
+        "identical_rules",
+    }
+    # ... and the enforced policy's world holds none of the staging policy's items.
+    enforced = next(p for p in policies.values() if p["kind"] == "access" and p["clusters"])
+    other = client.get(
+        f"/api/snapshots/{sid}/findings", params={"policy_id": enforced["id"], "limit": 500}
+    ).json()
+    assert not [f for f in other["rows"] if "STAGE_" in f["title"]]
+    assert {f["kind"] for f in other["rows"]} - {f["kind"] for f in found["rows"]}
     road = client.get(f"/api/snapshots/{sid}/roadmap", params={"policy": staging["id"]}).json()
     first = road["phases"][0]
     assert {k["kind"]: k["total"] for k in first["kinds"]} == {

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis import routing
 from app.analysis.expand import ACE_FIELDS
-from app.api.scope import policy_or_shared
+from app.api.scope import ensure_scoped, in_policy
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -1059,18 +1059,18 @@ def list_findings(
     order: SortOrder = None,
 ) -> FindingsPage:
     _snapshot(db, snapshot_id)
-    query = select(Finding).where(Finding.snapshot_id == snapshot_id)
+    ensure_scoped(db, snapshot_id, policy_id)
+    scoped = in_policy(Finding.policy_ids, policy_id)  # the policy's rules and its objects
+    query = select(Finding).where(Finding.snapshot_id == snapshot_id, scoped)
     if kind:
         query = query.where(Finding.kind == kind)
     if severity:
         query = query.where(Finding.severity == severity)
-    if policy_id:  # that policy's findings plus the shared object findings
-        query = query.where(policy_or_shared(Finding.policy_fmc_id, policy_id))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     summary: dict[str, dict[str, int]] = defaultdict(dict)
     for k, sev, n in db.execute(
         select(Finding.kind, Finding.severity, func.count())
-        .where(Finding.snapshot_id == snapshot_id)
+        .where(Finding.snapshot_id == snapshot_id, scoped)
         .group_by(Finding.kind, Finding.severity)
     ):
         summary[k][sev] = n

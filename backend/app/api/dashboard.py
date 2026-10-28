@@ -11,7 +11,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.connectivity import RISK_ORDER
-from app.api.scope import PolicyQuery, enforced, policy_or_shared
+from app.api.scope import PolicyQuery, ace_delta_in, enforced, ensure_scoped, in_policy
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
@@ -86,8 +86,9 @@ class Dashboard(BaseModel):
 
 @router.get("/snapshots/{snapshot_id}/dashboard", response_model=Dashboard)
 def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = None) -> Dashboard:
-    """The snapshot at a glance; ``policy`` narrows it to one policy (plus the shared object
-    findings and recommendations, which serve every policy)."""
+    """The snapshot at a glance; ``policy`` narrows it to one policy's world: its rules, its
+    devices and the objects its rules use (their findings and recommendations)."""
+    ensure_scoped(db, snapshot_id, policy)
     snap = db.get(Snapshot, snapshot_id)
     if snap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -111,7 +112,7 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = N
     by_kind: dict[str, dict[str, int]] = {}
     for kind, severity, n in db.execute(
         select(Finding.kind, Finding.severity, func.count())
-        .where(Finding.snapshot_id == sid, policy_or_shared(Finding.policy_fmc_id, policy))
+        .where(Finding.snapshot_id == sid, in_policy(Finding.policy_ids, policy))
         .group_by(Finding.kind, Finding.severity)
     ).all():
         severities[severity] = severities.get(severity, 0) + n
@@ -128,11 +129,11 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = N
                 Recommendation.kind,
                 func.count(),
                 func.sum(Recommendation.deploy_cost),
-                func.sum(Recommendation.ace_delta),
+                func.sum(ace_delta_in(policy)),
             )
             .where(
                 Recommendation.snapshot_id == sid,
-                policy_or_shared(Recommendation.policy_fmc_id, policy),
+                in_policy(Recommendation.policy_ids, policy),
             )
             .group_by(Recommendation.kind)
             .order_by(func.count().desc())
@@ -246,7 +247,9 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = N
             )
             or 0,
             "policies": 1 if policy is not None else count(Policy),
-            "objects": count(FwObject),
+            "objects": count(FwObject)
+            if policy is None
+            else int((snap.stats.get("objects_by_policy") or {}).get(policy, 0)),
             "clusters": len(governing) if policy is not None else count(Cluster),
             "findings": sum(severities.values()),
             "recommendations": sum(r.count for r in recs),

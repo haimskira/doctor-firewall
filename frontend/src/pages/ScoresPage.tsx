@@ -26,8 +26,10 @@ export function ScoresPage() {
     <div className="stack">
       <div className="row spread">
         <h1>{t('score.title')}</h1>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
       <ScopeNote scope={scope} />
       <p className="muted">{t('score.help')}</p>

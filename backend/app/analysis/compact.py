@@ -16,7 +16,10 @@ forty times the ACEs in every rule that uses it. ``compact_group`` rewrites such
 The group's values are unchanged, so every rule, NAT or route that uses it matches exactly the
 same traffic (the traffic proof checks it before and after writing). Nested groups, FQDNs, ICMP
 and "all protocols" members are never touched. The ACE saving is an estimate over the access /
-prefilter rules that use the group directly or through any parent group.
+prefilter rules that use the group directly or through any parent group. When several groups of
+one rule are compacted (a group and its parent, a source and a destination group), their savings
+in that rule multiply rather than add: each recommendation gets its share of the combined saving,
+so the savings of any set of them add up to no more than applying them all.
 """
 
 from __future__ import annotations
@@ -219,19 +222,18 @@ def _ace_delta(
     old: set[str],
     new: set[str],
     family: _Family = NETWORK,
-) -> tuple[int, int, set[int]]:
-    """(estimated ACE change, rules whose ACEs change, every rule using the group) of the
+) -> tuple[dict[int, float], set[int]]:
+    """({rule: ACE factor} of the rules whose ACEs change, every rule using the group) of the
     group's leaves going ``old`` -> ``new``."""
     holders = {gid} | _ancestors(estate, gid)
     rule_ids = set().union(*(estate.rule_users.get(h, set()) for h in holders))
     removed, added = old - new, new - old
-    delta = rules = 0
+    factors: dict[int, float] = {}
     for rid in rule_ids:
         info = infos.get(rid)
         if info is None or info.ace <= 0:
             continue
-        ace = float(info.ace)
-        changed = False
+        factor = 1.0
         for fld in ACE_FIELDS:
             refs = info.refs.get(fld, [])
             if not any(r.object_id in holders for r in refs):
@@ -252,12 +254,40 @@ def _ace_delta(
             before_count = max(1, leaves.count())
             after_count = max(1, before_count - len(current) + len(after))
             if after_count != before_count:
-                ace = ace * after_count / before_count
-                changed = True
-        if changed:
-            delta += round(ace) - info.ace
-            rules += 1
-    return delta, rules, rule_ids
+                factor *= after_count / before_count
+        if factor != 1.0:
+            factors[rid] = factor
+    return factors, rule_ids
+
+
+def _rule_shares(
+    infos: dict[int, RuleInfo], factors: list[dict[int, float]]
+) -> list[dict[int, float]]:
+    """The ACE change of each group in each of its rules, as its share of the combined change.
+
+    Alone, a group changes a rule's ACEs by ``ace * (f - 1)``; together the groups of one rule
+    change them by ``ace * (prod(f) - 1)``. Each group gets the combined change in proportion to
+    its own, so the shares add up to the combined change."""
+    alone: dict[int, float] = {}
+    together: dict[int, float] = {}
+    for per_rule in factors:
+        for rid, f in per_rule.items():
+            alone[rid] = alone.get(rid, 0.0) + infos[rid].ace * (f - 1)
+            together[rid] = together.get(rid, 1.0) * f
+    shares: list[dict[int, float]] = []
+    for per_rule in factors:
+        mine: dict[int, float] = {}
+        for rid, f in per_rule.items():
+            own = infos[rid].ace * (f - 1)
+            combined = infos[rid].ace * (together[rid] - 1)
+            mine[rid] = own if alone[rid] == 0 else own * combined / alone[rid]
+        shares.append(mine)
+    return shares
+
+
+def _shares(infos: dict[int, RuleInfo], factors: list[dict[int, float]]) -> list[int]:
+    """The ACE change of each group (see :func:`_rule_shares`)."""
+    return [round(sum(mine.values())) for mine in _rule_shares(infos, factors)]
 
 
 def recommend_compact_groups(
@@ -267,6 +297,7 @@ def recommend_compact_groups(
     recommendation already rewrites (one group update per analysis keeps them independent)."""
     taken = {o.name for o in estate.objects.values()}
     drafts: list[Draft] = []
+    factors: list[dict[int, float]] = []  # per draft: {rule: ACE factor}
     families = {f.group_kind: f for f in (NETWORK, PORTS)}
     for group in sorted(estate.objects.values(), key=lambda o: o.name):
         family = families.get(group.kind)
@@ -354,21 +385,20 @@ def recommend_compact_groups(
                 kept_refs.append(ref.name)
         old_leaves = family.values(estate.resolver.leaves(group.fmc_id))
         new_leaves = _leaves_after(estate, members, replacement, summaries, family)
-        ace_delta, rules, users = _ace_delta(
+        rule_factors, users = _ace_delta(
             estate, infos, group.fmc_id, old_leaves, new_leaves, family
         )
+        factors.append(rule_factors)
         removed_count = len(members) - len(kept_refs)
-        title = (
-            f"{group.name}: {len(members)} -> {len(kept_refs)} members, same "
-            + ("ports" if family is PORTS else "addresses")
-            + (f" (~{ace_delta:,} ACEs in {rules} rule(s))" if ace_delta else "")
-        )
         drafts.append(
             Draft(
                 kind="compact_group",
                 principle="ace_economy",
-                title=title,
-                priority=40 if ace_delta <= -1000 else 30 if ace_delta < 0 else 15,
+                title=(
+                    f"{group.name}: {len(members)} -> {len(kept_refs)} members, same "
+                    + ("ports" if family is PORTS else "addresses")
+                ),
+                priority=0,
                 display="split",
                 deploy_cost=1 + len(created),
                 targets=[_object_target(group)],
@@ -403,14 +433,25 @@ def recommend_compact_groups(
                         "members_before": len(members),
                         "members_after": len(kept_refs),
                         "removed": removed_count,
-                        "rules": rules,
+                        "rules": len(rule_factors),
                     },
                     "affected_rules": {"total": len(users), "sample": estate.rule_sample(users)},
                 },
-                ace_delta=ace_delta,
                 plan=_plan(build),
             )
         )
+    for draft, per_rule, mine in zip(drafts, factors, _rule_shares(infos, factors), strict=True):
+        ace_delta = round(sum(mine.values()))
+        by_policy: dict[str, float] = {}
+        for rid, share in mine.items():
+            policy = infos[rid].rule.policy_fmc_id
+            by_policy[policy] = by_policy.get(policy, 0.0) + share
+        # A group serves every policy using it: each policy's view shows its own part.
+        draft.preview["compact"]["ace_by_policy"] = {p: round(v) for p, v in by_policy.items()}
+        draft.ace_delta = ace_delta
+        draft.priority = 40 if ace_delta <= -1000 else 30 if ace_delta < 0 else 15
+        if ace_delta:
+            draft.title += f" (~{ace_delta:,} ACEs in {len(per_rule)} rule(s))"
     return drafts
 
 

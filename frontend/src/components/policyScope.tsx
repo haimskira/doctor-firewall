@@ -45,9 +45,9 @@ export function PolicyPicker({ scope }: { scope: PolicyScope }) {
 /** Under a picker: what the chosen scope means (shared items, or a policy no device enforces). */
 export function ScopeNote({ scope, traffic = false }: { scope: PolicyScope; traffic?: boolean }) {
   const { t } = useI18n();
-  if (scope.selected === null) return traffic ? <p className="muted small">{t('scope.allTraffic')}</p> : null;
+  if (scope.selected === null) return traffic ? <p className="scope-note muted small">{t('scope.allTraffic')}</p> : null;
   if (scope.selected.clusters.length === 0) {
     return <p className="scope-note warn small">{t(traffic ? 'scope.unassignedTraffic' : 'scope.unassigned', { name: scope.selected.name })}</p>;
   }
-  return traffic ? null : <p className="muted small">{t('scope.shared')}</p>;
+  return traffic ? null : <p className="scope-note muted small">{t('scope.shared')}</p>;
 }

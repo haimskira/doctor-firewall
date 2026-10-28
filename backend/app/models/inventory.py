@@ -24,7 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -295,6 +295,7 @@ class Finding(Base):
     __table_args__ = (
         CheckConstraint("severity IN ('info','low','medium','high')", name="severity_known"),
         Index("ix_findings_snapshot_kind", "snapshot_id", "kind"),
+        Index("ix_findings_policy_ids", "policy_ids", postgresql_using="gin"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -304,3 +305,7 @@ class Finding(Base):
     policy_fmc_id: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # The access policies the item belongs to (app.analysis.policy_scope); empty: none.
+    policy_ids: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)), nullable=False, default=list, server_default="{}"
+    )

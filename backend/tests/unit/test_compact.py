@@ -13,9 +13,10 @@ from app.analysis.compact import (
     _Member,
     _member,
     _merge_blocks,
+    _shares,
 )
 from app.analysis.expand import Leaves
-from app.analysis.recommend import Estate, Obj, Ref
+from app.analysis.recommend import Estate, Obj, Ref, RuleInfo
 from app.analysis.space import AddressSet
 
 
@@ -139,3 +140,16 @@ def test_ports_cover_and_merge_per_protocol_and_leave_icmp_alone() -> None:
         ("port", "UDP/8082"): ["udp"],
     }
     assert _block_port("TCP", 0, 65535) == ("port", "TCP/any")
+
+
+def test_savings_of_two_groups_in_one_rule_multiply_and_the_shares_add_up() -> None:
+    # Rule 1 (1 000 ACEs) uses group A (40 -> 10 leaves) and group B (4 -> 1); rule 2 (100 ACEs)
+    # only group A. Alone A saves 750 + 75 and B 750 in rule 1, but together rule 1 drops to 62.5.
+    infos = {
+        1: cast(RuleInfo, type("I", (), {"ace": 1000})()),
+        2: cast(RuleInfo, type("I", (), {"ace": 100})()),
+    }
+    shares = _shares(infos, [{1: 0.25, 2: 0.25}, {1: 0.25}])
+    assert shares == [-544, -469]
+    assert abs(sum(shares) - (-(1000 - 62.5) - 75)) <= 1
+    assert _shares(infos, [{2: 0.5}]) == [-50]  # alone: its own saving

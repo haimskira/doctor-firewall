@@ -149,10 +149,13 @@ def test_topology_and_network_payloads_map() -> None:
     clusters = build_clusters(devices, pairs, access)
     assert len(clusters) == 2
     assert all(c["kind"] == "ha_pair" and len(c["members"]) == 2 for c in clusters)
-    assert {c["policy_fmc_id"] for c in clusters} == {p["id"] for p in DATA.policies}
+    assigned = {a.policy_id for a in access}
+    assert {c["policy_fmc_id"] for c in clusters} == assigned
+    assert {p["id"] for p in DATA.policies} - assigned  # ACP-STAGING: no device enforces it
     for policy in DATA.policies:
         assert v10_1.map_policy(policy).default_action == "BLOCK"
-        assert [v10_1.map_category(c) for c in DATA.categories[policy["id"]]]
+        if policy["id"] in assigned:  # the staging policy has no categories
+            assert [v10_1.map_category(c) for c in DATA.categories[policy["id"]]]
     for items in DATA.hitcounts.values():
         assert all(v10_1.map_hitcount(h).hit_count >= 0 for h in items)
     for device, kinds in DATA.interfaces.items():

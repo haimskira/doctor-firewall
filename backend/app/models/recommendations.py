@@ -23,7 +23,7 @@ from sqlalchemy import (
     String,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -98,6 +98,7 @@ class Recommendation(Base):
         CheckConstraint("deploy_cost >= 0", name="deploy_cost_positive"),
         Index("ix_recommendations_snapshot_kind", "snapshot_id", "kind"),
         Index("ix_recommendations_snapshot_priority", "snapshot_id", "priority"),
+        Index("ix_recommendations_policy_ids", "policy_ids", postgresql_using="gin"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -106,6 +107,10 @@ class Recommendation(Base):
     )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     policy_fmc_id: Mapped[str | None] = mapped_column(String(64))
+    # The access policies the item belongs to (app.analysis.policy_scope); empty: none.
+    policy_ids: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)), nullable=False, default=list, server_default="{}"
+    )
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     # Doctrine principle the recommendation serves (an i18n key on the client).
     principle: Mapped[str] = mapped_column(String(48), nullable=False)

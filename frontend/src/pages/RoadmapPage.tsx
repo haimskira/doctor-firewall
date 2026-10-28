@@ -31,8 +31,10 @@ export function RoadmapPage() {
     <div className="stack">
       <div className="row spread">
         <h1>{t('road.title')}</h1>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
       <ScopeNote scope={scope} />
       <p className="muted">{t('road.help')}</p>

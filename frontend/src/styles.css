@@ -814,8 +814,16 @@ th.num button.th-sort { justify-content: flex-end; }
 th.sortable:hover .sort-icon { opacity: 1; }
 
 /* ---- attack surface ---- */
-.atk-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
-.atk-controls form { display: flex; gap: 0.4rem; align-items: end; }
+.atk-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 0.9rem; }
+.atk-fields { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end; inline-size: 100%; }
+.atk-fields .field { display: flex; flex-direction: column; gap: 0.3rem; margin: 0; min-inline-size: 0; flex: 1 1 14rem; }
+.atk-fields .field.atk-address { flex: 1.4 1 18rem; }
+.atk-fields .field:last-child { flex: 0 1 9rem; }
+.atk-fields .field > span, .atk-fields .field > label { display: block; margin: 0; padding: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); line-height: 1.2; }
+.atk-fields select, .atk-fields input, .atk-fields button { inline-size: 100%; block-size: 2.25rem; box-sizing: border-box; margin: 0; }
+.atk-address-row { display: flex; gap: 0.4rem; }
+.atk-address-row input { flex: 1; min-inline-size: 0; }
+.atk-address-row button { inline-size: auto; padding-inline: 1rem; }
 .atk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.6rem; margin-block-end: 0.6rem; }
 .atk-kpi { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 0.55rem 0.75rem; background: var(--band); }
 .atk-kpi-value { font-size: 1.45rem; font-weight: 700; }
@@ -1065,8 +1073,9 @@ a.button-link:hover { background: var(--primary-soft); }
 .pe-cluster { font-size: 0.9rem; color: var(--muted); }
 .badge.pe-unassigned { border-color: var(--warn); color: var(--warn); }
 
-.scope-note { margin: 0.2rem 0; }
+.scope-note { margin: 0; }
 .policy-picker select { max-inline-size: 22rem; }
 
 .swagger-host { background: #fff; color: #3b4151; border-radius: var(--radius); }
 .swagger-host .information-container { padding-block: 0; }
+.page-filters { gap: 0.75rem 1.25rem; align-items: center; margin-inline-start: auto; }

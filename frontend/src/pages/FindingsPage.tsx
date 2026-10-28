@@ -45,8 +45,10 @@ export function FindingsPage() {
     <div className="stack">
       <div className="row spread">
         <h1>{t('findings.title')}</h1>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
       <ScopeNote scope={scope} />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}

@@ -105,8 +105,9 @@ are **read-only** (GET / HEAD, the owner's read permissions): changes to the fir
 the UI and its four-eyes approval.
 
 **Conventions.** JSON over HTTPS. Lists take `limit` (≤ 500) and `offset` and answer `total`;
-many take `sort` and `order`. A `policy` parameter narrows insight views to one access policy
-(plus the shared object work). Errors: HTTP status with `{{"detail": "<code>"}}`.
+many take `sort` and `order`. A `policy` parameter narrows insight views to one access policy's
+world: its rules, its devices and the objects its rules use (directly or through groups).
+Errors: HTTP status with `{{"detail": "<code>"}}`.
 
 ### Findings
 

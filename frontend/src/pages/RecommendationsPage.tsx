@@ -96,7 +96,7 @@ export function RecommendationsPage() {
         </div>
         <div className="row">
           <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+          <PolicyPicker scope={scope} />
           {can('collect:run') && snapshotId !== null && (
             <button type="button" className="secondary" onClick={() => void reanalyze()}>
               {t('rec.reanalyze')}
@@ -142,6 +142,8 @@ export function RecommendationsPage() {
               }}
             >
               <span>{t('rec.all')}</span>
+              <strong>{[...summary.values()].reduce((n, x) => n + x.count, 0)}</strong>
+              <span className="muted small">{t('rec.cost', { count: [...summary.values()].reduce((n, x) => n + x.deploy_cost, 0) })}</span>
             </button>
             {RECOMMENDATION_KINDS.filter((k) => (summary.get(k)?.count ?? 0) > 0).map((k) => (
               <button

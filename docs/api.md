@@ -29,7 +29,8 @@ the explorer is built from it. `?scope=all` adds every write operation (what the
 writes need a signed-in session and its CSRF header — tokens stay read-only). Lists take `limit` (≤ 500) and `offset` and answer `total`; many take
 `sort` and `order`. Insight views (dashboard, map, attack surface, findings, scores,
 recommendations, roadmap) take `policy` (`policy_id` on findings / scores) to narrow them to one
-access policy plus the shared object work; the map and the attack surface default to the policies
+access policy's world — its rules, its devices and the objects its rules use, directly or through
+groups (an object no rule uses belongs to no policy: it shows under all policies only); the map and the attack surface default to the policies
 the devices enforce, and with a policy no device enforces they show what it would allow. Errors:
 HTTP status with `{"detail": "<code>"}`.
 

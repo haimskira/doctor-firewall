@@ -21,7 +21,7 @@ from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
 from app.analysis.roadmap import PHASE_NAMES, kinds_of
 from app.api.schemas import StrictModel
-from app.api.scope import policy_or_shared
+from app.api.scope import ace_delta_in, ensure_scoped, in_policy
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -265,8 +265,8 @@ def _filtered(
     )
     if kind:
         query = query.where(Recommendation.kind == kind)
-    if policy:  # that policy's rule work plus the shared object work
-        query = query.where(policy_or_shared(Recommendation.policy_fmc_id, policy))
+    if policy:  # that policy's rules and the objects they use
+        query = query.where(in_policy(Recommendation.policy_ids, policy))
     if state == "open":
         query = query.where(RecommendationDecision.fingerprint.is_(None))
     elif state in ("accepted", "dismissed"):
@@ -303,6 +303,8 @@ def list_recommendations(
 ) -> RecommendationsPage:
     """The recommendation queue: highest priority first, with impact and deploy cost."""
     snap = _snapshot(db, snapshot_id)
+    ensure_scoped(db, snapshot_id, policy)
+    scoped = in_policy(Recommendation.policy_ids, policy)
     query = _filtered(snapshot_id, kind, policy, state, q, rule)
     if phase is not None:  # one step of the clean-up roadmap
         query = query.where(Recommendation.kind.in_(kinds_of(phase)))
@@ -340,9 +342,9 @@ def list_recommendations(
                 Recommendation.kind,
                 func.count(),
                 func.sum(Recommendation.deploy_cost),
-                func.sum(Recommendation.ace_delta),
+                func.sum(ace_delta_in(policy)),
             )
-            .where(Recommendation.snapshot_id == snapshot_id)
+            .where(Recommendation.snapshot_id == snapshot_id, scoped)
             .group_by(Recommendation.kind)
         ).all()
     }
@@ -350,7 +352,7 @@ def list_recommendations(
         select(
             func.count(),
             func.coalesce(func.sum(Recommendation.deploy_cost), 0),
-            func.coalesce(func.sum(Recommendation.ace_delta), 0),
+            func.coalesce(func.sum(ace_delta_in(policy)), 0),
         )
         .join(
             RecommendationDecision,
@@ -359,6 +361,7 @@ def list_recommendations(
         .where(
             Recommendation.snapshot_id == snapshot_id,
             RecommendationDecision.status == "accepted",
+            scoped,
         )
     ).one()
     stale = stale_since(db, snap)

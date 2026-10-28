@@ -297,11 +297,13 @@ export function HomePage() {
         <div>
           <div className="dash-title">
             <h1>{t('dash.title')}</h1>
-            <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+            <div className="row page-filters">
+              <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+              <PolicyPicker scope={scope} />
+            </div>
           </div>
-      <ScopeNote scope={scope} />
           <p className="muted">{t('dash.subtitle')}</p>
+          <ScopeNote scope={scope} />
         </div>
       </div>
       {(snapError ?? data.error) !== null && <Alert kind="error">{tError(snapError ?? data.error ?? '')}</Alert>}

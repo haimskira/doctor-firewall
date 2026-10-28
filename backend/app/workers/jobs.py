@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.analysis import policy_scope
 from app.analysis.basic import analyze
 from app.analysis.recommend import recommend
 from app.analysis.semantic import analyze_semantics
@@ -175,6 +176,7 @@ def analyze_snapshot(snapshot_id: int, run_id: int | None = None) -> dict[str, i
             summary[kind] = summary.get(kind, 0) + count
         progress.phase("recommend", 55, 99)
         recommendations = recommend(session, snapshot_id)
+        policy_scope.assign(session, snapshot_id)
         progress.phase("saving", 99, 99)
     log.info(
         "snapshot analysed",

@@ -186,6 +186,13 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 - [x] **9.7 One policy at a time** on every insight page (dashboard, map, attack surface, findings, scores,
       recommendations, roadmap); the rule editor shows a policy's own devices only (an unassigned policy
       under no cluster) and lists every access policy (requested 2026-10-28).
+- [x] **9.8 A policy is a world of its own** (requested 2026-10-29): every finding and recommendation
+      carries the access policies it belongs to (`policy_ids`, `app/analysis/policy_scope.py`): rule
+      items their policy (prefilter / decryption rules the access policies linking them), object items
+      every policy whose rules use the object directly or through groups, cluster items the policies
+      the cluster enforces; unused objects belong to no policy (shown under all policies only). Every
+      count, summary and ACE saving of a one-policy view is that policy's own. The attack surface
+      toolbar laid out as a form (label above field; the cluster filter hidden while a policy is chosen).
 
 ## Running work outside the plan
 

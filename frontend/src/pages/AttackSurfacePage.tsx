@@ -39,7 +39,7 @@ export function AttackSurfacePage() {
   if (scope.policy !== null) query.set('policy', scope.policy);
   if (system !== null) query.set('system', system);
   else if (address !== null) query.set('address', address);
-  if (cluster !== null) query.set('cluster', cluster);
+  if (cluster !== null && scope.policy === null) query.set('cluster', cluster); // a chosen policy is its own scope
   const ready = base !== null && (system !== null || address !== null);
   const surface = useApi<AttackSurface>(ready ? `${base}/attack-surface?${query.toString()}` : null);
   const data = surface.data;
@@ -97,11 +97,13 @@ export function AttackSurfacePage() {
     <div className="stack">
       <div className="row spread">
         <h1>{t('atk.title')}</h1>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
-      <ScopeNote scope={scope} traffic />
       <p className="muted">{t(mode === 'to' ? 'atk.helpTo' : 'atk.helpFrom')}</p>
+      <ScopeNote scope={scope} traffic />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
       {snapshotId !== null && (
@@ -122,83 +124,86 @@ export function AttackSurfacePage() {
               </button>
             ))}
           </div>
-          <label className="inline-field">
-            {t(mode === 'to' ? 'atk.target' : 'atk.source')}
-            <select
-              value={system ?? ''}
-              onChange={(e) => {
-                chooseSystem(e.target.value);
+          <div className="atk-fields">
+            <label className="field">
+              <span>{t(mode === 'to' ? 'atk.target' : 'atk.source')}</span>
+              <select
+                value={system ?? ''}
+                onChange={(e) => {
+                  chooseSystem(e.target.value);
+                }}
+              >
+                <option value="">{t('atk.pickSystem')}</option>
+                {[...byTier.entries()].map(([tier, list]) => (
+                  <optgroup key={tier} label={tier}>
+                    {list.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {target.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <form
+              className="field atk-address"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitAddress();
               }}
             >
-              <option value="">{t('atk.pickSystem')}</option>
-              {[...byTier.entries()].map(([tier, list]) => (
-                <optgroup key={tier} label={tier}>
-                  {list.map((target) => (
-                    <option key={target.id} value={target.id}>
-                      {target.label}
+              <label htmlFor="atk-address">{t('atk.orAddress')}</label>
+              <div className="atk-address-row">
+                <input
+                  id="atk-address"
+                  type="search"
+                  dir="ltr"
+                  maxLength={96}
+                  placeholder="10.20.0.0/24"
+                  value={draft}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                  }}
+                />
+                <button type="submit">{t('atk.analyse')}</button>
+              </div>
+            </form>
+            {scope.policy === null && (
+              <label className="field">
+                <span>{t('rules.cluster')}</span>
+                <select
+                  value={cluster ?? ''}
+                  onChange={(e) => {
+                    setSelection(null);
+                    setCluster(e.target.value === '' ? null : e.target.value);
+                  }}
+                >
+                  <option value="">{t('atk.allClusters')}</option>
+                  {(clusters.data ?? []).map((c) => (
+                    <option key={c.fmc_id} value={c.fmc_id}>
+                      {c.name}
                     </option>
                   ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-          <form
-            className="inline-field"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitAddress();
-            }}
-          >
-            <label className="inline-field">
-              {t('atk.orAddress')}
-              <input
-                type="search"
-                dir="ltr"
-                maxLength={96}
-                placeholder="10.20.0.0/24"
-                value={draft}
+                </select>
+              </label>
+            )}
+            <label className="field">
+              <span>{t('atk.depth')}</span>
+              <select
+                value={depth}
                 onChange={(e) => {
-                  setDraft(e.target.value);
+                  setSelection(null);
+                  setDepth(e.target.value === '3' ? null : e.target.value);
                 }}
-              />
+              >
+                {DEPTHS.map((d) => (
+                  <option key={d} value={d}>
+                    {hops(Number(d))}
+                  </option>
+                ))}
+              </select>
             </label>
-            <button type="submit" className="secondary">
-              {t('atk.analyse')}
-            </button>
-          </form>
-          <label className="inline-field">
-            {t('atk.depth')}
-            <select
-              value={depth}
-              onChange={(e) => {
-                setSelection(null);
-                setDepth(e.target.value === '3' ? null : e.target.value);
-              }}
-            >
-              {DEPTHS.map((d) => (
-                <option key={d} value={d}>
-                  {hops(Number(d))}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-field">
-            {t('rules.cluster')}
-            <select
-              value={cluster ?? ''}
-              onChange={(e) => {
-                setSelection(null);
-                setCluster(e.target.value === '' ? null : e.target.value);
-              }}
-            >
-              <option value="">{t('atk.allClusters')}</option>
-              {(clusters.data ?? []).map((c) => (
-                <option key={c.fmc_id} value={c.fmc_id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          </div>
         </section>
       )}
       {snapshotId !== null && !ready && <Alert kind="info">{t('atk.pickFirst')}</Alert>}

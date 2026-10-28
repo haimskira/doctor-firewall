@@ -141,8 +141,10 @@ export function MapPage() {
           <h1>{t('map.title')}</h1>
           <p className="muted small">{t('map.help')}</p>
         </div>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        <PolicyPicker scope={scope} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
       <ScopeNote scope={scope} traffic />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
