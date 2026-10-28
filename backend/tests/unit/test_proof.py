@@ -198,4 +198,7 @@ def test_renames_and_untouched_policies_cost_nothing() -> None:
         "exhaustive": True,
         "ok": True,
         "seconds": report["seconds"],
+        "rules": report["rules"],
+        "touched": 0,
     }
+    assert report["rules"] > 0  # every rule compared, none differs: a proof by equality
