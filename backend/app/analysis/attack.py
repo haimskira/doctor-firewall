@@ -139,8 +139,11 @@ class Surface:
     truncated: bool
 
 
-def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) -> list[Hop]:
-    """Every permit flow of the snapshot (of one cluster's policies if ``cluster``)."""
+def load_hops(
+    session: Session, snapshot_id: int, cluster: str | None = None, only: str | None = None
+) -> list[Hop]:
+    """Every permit flow of the snapshot (of one cluster's policies if ``cluster``; of one
+    policy, enforced or not, if ``only`` — what it would allow)."""
     policies = list(
         session.scalars(
             select(Policy).where(
@@ -155,7 +158,10 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
     if cluster is not None:
         governing_query = governing_query.where(ClusterPolicy.cluster_fmc_id == cluster)
     governing = set(session.scalars(governing_query))
-    policies = [p for p in policies if p.fmc_id in governing]
+    if only is not None:
+        policies = [p for p in policies if p.fmc_id == only]
+    else:
+        policies = [p for p in policies if p.fmc_id in governing]
     if not policies:
         return []
     scores = {

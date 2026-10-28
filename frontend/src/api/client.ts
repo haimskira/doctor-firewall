@@ -14,6 +14,11 @@ export function setCsrfToken(token: string | null): void {
   csrfToken = token;
 }
 
+/** The session's CSRF token (for clients that build their own requests, e.g. Swagger UI). */
+export function currentCsrfToken(): string | null {
+  return csrfToken;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;

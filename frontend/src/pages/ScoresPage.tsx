@@ -6,6 +6,7 @@ import { SnapshotPicker } from '../components/inventory';
 import { ReasonList, ScoreBadge } from '../components/score';
 import { SortTh, useServerSort } from '../components/sort';
 import { useApi, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { useI18n } from '../i18n/I18nProvider';
 
 const SORTS = ['score', 'policy', 'index', 'name', 'ace'] as const;
@@ -15,7 +16,9 @@ export function ScoresPage() {
   const { t, tError } = useI18n();
   const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
   const sort = useServerSort(SORTS);
+  const scope = usePolicyScope(snapshotId);
   const params = new URLSearchParams({ limit: '200', ...sort.query });
+  if (scope.policy !== null) params.set('policy_id', scope.policy);
   const queue = useApi<ScoredRule[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/scores?${params.toString()}`);
   const error = snapError ?? queue.error;
 
@@ -24,7 +27,9 @@ export function ScoresPage() {
       <div className="row spread">
         <h1>{t('score.title')}</h1>
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
       </div>
+      <ScopeNote scope={scope} />
       <p className="muted">{t('score.help')}</p>
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}

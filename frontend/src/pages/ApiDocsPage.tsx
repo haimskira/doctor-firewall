@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 
 import { api, errorCode } from '../api/client';
@@ -46,7 +46,8 @@ interface Endpoint {
   op: Operation;
 }
 
-const TABS = ['overview', 'tokens', 'explorer', 'reference'] as const;
+const TABS = ['overview', 'swagger', 'tokens', 'explorer', 'reference'] as const;
+const SwaggerView = lazy(() => import('../components/SwaggerView'));
 type Tab = (typeof TABS)[number];
 const MAX_SHOWN = 200_000; // characters of a response shown in the explorer
 
@@ -75,6 +76,14 @@ export function ApiDocsPage() {
         ))}
       </div>
       {tab === 'overview' && <Overview />}
+      {tab === 'swagger' && (
+        <section className="card">
+          <p className="muted small">{t('apidocs.swagger.help')}</p>
+          <Suspense fallback={<p className="muted">{t('apidocs.swagger.loading')}</p>}>
+            <SwaggerView />
+          </Suspense>
+        </section>
+      )}
       {tab === 'tokens' && <Tokens />}
       {tab === 'explorer' && <Explorer />}
       {tab === 'reference' && <Reference />}

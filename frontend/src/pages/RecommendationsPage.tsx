@@ -15,6 +15,7 @@ import type { Roadmap } from '../components/roadmap';
 import { SortTh, useServerSort } from '../components/sort';
 import type { SortState } from '../components/sort';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 import { useOpLabel } from './DeployPage';
@@ -40,6 +41,7 @@ export function RecommendationsPage() {
   const [phaseParam, setPhase] = useQueryParam('phase');
   const phase = isPhase(phaseParam) ? phaseParam : null;
   const [offset, setOffset] = useState(0);
+  const scope = usePolicyScope(snapshotId);
   const jobs = useJobs();
   const sort = useServerSort(SORTS);
   const onSort = (next: SortState) => {
@@ -54,12 +56,15 @@ export function RecommendationsPage() {
   if (state !== null) params.set('state', state);
   if (rule !== null) params.set('rule', rule);
   if (phase !== null) params.set('phase', phase);
+  if (scope.policy !== null) params.set('policy', scope.policy);
   for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
   const base = snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/recommendations`;
   const page = useApi<Page>(base === null ? null : `${base}?${params.toString()}`);
   const selectedId = recParam !== null && /^\d+$/.test(recParam) ? Number(recParam) : null;
   const detail = useApi<RecommendationDetail>(base === null || selectedId === null ? null : `${base}/${String(selectedId)}`);
-  const roadmap = useApi<Roadmap>(base === null ? null : `/api/snapshots/${String(snapshotId)}/roadmap`);
+  const roadmap = useApi<Roadmap>(
+    base === null ? null : `/api/snapshots/${String(snapshotId)}/roadmap${scope.policy === null ? '' : `?policy=${scope.policy}`}`,
+  );
   const error = snapError ?? page.error;
 
   function filter(setter: (v: string | null) => void, value: string | null) {
@@ -91,12 +96,14 @@ export function RecommendationsPage() {
         </div>
         <div className="row">
           <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
           {can('collect:run') && snapshotId !== null && (
             <button type="button" className="secondary" onClick={() => void reanalyze()}>
               {t('rec.reanalyze')}
             </button>
           )}
         </div>
+      <ScopeNote scope={scope} />
       </div>
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {actionError !== null && <Alert kind="error">{tError(actionError)}</Alert>}

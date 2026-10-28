@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.roadmap import PHASES
+from app.api.scope import PolicyQuery, policy_or_shared
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
@@ -109,7 +110,9 @@ def _checks(db: Session, snap: Snapshot) -> list[Check]:
 
 
 @router.get("/snapshots/{snapshot_id}/roadmap", response_model=RoadmapOut)
-def roadmap(snapshot_id: int, db: DbDep, _: ReaderDep) -> RoadmapOut:
+def roadmap(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = None) -> RoadmapOut:
+    """``policy``: that policy's rule work plus the shared object work (objects serve every
+    policy)."""
     snap = db.get(Snapshot, snapshot_id)
     if snap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -132,7 +135,10 @@ def roadmap(snapshot_id: int, db: DbDep, _: ReaderDep) -> RoadmapOut:
             RecommendationDecision,
             RecommendationDecision.fingerprint == Recommendation.fingerprint,
         )
-        .where(Recommendation.snapshot_id == snapshot_id)
+        .where(
+            Recommendation.snapshot_id == snapshot_id,
+            policy_or_shared(Recommendation.policy_fmc_id, policy),
+        )
     ):
         c = by_kind[kind]
         c.total += 1

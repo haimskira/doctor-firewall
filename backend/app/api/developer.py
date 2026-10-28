@@ -8,13 +8,14 @@ shown once; the OpenAPI document lists the GET operations only (writes stay in t
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api import catalog
 from app.api.schemas import StrictModel
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth import tokens
@@ -137,27 +138,37 @@ def revoke_token(
 
 
 @router.get("/openapi.json", response_model=dict[str, Any])
-def openapi(request: Request, _: ReaderDep) -> dict[str, Any]:
-    """The read API (every GET operation) as OpenAPI 3, for the explorer and for clients."""
+def openapi(
+    request: Request, _: ReaderDep, scope: Literal["read", "all"] = "read"
+) -> dict[str, Any]:
+    """The API as OpenAPI 3: the read API (every GET operation, what tokens may use) or, with
+    ``scope=all``, every operation (writes need a signed-in session and its CSRF header)."""
     full = request.app.openapi()
     paths: dict[str, Any] = {}
     for path, ops in full.get("paths", {}).items():
-        if path in ("/api/openapi.json",) or path.startswith("/api/tokens"):
+        if path == "/api/openapi.json":
             continue
-        reads = {m: op for m, op in ops.items() if m == "get"}
-        if reads:
-            paths[path] = reads
+        kept = {
+            m: op
+            for m, op in ops.items()
+            if m == "get" or (scope == "all" and m in ("post", "put", "patch", "delete"))
+        }
+        if scope == "read" and path.startswith("/api/tokens"):
+            kept = {}
+        for m, op in kept.items():
+            if m != "get":
+                note = "*Signed-in session only (with `X-CSRF-Token`); API tokens are read-only.*"
+                op["description"] = f"{op.get('description') or ''}\n\n{note}".strip()
+        if kept:
+            paths[path] = kept
     return {
         **full,
         "info": {
-            "title": "Doctor Firewall — read API",
+            "title": "Doctor Firewall API",
             "version": full.get("info", {}).get("version", ""),
-            "description": (
-                "Every GET endpoint of the system. Authenticate with a signed-in browser session "
-                "or with `Authorization: Bearer <token>` (API → tokens). Tokens are read-only: "
-                "changes to the firewall go through the UI and its four-eyes approval."
-            ),
+            "description": catalog.description(),
         },
+        "tags": catalog.TAGS,
         "paths": paths,
         "components": {
             **full.get("components", {}),

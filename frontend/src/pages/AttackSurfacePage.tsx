@@ -7,6 +7,7 @@ import type { Highlight } from '../components/AttackMap';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 
 const DEPTHS = ['1', '2', '3', '4'] as const;
@@ -33,7 +34,9 @@ export function AttackSurfacePage() {
   const base = snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}`;
   const targets = useApi<AttackTarget[]>(base === null ? null : `${base}/attack-surface/targets`);
   const clusters = useApi<Cluster[]>(base === null ? null : `${base}/clusters`);
+  const scope = usePolicyScope(snapshotId);
   const query = new URLSearchParams({ mode, depth });
+  if (scope.policy !== null) query.set('policy', scope.policy);
   if (system !== null) query.set('system', system);
   else if (address !== null) query.set('address', address);
   if (cluster !== null) query.set('cluster', cluster);
@@ -95,7 +98,9 @@ export function AttackSurfacePage() {
       <div className="row spread">
         <h1>{t('atk.title')}</h1>
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
       </div>
+      <ScopeNote scope={scope} traffic />
       <p className="muted">{t(mode === 'to' ? 'atk.helpTo' : 'atk.helpFrom')}</p>
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}

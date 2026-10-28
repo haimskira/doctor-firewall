@@ -12,6 +12,7 @@ import { Graph } from '../components/Graph';
 import { SnapshotPicker } from '../components/inventory';
 import { RiskBadge, useColumnLabel, useNodeLabel, useReasonLabel } from '../components/mapParts';
 import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { useI18n } from '../i18n/I18nProvider';
 
 const VIEWS: readonly MapView[] = ['assets', 'system', 'users'];
@@ -44,7 +45,9 @@ export function MapPage() {
   const [selected, setSelected] = useState<{ kind: 'edge' | 'node'; id: string } | null>(null);
 
   const clusters = useApi<Cluster[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/clusters`);
+  const scope = usePolicyScope(snapshotId);
   const params = new URLSearchParams({ view });
+  if (scope.policy !== null) params.set('policy', scope.policy);
   if (cluster !== null) params.set('cluster', cluster);
   if (src !== null) params.set('src', src);
   if (dst !== null) params.set('dst', dst);
@@ -139,7 +142,9 @@ export function MapPage() {
           <p className="muted small">{t('map.help')}</p>
         </div>
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
       </div>
+      <ScopeNote scope={scope} traffic />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
 

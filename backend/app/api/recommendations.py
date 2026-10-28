@@ -21,6 +21,7 @@ from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
 from app.analysis.roadmap import PHASE_NAMES, kinds_of
 from app.api.schemas import StrictModel
+from app.api.scope import policy_or_shared
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -264,8 +265,8 @@ def _filtered(
     )
     if kind:
         query = query.where(Recommendation.kind == kind)
-    if policy:
-        query = query.where(Recommendation.policy_fmc_id == policy)
+    if policy:  # that policy's rule work plus the shared object work
+        query = query.where(policy_or_shared(Recommendation.policy_fmc_id, policy))
     if state == "open":
         query = query.where(RecommendationDecision.fingerprint.is_(None))
     elif state in ("accepted", "dismissed"):

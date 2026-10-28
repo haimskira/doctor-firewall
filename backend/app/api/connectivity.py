@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.analysis.assets import effective_assets
 from app.analysis.connectivity import ANY, RISK_ORDER, SERVER_TIERS, UNCLASSIFIED, node_tier
 from app.analysis.space import AddressSet
+from app.api.scope import PolicyQuery, enforced
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
@@ -88,6 +89,7 @@ def connectivity_map(
     _: ReaderDep,
     view: Literal["assets", "system", "users"] = "assets",
     cluster: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")] = None,
+    policy: PolicyQuery = None,
     src: CidrQuery = None,
     dst: CidrQuery = None,
     both: bool = False,
@@ -103,6 +105,10 @@ def connectivity_map(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     src_filter, dst_filter = _filter_set(src, "src"), _filter_set(dst, "dst")
     query = select(MapEdge).where(MapEdge.snapshot_id == snapshot_id)
+    if policy is not None:  # one policy, enforced or not ("what would it allow")
+        query = query.where(MapEdge.policy_fmc_id == policy)
+    else:  # what the devices enforce: an unassigned policy opens nothing
+        query = query.where(MapEdge.policy_fmc_id.in_(enforced(snapshot_id)))
     if cluster is not None:
         query = query.where(
             MapEdge.policy_fmc_id.in_(

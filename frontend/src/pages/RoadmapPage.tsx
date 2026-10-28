@@ -4,6 +4,7 @@ import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
 import type { Roadmap } from '../components/roadmap';
 import { useApi, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { useI18n } from '../i18n/I18nProvider';
 
 const PREPARE_LINK: Record<Roadmap['prepare'][number]['code'], string> = {
@@ -18,7 +19,10 @@ const PREPARE_LINK: Record<Roadmap['prepare'][number]['code'], string> = {
 export function RoadmapPage() {
   const { t, tError } = useI18n();
   const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
-  const map = useApi<Roadmap>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/roadmap`);
+  const scope = usePolicyScope(snapshotId);
+  const map = useApi<Roadmap>(
+    snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/roadmap${scope.policy === null ? '' : `?policy=${scope.policy}`}`,
+  );
   const error = snapError ?? map.error;
   const q = snapshotId === null ? '' : `snapshot=${String(snapshotId)}`;
   const data = map.data;
@@ -28,7 +32,9 @@ export function RoadmapPage() {
       <div className="row spread">
         <h1>{t('road.title')}</h1>
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
       </div>
+      <ScopeNote scope={scope} />
       <p className="muted">{t('road.help')}</p>
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}

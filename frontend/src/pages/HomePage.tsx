@@ -10,6 +10,7 @@ import type { BarRow, BarTone } from '../components/dashboard';
 import { SnapshotPicker } from '../components/inventory';
 import { useNodeLabel } from '../components/mapParts';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 
@@ -48,7 +49,10 @@ export function HomePage() {
   const tab: Tab = TABS.find((x) => x === tabParam) ?? 'overview';
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [adding, setAdding] = useState(false);
-  const data = useApi<DashboardData>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/dashboard`);
+  const scope = usePolicyScope(snapshotId);
+  const data = useApi<DashboardData>(
+    snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/dashboard${scope.policy === null ? '' : `?policy=${scope.policy}`}`,
+  );
   const since = useRelativeTime();
   const nodeLabel = useNodeLabel();
   const d = data.data;
@@ -294,7 +298,9 @@ export function HomePage() {
           <div className="dash-title">
             <h1>{t('dash.title')}</h1>
             <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
           </div>
+      <ScopeNote scope={scope} />
           <p className="muted">{t('dash.subtitle')}</p>
         </div>
       </div>

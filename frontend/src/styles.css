@@ -1061,3 +1061,12 @@ a.button-link:hover { background: var(--primary-soft); }
 .apidocs-path.active { font-weight: 700; }
 .apidocs-get { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 0 0.35rem; border-radius: 4px; background: var(--primary-soft); color: var(--primary); }
 @media (max-width: 900px) { .apidocs-explorer { grid-template-columns: 1fr; } }
+
+.pe-cluster { font-size: 0.9rem; color: var(--muted); }
+.badge.pe-unassigned { border-color: var(--warn); color: var(--warn); }
+
+.scope-note { margin: 0.2rem 0; }
+.policy-picker select { max-inline-size: 22rem; }
+
+.swagger-host { background: #fff; color: #3b4151; border-radius: var(--radius); }
+.swagger-host .information-container { padding-block: 0; }

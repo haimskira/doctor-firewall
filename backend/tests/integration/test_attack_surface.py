@@ -9,7 +9,6 @@ from sqlalchemy import select
 from app.analysis.attack import load_hops
 from app.db.session import get_sessionmaker
 from app.models.inventory import FwObject
-from app.models.map import MapEdge
 from tests.integration.conftest import login, make_user
 from tests.integration.test_phase3 import _analysed
 
@@ -119,13 +118,27 @@ def test_an_unassigned_policy_is_cleaned_up_but_opens_nothing(
         f"/api/snapshots/{sid}/recommendations", params={"policy": staging["id"], "limit": 50}
     ).json()["rows"]
     assert {"remove_shadowed_rule", "remove_disabled_rule"} <= {r["kind"] for r in recs}
-    # ... but no device enforces it: not on the map, not in the attack surface.
+    # ... but no device enforces it: not on the map, not in the attack surface by default —
+    # and when it is chosen, they show what it would allow.
     with get_sessionmaker()() as s:
         hops = load_hops(s, sid)
-        edges = s.scalars(
-            select(MapEdge.policy_fmc_id).where(
-                MapEdge.snapshot_id == sid, MapEdge.policy_fmc_id == staging["id"]
-            )
-        ).all()
+        staged_hops = load_hops(s, sid, only=staging["id"])
     assert not [h for h in hops if h.policy_fmc_id == staging["id"]]
-    assert edges == []
+    assert {h.name for h in staged_hops} == {"STAGE_WEB"}  # its shadowed copy never matches
+    by_default = client.get(f"/api/snapshots/{sid}/map").json()
+    chosen = client.get(f"/api/snapshots/{sid}/map", params={"policy": staging["id"]}).json()
+    rules = {r["name"] for e in chosen["edges"] for r in e["rules"]}
+    assert rules == {"STAGE_WEB"}
+    assert not any(r["name"] == "STAGE_WEB" for e in by_default["edges"] for r in e["rules"])
+    # Dashboard and roadmap narrowed to the policy: its rules, plus the shared object work.
+    dash = client.get(f"/api/snapshots/{sid}/dashboard", params={"policy": staging["id"]}).json()
+    assert dash["totals"]["rules"] == 3
+    assert dash["totals"]["clusters"] == 0
+    kinds = {k["key"] for k in dash["recommendations_by_kind"]}
+    assert {"remove_shadowed_rule", "remove_disabled_rule", "remove_unused_object"} <= kinds
+    road = client.get(f"/api/snapshots/{sid}/roadmap", params={"policy": staging["id"]}).json()
+    first = road["phases"][0]
+    assert {k["kind"]: k["total"] for k in first["kinds"]} == {
+        "remove_disabled_rule": 1,
+        "remove_shadowed_rule": 1,
+    }

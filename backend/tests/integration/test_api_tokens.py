@@ -49,6 +49,11 @@ def test_a_token_reads_everything_its_owner_may_read_and_writes_nothing(
         assert "/api/snapshots/{snapshot_id}/findings" in schema["paths"]
         assert all(set(ops) == {"get"} for ops in schema["paths"].values())
         assert not any(p.startswith("/api/tokens") for p in schema["paths"])
+        assert "shadowed_rule" in schema["info"]["description"]
+        assert "compact_group" in schema["info"]["description"]
+        everything = other.get("/api/openapi.json?scope=all", headers=bearer).json()
+        assert "post" in everything["paths"]["/api/changesets"]
+        assert {t["name"] for t in everything["tags"]} >= {"inventory", "recommendations"}
 
         # Revoked or expired: refused.
         listed = client.get("/api/tokens", headers=h).json()

@@ -272,11 +272,14 @@ describe('Policy editor recommendation tags', () => {
     expect(tag).toHaveTextContent('Split2');
   });
 
-  it('switching the cluster resets the policy in one URL update', async () => {
+  it('opens any access policy with its own cluster — and none for an unassigned one', async () => {
     const cluster = (id: string, policy: string) => ({
       fmc_id: id, name: id.toUpperCase(), kind: 'ha_pair', sw_version: '', model: '', members: [], policy_fmc_id: policy,
       policy_name: policy, rule_count: 0, ace_total: 0, ace_limit: 1, ace_limit_verified: false,
       policies: [{ id: policy, name: `ACP-${policy}`, kind: 'access', via: 'assignment', rule_count: 0 }],
+    });
+    const info = (id: string, clusters: string[]) => ({
+      id, kind: 'access', name: `ACP-${id}`, default_action: 'BLOCK', rule_count: 0, links: [], attrs: {}, clusters,
     });
     const page = (policy: string) => ({
       policy_fmc_id: policy, policy_kind: 'access', policy_name: `ACP-${policy}`, default_action: 'BLOCK',
@@ -287,15 +290,25 @@ describe('Policy editor recommendation tags', () => {
       <Route path="/rules" element={<RulebasePage />} />,
       (req) => {
         if (req.url === '/api/snapshots/7/clusters') return { status: 200, body: [cluster('c1', 'p1'), cluster('c2', 'p2')] };
-        if (req.url.startsWith('/api/snapshots/7/policies/p1/rules')) return { status: 200, body: page('p1') };
-        if (req.url.startsWith('/api/snapshots/7/policies/p2/rules')) return { status: 200, body: page('p2') };
+        if (req.url === '/api/snapshots/7/policies') return { status: 200, body: [info('p1', ['c1']), info('p2', ['c2']), info('p3', [])] };
+        for (const id of ['p1', 'p2', 'p3']) {
+          if (req.url.startsWith(`/api/snapshots/7/policies/${id}/rules`)) return { status: 200, body: page(id) };
+        }
         return undefined;
       },
       ['policy:read'],
     );
     expect(await screen.findByRole('heading', { name: 'ACP-p1' })).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText('Cluster'), 'c2');
+    expect(screen.getByText('C1')).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'p2');
     expect(await screen.findByRole('heading', { name: 'ACP-p2' })).toBeInTheDocument();
+    expect(screen.getByText('C2')).toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/snapshots/7/policies/p2/rules'))).toBe(true);
+    // Not assigned to any device: no cluster is claimed for it.
+    await userEvent.selectOptions(screen.getByLabelText('Policy'), 'p3');
+    expect(await screen.findByRole('heading', { name: 'ACP-p3' })).toBeInTheDocument();
+    expect(screen.getAllByText('not assigned to any device').length).toBeGreaterThan(0);
+    expect(screen.queryByText('C1')).not.toBeInTheDocument();
+    expect(screen.queryByText('C2')).not.toBeInTheDocument();
   });
 });

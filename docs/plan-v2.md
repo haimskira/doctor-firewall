@@ -181,7 +181,11 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
       (no CDN).
 
 - [x] **9.4 Sign-in page** laid out like the FMC's (own mark and an original night-city backdrop — no vendor assets).
-- [x] **9.5 Unassigned access policies** are collected and analysed (staging), never on the map or in the attack surface (found by the dry run).
+- [x] **9.5 Unassigned access policies** are collected and analysed (staging), not on the map or in the attack surface unless that policy is chosen (found by the dry run).
+- [x] **9.6 Swagger UI** beside the explorer (every operation, offline bundle) (requested 2026-10-28).
+- [x] **9.7 One policy at a time** on every insight page (dashboard, map, attack surface, findings, scores,
+      recommendations, roadmap); the rule editor shows a policy's own devices only (an unassigned policy
+      under no cluster) and lists every access policy (requested 2026-10-28).
 
 ## Running work outside the plan
 

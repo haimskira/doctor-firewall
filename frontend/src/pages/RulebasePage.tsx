@@ -120,21 +120,49 @@ export function RulebasePage() {
   const [qParam, setQParam] = useQueryParam('q');
   const [search, setSearch] = useState(qParam ?? '');
   const clusters = useApi<Cluster[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/clusters`);
-  const withPolicy = (clusters.data ?? []).filter((c) => c.policies.length > 0);
-  const cluster = withPolicy.find((c) => c.fmc_id === clusterParam) ?? withPolicy[0] ?? null;
-  // Rule-bearing policies governing the cluster (access, prefilter, NAT, ...).
-  // Policies of the cluster, plus decryption / identity policies the FMC API does not link to a
-  // cluster explicitly (D-012): those tabs open the snapshot's policy of that kind.
   const inventory = useApi<PolicyInfo[]>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/policies`);
-  const linked = (cluster?.policies ?? []).filter((p) => FLOW.includes(p.kind));
-  const unlinked = (inventory.data ?? [])
+  const policies = inventory.data ?? [];
+  const withPolicy = (clusters.data ?? []).filter((c) => c.policies.length > 0);
+  const accessPolicies = policies.filter((p) => p.kind === 'access');
+  // The access policy whose flow is shown: the one asked for, the one linking the asked policy
+  // (e.g. its prefilter), or the asked cluster's.
+  const asked = policies.find((p) => p.id === policyParam) ?? null;
+  const contextAccess =
+    asked === null
+      ? null
+      : asked.kind === 'access'
+        ? asked
+        : (accessPolicies.find((a) => a.links.some((l) => l.id === asked.id)) ?? null);
+  // A cluster only when that access policy is really assigned to it (an unassigned policy has none).
+  const cluster =
+    contextAccess !== null
+      ? (withPolicy.find((c) => c.fmc_id === clusterParam && contextAccess.clusters.includes(c.fmc_id)) ??
+        withPolicy.find((c) => contextAccess.clusters.includes(c.fmc_id)) ??
+        null)
+      : asked !== null
+        ? (withPolicy.find((c) => c.policies.some((p) => p.id === asked.id)) ?? null)
+        : (withPolicy.find((c) => c.fmc_id === clusterParam) ?? withPolicy[0] ?? null);
+  const unassigned = contextAccess !== null && contextAccess.clusters.length === 0;
+  // Flow tabs: the cluster's policies; for an unassigned access policy, the policies it links.
+  const linked: { id: string; name: string; kind: PolicyKind; rule_count: number }[] =
+    cluster !== null
+      ? cluster.policies.filter((p) => FLOW.includes(p.kind))
+      : contextAccess !== null
+        ? [
+            contextAccess,
+            ...policies.filter((p) => FLOW.includes(p.kind) && contextAccess.links.some((l) => l.id === p.id)),
+          ]
+        : [];
+  const unlinked = policies
     .filter((p) => (p.kind === 'decryption' || p.kind === 'identity') && !linked.some((l) => l.id === p.id))
     .filter((p) => !linked.some((l) => l.kind === p.kind))
-    .map((p) => ({ id: p.id, name: p.name, kind: p.kind, via: 'snapshot', rule_count: p.rule_count }));
+    .map((p) => ({ id: p.id, name: p.name, kind: p.kind, rule_count: p.rule_count }));
   const choices = [...linked, ...unlinked];
-  // ``?policy=`` also opens policies not linked to any cluster (e.g. from the Policies page).
   const policyId = policyParam ?? choices.find((p) => p.kind === 'access')?.id ?? choices[0]?.id ?? null;
-  const targeted = (clusters.data ?? []).filter((c) => c.policies.some((p) => p.id === policyId)).length;
+  const targeted = (clusters.data ?? [])
+    .filter((c) => c.policies.some((p) => p.id === (contextAccess?.id ?? policyId)))
+    .reduce((n, c) => n + Math.max(1, c.members.length), 0);
+  const clusterName = (id: string) => (clusters.data ?? []).find((c) => c.fmc_id === id)?.name ?? id;
 
   const [cache, setCache] = useState<Cache>(() => emptyCache(null));
   const requested = useRef<{ base: string | null; pages: Set<number> }>({ base: null, pages: new Set() });
@@ -262,46 +290,52 @@ export function RulebasePage() {
 
       <div className="pe-context">
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
-        {withPolicy.length > 0 && (
-          <>
-            <label className="inline-field">
-              {t('rules.cluster')}
-              <select
-                value={cluster?.fmc_id ?? ''}
-                onChange={(e) => {
-                  setParams({ cluster: e.target.value, policy: null });
-                }}
-              >
-                {withPolicy.map((c) => (
-                  <option key={c.fmc_id} value={c.fmc_id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-field">
-              {t('rules.policy')}
-              <select
-                value={policyId ?? ''}
-                onChange={(e) => {
-                  setPolicyParam(e.target.value);
-                }}
-              >
-                {choices.every((p) => p.id !== policyId) && policyId !== null && (
-                  <option value={policyId}>{meta?.policyName ?? policyId}</option>
-                )}
-                {choices.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {t(`kind.${p.kind}`)}: {p.name} ({p.rule_count})
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
+        <label className="inline-field">
+          {t('rules.policy')}
+          <select
+            value={contextAccess?.id ?? policyId ?? ''}
+            onChange={(e) => {
+              const chosen = accessPolicies.find((p) => p.id === e.target.value);
+              setParams({ policy: e.target.value, cluster: chosen?.clusters[0] ?? null });
+            }}
+          >
+            {contextAccess === null && policyId !== null && accessPolicies.every((p) => p.id !== policyId) && (
+              <option value={policyId}>{meta?.policyName ?? policyId}</option>
+            )}
+            {accessPolicies.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.rule_count}) ·{' '}
+                {p.clusters.length === 0 ? t('pe.unassigned') : p.clusters.map(clusterName).join(', ')}
+              </option>
+            ))}
+          </select>
+        </label>
+        {cluster !== null && contextAccess !== null && contextAccess.clusters.length > 1 && (
+          <label className="inline-field">
+            {t('rules.cluster')}
+            <select
+              value={cluster.fmc_id}
+              onChange={(e) => {
+                setParams({ cluster: e.target.value });
+              }}
+            >
+              {contextAccess.clusters.map((id) => (
+                <option key={id} value={id}>
+                  {clusterName(id)}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
+        {cluster !== null && (
+          <span className="pe-cluster">
+            {t('rules.cluster')}: <bdi>{cluster.name}</bdi>
+          </span>
+        )}
+        {unassigned && <span className="badge pe-unassigned">{t('pe.unassigned')}</span>}
       </div>
 
-      {cluster !== null && (
+      {linked.length > 0 && (
         <div className="pe-flow" role="tablist" aria-label={t('pe.flow')}>
           {FLOW.map((kind, i) => {
             const policy = choices.find((p) => p.kind === kind);

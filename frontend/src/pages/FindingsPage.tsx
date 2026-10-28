@@ -7,6 +7,7 @@ import { useServerSort } from '../components/sort';
 import { SeverityBadge, SnapshotPicker } from '../components/inventory';
 import { FINDING_KINDS } from '../components/catalog';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
 
@@ -23,7 +24,9 @@ export function FindingsPage() {
   const [open, setOpen] = useState<number | null>(null);
   const headline = useFindingHeadline();
   const sort = useServerSort(SORTS);
+  const scope = usePolicyScope(snapshotId);
   const params = new URLSearchParams({ limit: '500' });
+  if (scope.policy !== null) params.set('policy_id', scope.policy);
   if (kind !== null) params.set('kind', kind);
   if (severity !== null) params.set('severity', severity);
   for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
@@ -43,7 +46,9 @@ export function FindingsPage() {
       <div className="row spread">
         <h1>{t('findings.title')}</h1>
         <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <PolicyPicker scope={scope} />
       </div>
+      <ScopeNote scope={scope} />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
       {page.data !== null && (

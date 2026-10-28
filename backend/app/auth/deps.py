@@ -104,7 +104,7 @@ def _token_principal(request: Request, db: Session, token: str) -> Principal:
         roles=roles,
         permissions=permissions_for(roles) & tokens.READ_PERMISSIONS,
         session_id="",
-        csrf_token="",
+        csrf_token="",  # nosec B106 - a token request has no session, so no CSRF token
         must_change_password=user.must_change_password,
         language=user.language,
         token_id=row.id,

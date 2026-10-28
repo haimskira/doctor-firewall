@@ -11,6 +11,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.connectivity import RISK_ORDER
+from app.api.scope import PolicyQuery, enforced, policy_or_shared
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
@@ -84,7 +85,9 @@ class Dashboard(BaseModel):
 
 
 @router.get("/snapshots/{snapshot_id}/dashboard", response_model=Dashboard)
-def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
+def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = None) -> Dashboard:
+    """The snapshot at a glance; ``policy`` narrows it to one policy (plus the shared object
+    findings and recommendations, which serve every policy)."""
     snap = db.get(Snapshot, snapshot_id)
     if snap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -95,11 +98,20 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
             db.scalar(select(func.count()).select_from(model).where(model.snapshot_id == sid)) or 0
         )
 
+    rule_scope = [Rule.policy_fmc_id == policy] if policy is not None else []
+    rules_in_scope = select(Rule.id).where(Rule.snapshot_id == sid, *rule_scope)
+    governing = set(
+        db.scalars(
+            select(ClusterPolicy.cluster_fmc_id).where(
+                ClusterPolicy.snapshot_id == sid, ClusterPolicy.policy_fmc_id == policy
+            )
+        )
+    )
     severities = {"high": 0, "medium": 0, "low": 0, "info": 0}
     by_kind: dict[str, dict[str, int]] = {}
     for kind, severity, n in db.execute(
         select(Finding.kind, Finding.severity, func.count())
-        .where(Finding.snapshot_id == sid)
+        .where(Finding.snapshot_id == sid, policy_or_shared(Finding.policy_fmc_id, policy))
         .group_by(Finding.kind, Finding.severity)
     ).all():
         severities[severity] = severities.get(severity, 0) + n
@@ -118,7 +130,10 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
                 func.sum(Recommendation.deploy_cost),
                 func.sum(Recommendation.ace_delta),
             )
-            .where(Recommendation.snapshot_id == sid)
+            .where(
+                Recommendation.snapshot_id == sid,
+                policy_or_shared(Recommendation.policy_fmc_id, policy),
+            )
             .group_by(Recommendation.kind)
             .order_by(func.count().desc())
         ).all()
@@ -131,7 +146,11 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
     buckets: dict[str, int] = dict(
         db.execute(
             select(bucket, func.count())
-            .where(RuleScore.snapshot_id == sid, RuleScore.score.is_not(None))
+            .where(
+                RuleScore.snapshot_id == sid,
+                RuleScore.score.is_not(None),
+                RuleScore.rule_id.in_(rules_in_scope),
+            )
             .group_by(bucket)
         ).all()
     )
@@ -143,7 +162,7 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
         Counted(key=a, count=n)
         for a, n in db.execute(
             select(Rule.action, func.count())
-            .where(Rule.snapshot_id == sid, Rule.policy_kind == "access")
+            .where(Rule.snapshot_id == sid, Rule.policy_kind == "access", *rule_scope)
             .group_by(Rule.action)
             .order_by(func.count().desc())
         ).all()
@@ -176,13 +195,19 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
         for c in db.scalars(
             select(Cluster).where(Cluster.snapshot_id == sid).order_by(Cluster.name)
         )
+        if policy is None or c.fmc_id in governing
     ]
 
     pairs: dict[tuple[str, str], dict[str, Any]] = {}
     for src, dst, risk, rules, hits in db.execute(
         select(
             MapEdge.src_node, MapEdge.dst_node, MapEdge.risk, MapEdge.rule_count, MapEdge.hits
-        ).where(MapEdge.snapshot_id == sid)
+        ).where(
+            MapEdge.snapshot_id == sid,
+            MapEdge.policy_fmc_id == policy
+            if policy is not None
+            else MapEdge.policy_fmc_id.in_(enforced(sid)),
+        )
     ).all():
         cur = pairs.setdefault((src, dst), {"risk": "green", "rules": 0, "hits": 0})
         cur["risk"] = max(cur["risk"], risk, key=RISK_ORDER.__getitem__)
@@ -201,7 +226,7 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
     worst = db.execute(
         select(Rule.fmc_id, Rule.name, Rule.rule_index, Rule.policy_fmc_id, RuleScore.score)
         .join(RuleScore, RuleScore.rule_id == Rule.id)
-        .where(Rule.snapshot_id == sid, RuleScore.score.is_not(None))
+        .where(Rule.snapshot_id == sid, RuleScore.score.is_not(None), *rule_scope)
         .order_by(RuleScore.score, Rule.rule_index)
         .limit(TOP)
     ).all()
@@ -216,19 +241,28 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep) -> Dashboard:
             analyzed_at=snap.analyzed_at,
         ),
         totals={
-            "rules": count(Rule),
-            "policies": count(Policy),
+            "rules": db.scalar(
+                select(func.count()).select_from(Rule).where(Rule.snapshot_id == sid, *rule_scope)
+            )
+            or 0,
+            "policies": 1 if policy is not None else count(Policy),
             "objects": count(FwObject),
-            "clusters": count(Cluster),
+            "clusters": len(governing) if policy is not None else count(Cluster),
             "findings": sum(severities.values()),
             "recommendations": sum(r.count for r in recs),
             "dead_rules": db.scalar(
-                select(func.count()).where(RuleScore.snapshot_id == sid, RuleScore.dead.is_(True))
+                select(func.count()).where(
+                    RuleScore.snapshot_id == sid,
+                    RuleScore.dead.is_(True),
+                    RuleScore.rule_id.in_(rules_in_scope),
+                )
             )
             or 0,
             "shadowed_rules": db.scalar(
                 select(func.count()).where(
-                    RuleScore.snapshot_id == sid, RuleScore.shadowed_by.is_not(None)
+                    RuleScore.snapshot_id == sid,
+                    RuleScore.shadowed_by.is_not(None),
+                    RuleScore.rule_id.in_(rules_in_scope),
                 )
             )
             or 0,

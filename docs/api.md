@@ -1,8 +1,9 @@
 # API for developers and other systems
 
 Everything the system knows can be pulled over HTTPS as JSON. The UI page **Integrations → API for
-developers** (`/api-docs`) has the overview, token management, an interactive explorer and the full
-reference of finding and recommendation kinds.
+developers** (`/api-docs`) has the overview, a full **Swagger UI** (every operation, its parameters
+and schemas, with *Try it out*; bundled offline from `swagger-ui-dist`), token management, an
+interactive explorer and the full reference of finding and recommendation kinds.
 
 ## Authentication
 
@@ -24,8 +25,13 @@ Tokens (`app/auth/tokens.py`):
 ## The read API
 
 `GET /api/openapi.json` (signed in or a token) is the OpenAPI 3 document of every GET endpoint —
-the explorer is built from it. Lists take `limit` (≤ 500) and `offset` and answer `total`; many take
-`sort` and `order`. Errors: HTTP status with `{"detail": "<code>"}`.
+the explorer is built from it. `?scope=all` adds every write operation (what the Swagger tab shows;
+writes need a signed-in session and its CSRF header — tokens stay read-only). Lists take `limit` (≤ 500) and `offset` and answer `total`; many take
+`sort` and `order`. Insight views (dashboard, map, attack surface, findings, scores,
+recommendations, roadmap) take `policy` (`policy_id` on findings / scores) to narrow them to one
+access policy plus the shared object work; the map and the attack surface default to the policies
+the devices enforce, and with a policy no device enforces they show what it would allow. Errors:
+HTTP status with `{"detail": "<code>"}`.
 
 | What | Endpoints |
 |---|---|

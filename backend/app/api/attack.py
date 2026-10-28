@@ -17,6 +17,7 @@ from app.analysis.attack import MAX_DEPTH, Hop, cidrs, describe, load_hops, sear
 from app.analysis.expand import Resolver
 from app.analysis.score import AssetIndex
 from app.analysis.space import AddressSet
+from app.api.scope import PolicyQuery
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.db.session import get_db
@@ -53,13 +54,15 @@ _CACHE_SIZE = 4
 _LOCK = threading.Lock()
 
 
-def _hops(db: Session, snapshot: Snapshot, cluster: str | None) -> list[Hop]:
-    key = (snapshot.id, cluster, snapshot.analyzed_at)
+def _hops(
+    db: Session, snapshot: Snapshot, cluster: str | None, policy: str | None = None
+) -> list[Hop]:
+    key = (snapshot.id, f"{cluster}|{policy}", snapshot.analyzed_at)
     with _LOCK:
         if key in _CACHE:
             _CACHE.move_to_end(key)
             return _CACHE[key]
-    hops = load_hops(db, snapshot.id, cluster)
+    hops = load_hops(db, snapshot.id, cluster, policy)
     with _LOCK:
         _CACHE[key] = hops
         while len(_CACHE) > _CACHE_SIZE:
@@ -111,6 +114,7 @@ def attack_surface(
     address: Annotated[str | None, Query(max_length=96)] = None,
     depth: Annotated[int, Query(ge=1, le=MAX_DEPTH)] = 3,
     cluster: ClusterQuery = None,
+    policy: PolicyQuery = None,
 ) -> AttackSurface:
     """Every way the rulebase lets traffic reach the target (``mode=to``), or everything a
     compromised source reaches (``mode=from``), hop by hop with services and rules.
@@ -150,7 +154,7 @@ def attack_surface(
     everything = AddressSet.build(["0.0.0.0/0"]).v4
     if origin.empty or origin.any or origin.v4 == everything:
         raise _bad("invalid_target")  # the whole internet is not a target
-    surface = search(_hops(db, snap, cluster), origin, mode, depth)
+    surface = search(_hops(db, snap, cluster, policy), origin, mode, depth)
     assets = AssetIndex([(n, s.label, s.tier, None) for s in systems.values() for n in s.networks])
     labels = {node: s.label for node, s in systems.items()}
     result = describe(surface, assets, labels)
