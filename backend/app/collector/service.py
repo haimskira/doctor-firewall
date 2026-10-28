@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.collector import store
+from app.core.config import get_settings
 from app.fmc import showroute
 from app.fmc.adapters import FmcAdapter
 from app.fmc.client import FmcSession
@@ -306,12 +307,13 @@ class Collector:
             store.replace_cluster_policies(session, self.snapshot_id, governed)
 
         enforced_access = {c["policy_fmc_id"] for c in clusters if c["policy_fmc_id"]}
+        everything = get_settings().collect_unassigned_policies
         todo = [
             (kind, policy)
             for kind, policies in inventory.items()
             for policy in policies
-            # unassigned access policies are not enforced anywhere
-            if kind is not PolicyKind.ACCESS or policy.fmc_id in enforced_access
+            # Unassigned access policies enforce nothing; collected (for clean-up) by default.
+            if kind is not PolicyKind.ACCESS or everything or policy.fmc_id in enforced_access
         ]
         progress.phase("collect_policies", 35, 85)
         for n, (kind, policy) in enumerate(todo):

@@ -19,7 +19,7 @@ from app.db.session import get_db
 from app.enforce.staleness import stale_since
 from app.models.assets import Asset, ClusterSetting
 from app.models.enforce import Changeset, ChangesetItem
-from app.models.inventory import Cluster, Policy, Rule, Snapshot
+from app.models.inventory import Cluster, ClusterPolicy, Policy, Rule, Snapshot
 from app.models.recommendations import Recommendation, RecommendationDecision, behavior
 
 router = APIRouter(prefix="/api", tags=["roadmap"])
@@ -74,12 +74,18 @@ def _checks(db: Session, snap: Snapshot) -> list[Check]:
             )
         )
     )
+    enforced = select(ClusterPolicy.policy_fmc_id).where(ClusterPolicy.snapshot_id == sid)
     rules, with_hits = db.execute(
         select(func.count(), func.count(Rule.hit_count))
         .join(
             Policy, (Policy.snapshot_id == Rule.snapshot_id) & (Policy.fmc_id == Rule.policy_fmc_id)
         )
-        .where(Rule.snapshot_id == sid, Policy.kind == "access", Rule.enabled.is_(True))
+        .where(
+            Rule.snapshot_id == sid,
+            Policy.kind == "access",
+            Rule.enabled.is_(True),
+            Policy.fmc_id.in_(enforced),  # an unassigned policy has no hit counters
+        )
     ).one()
     stale = stale_since(db, snap)
     return [

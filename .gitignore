@@ -22,6 +22,8 @@ dist/
 # ---- Local spec drafts (kept out of the public repo) ----
 /firewall-doctrine.html
 /firewall-policy-system-spec.html
+/doctor-firewall-guide.html
+/guide/
 
 # ---- Python ----
 __pycache__/

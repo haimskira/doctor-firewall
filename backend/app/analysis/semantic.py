@@ -75,6 +75,12 @@ def analyze_semantics(
     policies = session.scalars(
         select(Policy).where(Policy.snapshot_id == snapshot_id, Policy.kind.in_(ORDERED_KINDS))
     ).all()
+    # Policies some cluster enforces: only their rules carry traffic on the map.
+    enforced = set(
+        session.scalars(
+            select(ClusterPolicy.policy_fmc_id).where(ClusterPolicy.snapshot_id == snapshot_id)
+        )
+    )
     for n, policy in enumerate(policies):
         progress.advance(n, len(policies))
         spaces = rule_spaces(session, snapshot_id, policy.fmc_id, resolver)
@@ -191,7 +197,12 @@ def analyze_semantics(
                 if policy.kind == "access"
                 else None
             )
-            if result is not None and result.score is not None and rs.rule_id not in shadowed_by:
+            if (
+                result is not None
+                and result.score is not None
+                and rs.rule_id not in shadowed_by
+                and policy.fmc_id in enforced
+            ):
                 # Only rules that can match carry traffic on the map.
                 edges.add(
                     policy_id=policy.fmc_id,

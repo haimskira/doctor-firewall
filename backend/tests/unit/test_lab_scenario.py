@@ -27,3 +27,39 @@ def test_scenario_shape() -> None:
     assert max(o.depth for o in sc.objects.values()) == 8
     assert any(r.name == "TEMP_ANY_ANY_DO_NOT_USE" for r in sc.rules)
     assert {a["tier"] for a in sc.assets} == {"CORE", "GOLD", "SILVER", "BRONZE", "USERS"}
+
+
+def test_dry_run_scenario_has_four_policies_and_every_kind_of_mess() -> None:
+    from app.tools.lab_scenario import build_policies
+
+    sc = build_policies(seed=11, objects=8_000, rules=2_000)
+    assert len(sc.policies) == 4
+    assert all(len(rules) == 2_000 for rules in sc.policies.values())
+    assert len(sc.objects) >= 8_000
+    for rules in sc.policies.values():
+        names = [r.name for r in rules]
+        assert len(set(names)) == len(names)  # unique within the policy, as the FMC wants
+        assert all(n in sc.objects for r in rules for n in r.src + r.dst + r.ports)
+        assert all(n in sc.dynamic for r in rules for n in r.dst_dynamic)
+        patterns = Counter(r.pattern for r in rules)
+        for wanted in (
+            "duplicate",
+            "shadowed",
+            "merge",
+            "split",
+            "wide_ports",
+            "literal",
+            "tier_skip",
+            "trust",
+            "redundant",
+            "disabled",
+            "gold_without_ips",
+            "dynamic",
+            "prefilter_blocked",
+        ):
+            assert patterns[wanted] > 0, wanted
+    assert sc.dynamic
+    # Servers declare their services: what port tightening needs.
+    assert all(a.get("ports") for a in sc.assets if a["tier"] in ("GOLD", "SILVER"))
+    # The classic scenario is unchanged by the extras.
+    assert build(seed=7, objects=10_000, rules=3_000).rules[123].name == build().rules[123].name

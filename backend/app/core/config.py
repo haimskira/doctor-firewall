@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     # Runtime routing table ("show route" through the FMC, read-only; FMC 7.4.1+). Off: only
     # connected and static routes from the configuration are known.
     collect_runtime_routes: bool = True
+    # Access policies no device is assigned (staging, a site not yet live) are collected and
+    # analysed too; they never appear on the map or in the attack surface (nothing enforces them).
+    collect_unassigned_policies: bool = True
 
     # Sessions.
     session_idle_minutes: int = Field(default=30, ge=5, le=240)

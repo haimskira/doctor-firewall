@@ -915,6 +915,39 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
     for index, r in enumerate(chain_rules, start=1):
         r["metadata"]["ruleIndex"] = index
 
+    # An access policy no device is assigned (staging): collected and analysed, but it
+    # enforces nothing — never on the map or in the attack surface.
+    staging: Json = {
+        "id": fixed("ACP-STAGING"),
+        "name": "ACP-STAGING",
+        "type": "AccessPolicy",
+        "defaultAction": {"action": "BLOCK", "type": "AccessPolicyDefaultAction"},
+    }
+    b.data.policies.append(staging)
+    b.data.categories[staging["id"]] = []
+    staged_rules: list[Json] = []
+    stage_src = network("NET_STAGE_SRC", "10.73.0.0/24")
+    stage_dst = host("H_STAGE_DST", "10.71.0.31")
+    for n, (name, enabled) in enumerate(
+        (("STAGE_WEB", True), ("STAGE_WEB_AGAIN", True), ("STAGE_OLD", False)), start=1
+    ):
+        staged_rules.append(
+            {
+                "id": fixed(name),
+                "type": "AccessRule",
+                "name": name,
+                "enabled": enabled,
+                "action": "ALLOW",
+                "logBegin": False,
+                "logEnd": True,
+                "sendEventsToFMC": True,
+                "sourceNetworks": {"objects": [_ref(stage_src)]},
+                "destinationNetworks": {"objects": [_ref(stage_dst)]},
+                "metadata": {"section": "Default", "category": "--Undefined--", "ruleIndex": n},
+            }
+        )
+    b.data.rules[staging["id"]] = staged_rules
+
     # Built-in objects as the FMC ships them: read-only (metadata.readOnly SYSTEM); "any-ipv6"
     # is a Host whose value is a prefix.
     system = {"readOnly": {"state": True, "reason": "SYSTEM"}}

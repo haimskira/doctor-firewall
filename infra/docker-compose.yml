@@ -22,6 +22,7 @@ x-backend-env: &backend-env
   DF_KEYRING_FILE: /run/secrets/master_keyring
   DF_FMC_CA_BUNDLE: /etc/doctor-firewall/trust/fmc-ca.pem
   DF_COLLECT_RUNTIME_ROUTES: ${DF_COLLECT_RUNTIME_ROUTES:-true}
+  DF_COLLECT_UNASSIGNED_POLICIES: ${DF_COLLECT_UNASSIGNED_POLICIES:-true}
 
 x-hardening: &hardening
   # The production server has no internet: never pull. A missing image is an install error,

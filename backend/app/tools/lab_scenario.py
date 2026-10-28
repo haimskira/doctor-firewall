@@ -6,6 +6,11 @@ duplicate objects under address-style names, groups nested eight deep, groups mi
 duplicate and shadowed rules, rules that only differ by source, rules spanning several tiers,
 wide ports, inline values, tier skips, Trust to GOLD, GOLD without IPS, disabled leftovers and a
 few "temporary" any rules. ``build(seed, objects, rules)`` is deterministic.
+
+``build_policies(seed, names, objects, rules)`` is the pre-production dry run: one object pool and
+one rulebase per access policy, with what the later phases look at too — services declared in the
+asset table (port tightening), dynamic objects with mappings, and "allow" rules from bogon sources
+that a prefilter BLOCK rule drops first (attack surface).
 """
 
 from __future__ import annotations
@@ -124,6 +129,7 @@ class RuleSpec:
     dst_literals: list[str] = field(default_factory=list)
     enabled: bool = True
     ips: str | None = None
+    dst_dynamic: list[str] = field(default_factory=list)  # dynamic object names
     pattern: str = "clean"  # what the analysis should find (for the report)
 
 
@@ -132,6 +138,9 @@ class Scenario:
     objects: dict[str, Obj] = field(default_factory=dict)
     rules: list[RuleSpec] = field(default_factory=list)
     assets: list[dict[str, str]] = field(default_factory=list)  # doctrine CSV rows
+    # build_policies: access policy name -> its rules; dynamic object -> its mappings.
+    policies: dict[str, list[RuleSpec]] = field(default_factory=dict)
+    dynamic: dict[str, list[str]] = field(default_factory=dict)
 
 
 class _Gen:
@@ -358,7 +367,7 @@ class _Gen:
     def pick(self, items: list[str], k: int = 1) -> list[str]:
         return self.rng.sample(items, k=min(k, len(items)))
 
-    def rulebase(self, total: int) -> None:
+    def rulebase(self, total: int, extras: bool = False) -> None:
         rules = self.sc.rules
         counter = 0
 
@@ -395,6 +404,8 @@ class _Gen:
             ("block", 3),
             ("disabled", 3),
         ]
+        if extras:
+            weights += [("dynamic", 1), ("bogon", 1)]
         names = [w[0] for w in weights]
         probs = [w[1] for w in weights]
         while len(rules) < total - 3:
@@ -553,6 +564,22 @@ class _Gen:
                     src=self.pick(self.partners),
                     dst=self.pick(gold),
                 )
+            elif kind == "dynamic" and self.sc.dynamic:
+                rule(
+                    "Projects-2023",
+                    "dynamic",
+                    src=self.pick(self.user_groups),
+                    dst_dynamic=self.pick(sorted(self.sc.dynamic)),
+                    ports=["SVC_HTTPS"],
+                )
+            elif kind == "bogon":
+                rule(
+                    "Partners",
+                    "prefilter_blocked",
+                    src_literals=[f"0.{self.rng.randint(1, 250)}.0.0/16"],
+                    dst=self.pick([d for d in self.dmz if d.startswith("NET_")]),
+                    ports=["SVC_HTTPS"],
+                )
             elif kind == "disabled":
                 rule(
                     "Legacy",
@@ -568,6 +595,43 @@ class _Gen:
         rule("Temp-Exceptions", "any_any", name="TEMP_ANY_ANY_DO_NOT_USE")
         order = {c: i for i, c in enumerate(CATEGORIES)}
         rules.sort(key=lambda r: order[r.category])  # categories group the rulebase (stable)
+
+    def declare_services(self) -> None:
+        """Server assets declare the ports they serve (what port tightening relies on)."""
+        for row in self.sc.assets:
+            if row.get("asset_kind") != "system":
+                continue
+            if row["tier"] == "GOLD":
+                row["ports"] = "TCP 1433, TCP 1521, TCP 5432, TCP 3306, TCP 10000"
+            elif row["tier"] in ("SILVER", "BRONZE"):
+                row["ports"] = "TCP 443, TCP 80, TCP 8443, TCP 9443"
+
+    def dynamic_objects(self, count: int = 12) -> None:
+        for i in range(1, count + 1):
+            self.sc.dynamic[f"DYN_K8S_NS{i:02d}"] = [
+                f"10.{120 + i}.{n}.0/24" for n in range(self.rng.randint(1, 4))
+            ]
+
+
+def build_policies(
+    seed: int = 11,
+    names: tuple[str, ...] = ("DF-LAB-DC1", "DF-LAB-DC2", "DF-LAB-BRANCH", "DF-LAB-DMZ"),
+    objects: int = 8_000,
+    rules: int = 2_000,
+) -> Scenario:
+    """One object pool, one messy rulebase per access policy (the dry run before production)."""
+    gen = _Gen(seed)
+    gen.address_plan(target_hosts=int(objects * 0.45))
+    gen.services()
+    gen.mess_objects(objects)
+    gen.declare_services()
+    gen.dynamic_objects()
+    for name in names:
+        gen.sc.rules = []
+        gen.rulebase(rules, extras=True)
+        gen.sc.policies[name] = gen.sc.rules
+    gen.sc.rules = []
+    return gen.sc
 
 
 def build(seed: int = 7, objects: int = 10_000, rules: int = 3_000) -> Scenario:

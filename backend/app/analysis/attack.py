@@ -148,16 +148,14 @@ def load_hops(session: Session, snapshot_id: int, cluster: str | None = None) ->
             )
         )
     )
+    # Only what some device enforces (one cluster's, if asked): an unassigned policy opens nothing.
+    governing_query = select(ClusterPolicy.policy_fmc_id).where(
+        ClusterPolicy.snapshot_id == snapshot_id
+    )
     if cluster is not None:
-        governing = set(
-            session.scalars(
-                select(ClusterPolicy.policy_fmc_id).where(
-                    ClusterPolicy.snapshot_id == snapshot_id,
-                    ClusterPolicy.cluster_fmc_id == cluster,
-                )
-            )
-        )
-        policies = [p for p in policies if p.fmc_id in governing]
+        governing_query = governing_query.where(ClusterPolicy.cluster_fmc_id == cluster)
+    governing = set(session.scalars(governing_query))
+    policies = [p for p in policies if p.fmc_id in governing]
     if not policies:
         return []
     scores = {

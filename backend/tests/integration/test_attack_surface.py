@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.analysis.attack import load_hops
 from app.db.session import get_sessionmaker
 from app.models.inventory import FwObject
+from app.models.map import MapEdge
 from tests.integration.conftest import login, make_user
 from tests.integration.test_phase3 import _analysed
 
@@ -105,3 +106,26 @@ def test_prefilter_blocks_cut_hops_and_zones_narrow_them(
     users = hops["USERS_ZONE_ANY"]
     assert not users.src.any
     assert not users.src.empty
+
+
+def test_an_unassigned_policy_is_cleaned_up_but_opens_nothing(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    sid = _analysed(client, admin)
+    policies = {p["name"]: p for p in client.get(f"/api/snapshots/{sid}/policies").json()}
+    staging = policies["ACP-STAGING"]
+    # Collected and analysed like any policy: its shadowed and disabled rules get fixes.
+    recs = client.get(
+        f"/api/snapshots/{sid}/recommendations", params={"policy": staging["id"], "limit": 50}
+    ).json()["rows"]
+    assert {"remove_shadowed_rule", "remove_disabled_rule"} <= {r["kind"] for r in recs}
+    # ... but no device enforces it: not on the map, not in the attack surface.
+    with get_sessionmaker()() as s:
+        hops = load_hops(s, sid)
+        edges = s.scalars(
+            select(MapEdge.policy_fmc_id).where(
+                MapEdge.snapshot_id == sid, MapEdge.policy_fmc_id == staging["id"]
+            )
+        ).all()
+    assert not [h for h in hops if h.policy_fmc_id == staging["id"]]
+    assert edges == []
