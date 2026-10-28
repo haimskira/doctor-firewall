@@ -20,7 +20,7 @@ services:
       retries: 60
 
   redis:
-    image: redis:7.4.11-bookworm@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    image: redis:7.4.12-bookworm@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5
     user: "999:999"
     entrypoint: ["sh", "/usr/local/bin/df-redis-start.sh"]
     secrets: [redis_password]
