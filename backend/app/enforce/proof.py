@@ -488,7 +488,16 @@ def compare(before: Model, after: Model, policy_ids: set[str] | None = None) -> 
     """Every flow whose verdict differs between two models, policy by policy."""
     started = time.monotonic()
     rb, ra = before.resolver(), after.resolver()
-    report: dict[str, Any] = {"policies": [], "flows": 0, "differences": 0, "exhaustive": True}
+    # "rules": rules compared (their resolved match space, before vs after); "touched": those whose
+    # space or verdict differs — only those need probe flows. 0 touched is a proof by equality.
+    report: dict[str, Any] = {
+        "policies": [],
+        "flows": 0,
+        "differences": 0,
+        "exhaustive": True,
+        "rules": 0,
+        "touched": 0,
+    }
     for pid, pb in before.policies.items():
         if policy_ids is not None and pid not in policy_ids:
             continue
@@ -516,6 +525,8 @@ def compare(before: Model, after: Model, policy_ids: set[str] | None = None) -> 
             "differences": [],
         }
         report["policies"].append(entry)
+        report["rules"] += len(set(rules_b) | set(rules_a))
+        report["touched"] += len(touched)
         if not touched:
             continue
         ordered_b = [(r, sb[r.key]) for r in pb.rules]

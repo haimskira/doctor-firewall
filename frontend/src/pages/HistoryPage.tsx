@@ -25,7 +25,7 @@ interface HistoryEntry {
   finished_at: string | null;
   error: string | null;
   proof: { ok: boolean; flows: number; differences: number; behavior: string } | null;
-  proof_after: { ok: boolean; flows: number; differences: number } | null;
+  proof_after: { ok: boolean; flows: number; differences: number; rules?: number; touched?: number } | null;
   revert_blocker: string | null;
   watch?: Watch | null;
 }
@@ -244,7 +244,11 @@ function HistoryRow({
         <td className="small">
           {entry.proof_after !== null ? (
             <span className={entry.proof_after.ok ? 'ok' : 'bad'}>
-              {entry.proof_after.ok ? t('hist.proofOk', { flows: entry.proof_after.flows }) : t('hist.proofBad', { count: entry.proof_after.differences })}
+              {entry.proof_after.ok
+                ? entry.proof_after.touched === 0 && (entry.proof_after.rules ?? 0) > 0
+                  ? t('hist.proofIdentical', { rules: entry.proof_after.rules ?? 0 })
+                  : t('hist.proofOk', { flows: entry.proof_after.flows })
+                : t('hist.proofBad', { count: entry.proof_after.differences })}
             </span>
           ) : entry.proof !== null ? (
             <span className="muted">{t('hist.proofPlanned', { flows: entry.proof.flows, count: entry.proof.differences })}</span>

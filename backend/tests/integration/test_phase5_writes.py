@@ -278,6 +278,9 @@ def test_compact_group_writes_fewer_members_and_keeps_every_flow(
     # Proved twice: on the plan before writing, and on what the FMC holds after the writes.
     assert cs["batches"][0]["proof"]["behavior"] == "preserves"
     assert cs["batches"][0]["proof_after"]["behavior"] == "preserves"
+    # Proof by equality: every rule's match space compared, none differs (no probe needed).
+    assert cs["batches"][0]["proof"]["touched"] == 0
+    assert cs["batches"][0]["proof"]["rules"] > 0
     group = next(
         g
         for g in mock("GET", CONFIG + "/object/networkgroups")["items"]
@@ -286,6 +289,18 @@ def test_compact_group_writes_fewer_members_and_keeps_every_flow(
     assert len(group["objects"]) == 3
     ranges = {r["value"] for r in mock("GET", CONFIG + "/object/ranges")["items"]}
     assert "10.70.1.1-10.70.1.4" in ranges
+
+    # Reverted exactly (found on the lab FMC: a group restore must carry the group's id).
+    result = jobs.revert_batches_job([batch_id], "p5w-appr")
+    assert result["ok"] is True, result
+    group = next(
+        g
+        for g in mock("GET", CONFIG + "/object/networkgroups")["items"]
+        if g["name"] == "GRP_COMPACT_ME"
+    )
+    assert len(group["objects"]) == 8
+    ranges = {r["value"] for r in mock("GET", CONFIG + "/object/ranges")["items"]}
+    assert "10.70.1.1-10.70.1.4" not in ranges
     flow.close()
 
 

@@ -414,7 +414,10 @@ class Writer:
         body.pop("literals", None)
         body.update(_field_json(op["members"], self.temps) or {})
         await self.journaled(
-            {"undo": "restore", "path": path, "body": self._clean(item)}, "PUT", path, body
+            {"undo": "restore", "path": path, "body": self._clean(item, keep_id=True)},
+            "PUT",
+            path,
+            body,
         )
         self.results.append(
             {"op": "update_group", "name": op.get("object_name"), "id": op["object"]}
@@ -796,7 +799,10 @@ class Writer:
         for old, new in remap.items():
             path = path.replace(f"/{old}", f"/{new}")
         if kind == "restore":
-            await self.fmc.write_json("PUT", path, _replace_ids(step["body"], remap))
+            body = _replace_ids(step["body"], remap)
+            # The FMC wants the id in a PUT body (journals written before it was kept lack it).
+            body.setdefault("id", path.rstrip("/").rsplit("/", 1)[-1])
+            await self.fmc.write_json("PUT", path, body)
         elif kind == "delete":
             if not path:  # the create's answer was lost: did it land?
                 find = step["find"]

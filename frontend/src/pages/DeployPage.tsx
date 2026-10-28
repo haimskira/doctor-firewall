@@ -397,7 +397,10 @@ function ProofView({
     <div className="stack proof-block">
       {proof.differences === 0 ? (
         <p className="proof proof-ok">
-          {t('dep.proof.ok', { flows: proof.flows })} <span className="muted small">({scope})</span>
+          {proof.touched === 0 && (proof.rules ?? 0) > 0
+            ? t('dep.proof.identical', { rules: proof.rules ?? 0 })
+            : t('dep.proof.ok', { flows: proof.flows })}{' '}
+          <span className="muted small">({scope})</span>
         </p>
       ) : proof.behavior === 'preserves' ? (
         <div className="proof proof-bad">
@@ -429,7 +432,9 @@ function ProofView({
       {after != null && (
         <p className={`proof ${after.ok ? 'proof-ok' : 'proof-bad'} small`}>
           {after.ok
-            ? t('dep.proof.afterOk', { flows: after.flows })
+            ? after.touched === 0 && (after.rules ?? 0) > 0
+              ? t('dep.proof.afterIdentical', { rules: after.rules ?? 0 })
+              : t('dep.proof.afterOk', { flows: after.flows })
             : t('dep.proof.afterBad', { count: after.differences })}
         </p>
       )}

@@ -793,6 +793,9 @@ export interface TrafficProof {
   exhaustive: boolean;
   flows: number;
   differences: number;
+  /** Rules compared (resolved match space before / after) and those that differ. */
+  rules?: number;
+  touched?: number;
   behavior: 'preserves' | 'changes';
   matches_plan?: boolean;
   seconds: number;
