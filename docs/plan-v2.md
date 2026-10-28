@@ -156,6 +156,23 @@ The system may only improve the policy, never hurt production traffic.
       routed behind them.
 - [x] **8.5 Base image** `python:3.12.16-slim-bookworm` (libssl3 deb12u2, CVE-2026-84782 fixed).
 
+## Stage 9 — Before production (requested 2026-10-28) `[ ]`
+
+Open from stage 8 first: commit + push the test_proof fix (CI alone), then publish 0.7.0 to
+Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redis).
+
+- [ ] **9.1 System guide (HTML)**, in the style of `firewall-policy-system-spec.html`: the whole
+      system for the simple user (LLD level) — every screen, button and the way of working
+      (roadmap phases, decide / stage / approve / deploy / watch / revert), with screenshots;
+      deployment in Docker (online + offline bundle), resources, configuration; troubleshooting
+      and debugging; supported FMC / FTD versions, limitations and working conditions.
+- [ ] **9.2 Dry run from zero** (lab, before customers): wipe the system's data as on a fresh
+      install; delete every policy in the lab FMC and create 4 main access policies, each with
+      2 000 messy rules (duplicates, shadowed, disabled, wide, tier-mixing, literals ...) and
+      2 000 new objects (duplicates, redundant / nested / consecutive members, bad names ...) —
+      the most problematic firewall possible, covering every kind the system fixes; then take it
+      through the whole roadmap from phase 0 and verify each kind of change end to end.
+
 ## Running work outside the plan
 
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
