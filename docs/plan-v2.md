@@ -201,3 +201,4 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 - [x] Shadowed rules are never split / merged / tightened / renamed (found on the lab FMC).
 - [x] Resumable rollback with an undo journal (found when the lab VPN dropped mid-batch).
 - [x] Docker Hub 0.7.0 — unblocked by the 3.12.16 base image (no vendored packages needed).
+- [x] Docker Hub 0.7.1 (commit 1f730874e257, 2026-10-29): policy world, Swagger, ACE shares, temp-id fix, install scripts apply docker-compose.local.yml.
