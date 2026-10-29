@@ -54,7 +54,10 @@ TLS_DIR="$(grep -E '^DF_UI_TLS_DIR=' "$INFRA/.env" | cut -d= -f2-)"
 chmod 0700 "$INFRA/secrets" "$INFRA/${TLS_DIR#./}"
 
 log "Starting (migrations run first, automatically)"
-docker compose --project-directory "$INFRA" -f "$INFRA/docker-compose.yml" --env-file "$INFRA/.env" up -d --wait
+COMPOSE=(docker compose --project-directory "$INFRA" -f "$INFRA/docker-compose.yml" --env-file "$INFRA/.env")
+# Site-local override (not in Git), e.g. extra_hosts for an FMC name DNS does not resolve.
+[[ -f "$INFRA/docker-compose.local.yml" ]] && COMPOSE+=(-f "$INFRA/docker-compose.local.yml")
+"${COMPOSE[@]}" up -d --wait
 ok "Doctor Firewall $VERSION is running"
 cat <<EOF
 

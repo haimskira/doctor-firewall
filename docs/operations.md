@@ -100,6 +100,10 @@ Building on the server instead of pulling is also possible (`git pull`, then
 `scripts/vendor.sh` and `scripts/make-bundle.sh`), but publishing from the development machine
 keeps the CI gate and the scan in one place.
 
+Both install scripts also apply `infra/docker-compose.local.yml` when it exists (site-local, not in
+Git — e.g. `extra_hosts` mapping the FMC's certificate name to its address). Any manual
+`docker compose ... up` must pass it too, or the containers lose that mapping.
+
 ## Runtime network
 
 The running application talks **only to the FMC** (and its own containers); no telemetry, update
