@@ -707,13 +707,14 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
         setError('nothing_to_stage');
         return;
       }
-      const made = await api<{ id: number }>('/api/changesets', 'POST', {
+      const made = await api<{ id: number; held: unknown[] }>('/api/changesets', 'POST', {
         snapshot_id: snapshotId,
         recommendation_ids: page.rows.map((r) => r.id),
         title: title.trim(),
         ticket_id: ticket.trim(),
       });
-      void navigate(`/deploy?changeset=${String(made.id)}`);
+      const held = made.held.length > 0 ? `&held=${String(made.held.length)}` : '';
+      void navigate(`/deploy?changeset=${String(made.id)}${held}`);
     } catch (err) {
       setError(errorCode(err));
     } finally {

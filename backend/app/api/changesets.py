@@ -18,7 +18,7 @@ from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.enforce.batching import Item, ItemTooLargeError, batch, conflicts
+from app.enforce.batching import Conflict, Item, ItemTooLargeError, batch, separate
 from app.enforce.executor import rollback_resumable, stale_after_run
 from app.enforce.staleness import stale_since
 from app.models.assets import ClusterSetting
@@ -93,8 +93,17 @@ class ChangesetOut(BaseModel):
     batches: list[BatchOut]
 
 
+class HeldOut(BaseModel):
+    recommendation: int
+    title: str
+    blocked_by: int  # the staged recommendation touching the same rule / object
+    reason: str  # same_rule | same_object | deletes_used
+
+
 class ChangesetDetail(ChangesetOut):
     items: list[ItemOut]
+    # Accepted but left for the next changeset: they touch what a staged one changes.
+    held: list[HeldOut] = []
 
 
 def _audit(
@@ -279,15 +288,7 @@ def create_changeset(
         )
         for r, _ in sorted(rows, key=lambda x: x[0].id)
     ]
-    found = conflicts(items)
-    if found:
-        return _conflict(
-            "conflicting_recommendations",
-            conflicts=[
-                {"first": recs[c.first].id, "second": recs[c.second].id, "reason": c.reason}
-                for c in found
-            ],
-        )
+    items, held = separate(items)
 
     settings = get_settings()
     limits = {s.cluster_fmc_id: s for s in db.scalars(select(ClusterSetting))}
@@ -364,12 +365,22 @@ def create_changeset(
             "ticket_id": body.ticket_id,
             "snapshot_id": snap.id,
             "recommendations": len(items),
+            "held": len(held),
             "batches": len(planned),
         },
     )
     db.commit()
     jobs.enqueue_proof(cs.id, who.username)
-    return _detail(db, cs)
+    return _detail(db, cs).model_copy(update={"held": [_held(recs, c) for c in held]})
+
+
+def _held(recs: dict[str, Recommendation], c: Conflict) -> HeldOut:
+    return HeldOut(
+        recommendation=recs[c.second].id,
+        title=recs[c.second].title,
+        blocked_by=recs[c.first].id,
+        reason=c.reason,
+    )
 
 
 def _detail(db: Session, cs: Changeset) -> ChangesetDetail:
@@ -567,15 +578,22 @@ def resume_batch_rollback(
 def cancel_changeset(
     changeset_id: int, request: Request, db: DbDep, audit: AuditDep, who: OptimizerDep
 ) -> ChangesetOut:
-    """Cancel what has not run yet (already deployed batches stay deployed)."""
+    """Cancel what has not run yet (already deployed batches stay deployed). A failed changeset
+    can be cancelled too — once no batch is running and no failed batch has writes left to
+    undo (finish its rollback first)."""
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    if cs.status not in ("open", "in_progress"):
+    if cs.status not in ("open", "in_progress", "failed"):
         raise HTTPException(status.HTTP_409_CONFLICT, "changeset_closed")
     batches = list(db.scalars(select(Batch).where(Batch.changeset_id == cs.id)))
     if any(b.status == "running" for b in batches):
         raise HTTPException(status.HTTP_409_CONFLICT, "batch_running")
+    if any(
+        b.status == "failed" and any(step.get("state") != "undone" for step in b.journal)
+        for b in batches
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "rollback_pending")
     for b in batches:
         if b.status in ("pending", "approved"):
             b.status = "cancelled"

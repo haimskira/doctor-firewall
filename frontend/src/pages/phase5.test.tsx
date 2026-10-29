@@ -178,7 +178,7 @@ describe('DeployPage', () => {
     expect(within(panel).getByRole('button', { name: 'Cancel changeset' })).toBeInTheDocument();
   });
 
-  it('shows a rolled-back batch with its error and offers nothing more', async () => {
+  it('shows a rolled-back batch with its error and offers only closing the changeset', async () => {
     const [first, second] = CS.batches;
     if (first === undefined || second === undefined) throw new Error('fixture');
     const failed: ChangesetDetail = {
@@ -194,7 +194,8 @@ describe('DeployPage', () => {
     const batch = within(panel).getByRole('article', { name: 'Changeset 3.1' });
     expect(within(batch).getByText('Rolled back')).toBeInTheDocument();
     expect(within(batch).getByText(/Stopped before writing: the FMC no longer matches the snapshot — rule MIXED: field dst_net changed in the FMC/)).toBeInTheDocument();
-    expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
+    // Nothing runs any more; the failed changeset can only be closed (found on the lab FMC).
+    expect(within(panel).getAllByRole('button').map((b) => b.textContent)).toEqual(['Cancel changeset']);
   });
 
   it('offers to finish an interrupted rollback', async () => {

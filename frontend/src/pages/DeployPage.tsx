@@ -29,6 +29,7 @@ export function useOpLabel(): (op: PlanOp) => string {
 export function DeployPage() {
   const { t, tError } = useI18n();
   const [selectedParam, setSelected] = useQueryParam('changeset');
+  const [heldParam] = useQueryParam('held');
   const list = useApi<Changeset[]>('/api/changesets');
   const selected = selectedParam !== null && /^\d+$/.test(selectedParam) ? Number(selectedParam) : null;
   const detail = useApi<ChangesetDetail>(selected === null ? null : `/api/changesets/${String(selected)}`);
@@ -57,6 +58,9 @@ export function DeployPage() {
         <h1>{t('dep.title')}</h1>
         <p className="muted small">{t('dep.help')}</p>
       </div>
+      {heldParam !== null && /^\d+$/.test(heldParam) && (
+        <Alert kind="info">{t('dep.held', { count: Number(heldParam) })}</Alert>
+      )}
       {list.error !== null && <Alert kind="error">{tError(list.error)}</Alert>}
       {list.data !== null && list.data.length === 0 && <Alert kind="info">{t('dep.none')}</Alert>}
       {list.data !== null && list.data.length > 0 && (
@@ -195,7 +199,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
             </span>
           </div>
         </div>
-        {open && can('changeset:write') && (
+        {(open || cs.status === 'failed') && can('changeset:write') && (
           <button type="button" className="danger" disabled={busy} onClick={() => void act(`${base}/cancel`)}>
             {t('dep.cancel')}
           </button>

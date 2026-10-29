@@ -93,6 +93,21 @@ rules without hits, tightening, adding inspection). See [traffic-proof.md](traff
   that would change any flow — or a changing one that differs from its proved plan — is rolled
   back; nothing reaches the devices.
 
+### After a failed batch
+
+A failed batch is undone and redeployed by the executor itself; batches deployed before it stay.
+The changeset is `failed`. **Cancel** closes it (`POST /api/changesets/{id}/cancel`, also for
+`failed`): batches not run yet become `cancelled`; it is refused with `rollback_pending` while a
+failed batch still has journal steps to undo (finish the rollback first). Then pull and analyse
+again and stage a new changeset from the fresh snapshot.
+
+Recommendations that touch the same rule or object never share a changeset: staging takes the
+first (by id) and **holds** the others (`held` in the answer — they stay accepted), to be staged
+after this changeset is deployed and the FMC pulled again (their plans then build on that state).
+
+Reads (GET / HEAD) are retried when the FMC drops the connection after they were sent (e.g. while
+a deploy is polled); a write that may have landed never is (`app/fmc/client.py`).
+
 ### History and rollback to any point
 
 *Manage → Change history* lists every batch that ran: when, who staged and approved it, its

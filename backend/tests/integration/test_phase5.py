@@ -162,9 +162,16 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
             "detail": "not_executable",
             "recommendations": {str(blocked["id"]): ["route_reference"]},
         }
+        # Two recommendations touching the same object: the first is staged, the second waits.
         clash = create([merge_groups["id"], unused_web["id"]])
-        assert clash.status_code == 409
-        assert clash.json()["conflicts"][0]["reason"] == "same_object"
+        assert clash.status_code == 201, clash.text
+        first, second = sorted((merge_groups["id"], unused_web["id"]))
+        held = [(h["recommendation"], h["blocked_by"], h["reason"]) for h in clash.json()["held"]]
+        assert held == [(second, first, "same_object")]
+        assert len(clash.json()["items"]) == 1
+        assert (
+            opt.post(f"/api/changesets/{clash.json()['id']}/cancel", headers=oh).status_code == 200
+        )
         assert create([split["id"]], ticket="bad ticket!").status_code == 422
 
         # Small deploy limit on every cluster: 2 operations per batch.
@@ -276,5 +283,11 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
                 .order_by(AuditRecord.id)
             )
         )
-    assert actions[:3] == ["changeset.create", "changeset.create", "changeset.batch_approve"]
+    assert actions[:5] == [
+        "changeset.create",  # the clash: one staged, one held
+        "changeset.cancel",
+        "changeset.create",
+        "changeset.create",
+        "changeset.batch_approve",
+    ]
     assert "changeset.cancel" in actions

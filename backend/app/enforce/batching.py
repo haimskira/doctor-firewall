@@ -79,22 +79,45 @@ class ItemTooLargeError(ValueError):
         self.limit = limit
 
 
+def _clash(t: dict[str, set[str]], o: dict[str, set[str]]) -> str | None:
+    if t["rules"] & o["rules"]:
+        return "same_rule"
+    if t["objects"] & o["objects"]:
+        return "same_object"
+    if (t["deleted"] & (o["referenced"] | o["objects"] | o["rules"])) or (
+        o["deleted"] & (t["referenced"] | t["objects"] | t["rules"])
+    ):
+        return "deletes_used"
+    return None
+
+
 def conflicts(items: Iterable[Item]) -> list[Conflict]:
     seen: list[tuple[Item, dict[str, set[str]]]] = []
     found: list[Conflict] = []
     for item in items:
         t = touched(item.plan)
         for other, o in seen:
-            if t["rules"] & o["rules"]:
-                found.append(Conflict(other.key, item.key, "same_rule"))
-            elif t["objects"] & o["objects"]:
-                found.append(Conflict(other.key, item.key, "same_object"))
-            elif (t["deleted"] & (o["referenced"] | o["objects"] | o["rules"])) or (
-                o["deleted"] & (t["referenced"] | t["objects"] | t["rules"])
-            ):
-                found.append(Conflict(other.key, item.key, "deletes_used"))
+            reason = _clash(t, o)
+            if reason is not None:
+                found.append(Conflict(other.key, item.key, reason))
         seen.append((item, t))
     return found
+
+
+def separate(items: Iterable[Item]) -> tuple[list[Item], list[Conflict]]:
+    """The items one changeset can take, and those held back: in order, an item touching what an
+    item already taken touches waits (``Conflict(taken, held, reason)``) for a later changeset,
+    staged from the snapshot after this one is deployed (its plan is built on that state)."""
+    taken: list[tuple[Item, dict[str, set[str]]]] = []
+    held: list[Conflict] = []
+    for item in items:
+        t = touched(item.plan)
+        clash = next(((other, r) for other, o in taken if (r := _clash(t, o)) is not None), None)
+        if clash is None:
+            taken.append((item, t))
+        else:
+            held.append(Conflict(clash[0].key, item.key, clash[1]))
+    return [i for i, _ in taken], held
 
 
 def order(items: Iterable[Item]) -> list[Item]:

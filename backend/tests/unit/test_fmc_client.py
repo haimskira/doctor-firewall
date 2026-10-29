@@ -309,6 +309,46 @@ def test_read_failures_are_never_retried(store: TokenStore) -> None:
     assert calls["n"] == 1
 
 
+def test_dropped_connection_retries_reads_but_never_writes(store: TokenStore) -> None:
+    """Found on the lab FMC: a kept-alive connection dropped while a deploy was polled failed
+    the whole batch. A read is repeated; a write that may have landed is not."""
+    good = _transport(store)
+    drops = {"GET": 0, "POST": 0}
+    calls = {"GET": 0, "POST": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in ("/read", "/write"):
+            calls[request.method] += 1
+            if drops[request.method] > 0:
+                drops[request.method] -= 1
+                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            return httpx.Response(200, json={"ok": True})
+        return await good.handle_async_request(request)
+
+    async def noop(_: float) -> None:
+        return None
+
+    async def run() -> None:
+        async with FmcSession(
+            host="fmc-mock",
+            port=443,
+            username="api_user",
+            password_provider=lambda: bytearray(PASSWORD.encode()),
+            ssl_context=_ssl(),
+            timeout=5,
+            transport=httpx.MockTransport(handler),
+            throttle=ThrottlePolicy(connect_retries=3, sleep=noop),
+        ) as fmc:
+            drops["GET"] = 2
+            assert await fmc.get_json("/read") == {"ok": True}
+            drops["POST"] = 1
+            with pytest.raises(FmcUnavailableError):
+                await fmc.write_json("POST", "/write", {"name": "x"})
+
+    asyncio.run(run())
+    assert calls == {"GET": 3, "POST": 1}
+
+
 def test_build_ssl_context(tmp_path: Path) -> None:
     with pytest.raises(FmcTlsError):
         build_ssl_context(tmp_path / "missing.pem")

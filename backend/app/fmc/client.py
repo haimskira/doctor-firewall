@@ -15,8 +15,10 @@ Procedures implemented here (Cisco FMC REST API Quick Start Guide 10.1):
   HTTP 429 is retried with exponential backoff (``Retry-After`` honoured).
 * A connection that could not be opened (``ConnectError``: refused, no route, name not
   resolved) is retried ``connect_retries`` times with exponential backoff — the request
-  never reached the FMC, so this is safe for writes too. Failures after the request may
-  have been sent (read errors, timeouts) are never retried: a write might have landed.
+  never reached the FMC, so this is safe for writes too. A read (GET / HEAD) is also retried
+  when the connection drops or times out after it was sent (e.g. the FMC closed a kept-alive
+  connection while a deploy is polled): reading twice changes nothing. Such failures of a
+  write are never retried: the write might have landed.
 * Collections are read with ``offset``/``limit`` paging (max 1000 per page).
 
 TLS: the server certificate is always verified against the internal trust store,
@@ -72,6 +74,9 @@ def build_ssl_context(ca_bundle: Path) -> ssl.SSLContext:
     if not ctx.check_hostname or ctx.verify_mode != ssl.CERT_REQUIRED:  # pragma: no cover
         raise FmcTlsError("refusing an SSL context without full verification")
     return ctx
+
+
+SAFE_METHODS = frozenset({"GET", "HEAD"})  # repeating them changes nothing on the FMC
 
 
 @dataclass(frozen=True)
@@ -238,11 +243,11 @@ class FmcSession:
                 except httpx.TransportError as exc:
                     if _is_tls_failure(exc):
                         raise FmcTlsError("TLS verification of the FMC failed") from exc
-                    # Only a connection that never opened is safe to repeat (writes too).
+                    # A connection that never opened is safe to repeat (writes too); a read
+                    # is safe to repeat whatever happened to the connection.
                     if (
-                        type(exc) is not httpx.ConnectError
-                        or connect_attempt >= self._throttle.connect_retries
-                    ):
+                        type(exc) is not httpx.ConnectError and method not in SAFE_METHODS
+                    ) or connect_attempt >= self._throttle.connect_retries:
                         raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
             if response is None:
                 delay = min(

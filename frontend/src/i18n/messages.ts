@@ -1099,6 +1099,7 @@ export const en = {
   'dep.approve': 'Approve',
   'dep.run': 'Write and deploy',
   'dep.runConfirm': 'Write changeset {cs}.{seq} ({count} changes) to the FMC and deploy it? Every change is verified; on any failure it is rolled back.',
+  'dep.held': '{count} accepted recommendations change a rule or object this changeset already changes. They stay accepted and wait: after this changeset is deployed, collect and analyse again, then stage them in the next changeset.',
   'dep.cancel': 'Cancel changeset',
   'dep.queued': 'Batch queued for writing; progress updates here.',
   'dep.rollback': 'Finish rollback',
@@ -1136,6 +1137,7 @@ export const en = {
   'error.batch_not_pending': 'This batch is no longer awaiting approval.',
   'error.batch_not_approved': 'This batch is not approved.',
   'error.changeset_closed': 'The changeset is closed.',
+  'error.rollback_pending': 'A failed batch still has writes to undo: finish its rollback first, then cancel.',
   'error.batch_running': 'A batch is running.',
 
   // ---- object hover card ----
@@ -2421,6 +2423,7 @@ export const he: Record<MessageKey, string> = {
   'dep.approve': 'אישור',
   'dep.run': 'כתיבה ו-deploy',
   'dep.runConfirm': 'לכתוב את changeset {cs}.{seq} ({count} שינויים) ל-FMC ולפרוס? כל שינוי מאומת; בכל כשל הוא מוחזר לאחור.',
+  'dep.held': '{count} המלצות מאושרות משנות חוק או אובייקט שה-changeset הזה כבר משנה. הן נשארות מאושרות וממתינות: אחרי שה-changeset ייפרס — איסוף וניתוח מחדש, ואז הן ייכנסו ל-changeset הבא.',
   'dep.cancel': 'ביטול changeset',
   'dep.queued': 'ה-changeset נכנס לתור; ההתקדמות מתעדכנת כאן.',
   'dep.rollback': 'השלמת החזרה לאחור',
@@ -2458,6 +2461,7 @@ export const he: Record<MessageKey, string> = {
   'error.batch_not_pending': 'ה-changeset כבר אינו ממתין לאישור.',
   'error.batch_not_approved': 'ה-changeset לא אושר.',
   'error.changeset_closed': 'ה-changeset סגור.',
+  'error.rollback_pending': 'לחלק שנכשל נשארו כתיבות לבטל: קודם להשלים את ההחזרה, ואז לבטל.',
   'error.batch_running': 'changeset רץ כעת.',
 
   // ---- object hover card ----

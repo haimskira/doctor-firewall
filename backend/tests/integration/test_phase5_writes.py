@@ -498,6 +498,9 @@ def test_outage_mid_batch_keeps_the_journal_and_resumes(
         ]
     assert "MIXED_TIERS_SQL_SILVER" in flow.rules(policy)  # the FMC did apply it
 
+    cancel = f"/api/changesets/{cs_id}/cancel"
+    refused = flow.opt.post(cancel, headers=flow.oh)  # writes still to undo: not yet
+    assert (refused.status_code, refused.json()["detail"]) == (409, "rollback_pending")
     url = f"/api/changesets/{cs_id}/batches/1/rollback"
     assert flow.opt.post(url, headers=flow.oh).status_code == 403  # optimizers cannot
     assert flow.appr.post(url, headers=flow.ah).status_code == 202  # queued for the worker
@@ -515,8 +518,14 @@ def test_outage_mid_batch_keeps_the_journal_and_resumes(
     )
     assert not any(r["op"] == "undo_failed" for r in batch["results"])
     assert flow.appr.post(url, headers=flow.ah).status_code == 409  # nothing left to undo
+    # Found on the lab: a failed changeset could never be closed. Rolled back, it can.
+    assert client.get(f"/api/changesets/{cs_id}").json()["status"] == "failed"
+    closed = flow.opt.post(cancel, headers=flow.oh)
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "cancelled"
     with get_sessionmaker()() as s:
         actions = list(s.scalars(select(AuditRecord.action)))
+    assert "changeset.cancel" in actions
     assert "changeset.batch_rollback" in actions
     assert "changeset.batch_rolled_back" in actions
     flow.close()

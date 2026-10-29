@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from app.enforce.batching import Item, ItemTooLargeError, batch, conflicts, order
+from app.enforce.batching import Item, ItemTooLargeError, batch, conflicts, order, separate
 from app.enforce.plan import PlanBuilder, identity, touched
 
 RULE = {"policy": "p1", "policy_kind": "access", "id": "r1", "name": "R1"}
@@ -93,6 +93,28 @@ def test_conflicts() -> None:
         conflicts([_item("a", "x", update_r1), _item("b", "x", other), _item("c", "x", rename_o1)])
         == []
     )
+
+
+def test_separate_takes_what_it_can_and_holds_the_rest() -> None:
+    """Found on the lab: 54 clashes among 660 accepted refused the whole changeset."""
+    update_r1 = _plan(lambda pb: pb.update_rule(RULE, {}, {}, name="NEW"))
+    delete_r1 = _plan(lambda pb: pb.delete_rule(RULE))
+    rename_o1 = _plan(lambda pb: pb.rename_object(OBJ, "NET_B"))
+    delete_o1 = _plan(lambda pb: pb.delete_object(OBJ))
+    taken, held = separate(
+        [
+            _item("a", "x", update_r1),
+            _item("b", "x", delete_r1),
+            _item("c", "x", rename_o1),
+            _item("d", "x", delete_o1),
+        ]
+    )
+    assert [i.key for i in taken] == ["a", "c"]
+    assert [(c.first, c.second, c.reason) for c in held] == [
+        ("a", "b", "same_rule"),
+        ("c", "d", "same_object"),
+    ]
+    assert conflicts(taken) == []
 
 
 def _ops(n: int, key: str) -> dict[str, Any]:

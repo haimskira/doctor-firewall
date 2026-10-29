@@ -196,6 +196,7 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 
 ## Running work outside the plan
 
+- [x] Failure handling found by the dry run (changesets 7 and 8): a failed changeset can be cancelled (`rollback_pending` while undo steps remain); conflicting recommendations are held for the next changeset instead of refusing all; GET/HEAD are retried after a dropped connection (batch 2 failed twice on `RemoteProtocolError` after all writes, while verifying / deploying).
 - [x] Temp ids are scoped per item inside a batch (`plan.item_ops`): every plan numbers its new objects from `new:1`, so 51 group compactions in one batch shared one object in the traffic proof (269 "changed" flows, approval blocked; found by the dry run, changeset 7).
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.
 - [x] Shadowed rules are never split / merged / tightened / renamed (found on the lab FMC).
