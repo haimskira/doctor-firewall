@@ -269,7 +269,10 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
         actions = list(
             s.scalars(
                 select(AuditRecord.action)
-                .where(AuditRecord.action.like("changeset.%"))
+                .where(
+                    AuditRecord.action.like("changeset.%"),
+                    AuditRecord.actor.like("p5-%"),  # this test's users only
+                )
                 .order_by(AuditRecord.id)
             )
         )

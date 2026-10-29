@@ -52,6 +52,26 @@ def identity(ref: dict[str, Any]) -> str:
     return f"l:{ref.get('literal')}"
 
 
+def item_ops(plan: dict[str, Any], item: int) -> list[dict[str, Any]]:
+    """A plan's operations as they run inside a batch: its temp ids (``new:1`` ...) are numbered
+    per plan, so they get the item's prefix — two plans in one batch never share an object."""
+    ops: list[dict[str, Any]] = plan.get("ops", [])
+    temps = {str(op["temp"]) for op in ops if "temp" in op}
+    if not temps:
+        return list(ops)
+
+    def scoped(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: scoped(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [scoped(v) for v in value]
+        if isinstance(value, str) and value in temps:
+            return f"i{item}/{value}"
+        return value
+
+    return [scoped(op) for op in ops]
+
+
 class PlanBuilder:
     def __init__(self) -> None:
         self.ops: list[dict[str, Any]] = []

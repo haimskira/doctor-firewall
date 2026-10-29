@@ -202,3 +202,66 @@ def test_renames_and_untouched_policies_cost_nothing() -> None:
         "touched": 0,
     }
     assert report["rules"] > 0  # every rule compared, none differs: a proof by equality
+
+
+def test_temp_ids_are_scoped_per_item() -> None:
+    from app.enforce.plan import item_ops
+
+    plan: dict[str, Any] = {
+        "ops": [
+            {"op": "create_object", "temp": "new:1", "type": "Range", "name": "R"},
+            {"op": "update_group", "object": "g", "members": [{"temp": "new:1", "name": "R"}]},
+            {"op": "create_rule", "temp": "new:2", "insert_after": "new:1", "name": "x"},
+        ]
+    }
+    ops = item_ops(plan, 7)
+    assert ops[0]["temp"] == "i7/new:1"
+    assert ops[1]["members"] == [{"temp": "i7/new:1", "name": "R"}]
+    assert (ops[2]["temp"], ops[2]["insert_after"]) == ("i7/new:2", "i7/new:1")
+    assert plan["ops"][0]["temp"] == "new:1"  # the stored plan is unchanged
+    assert item_ops({"ops": [{"op": "delete_rule", "rule": "r"}]}, 1) == [
+        {"op": "delete_rule", "rule": "r"}
+    ]
+
+
+def test_two_plans_creating_new_1_in_one_batch_keep_their_own_objects() -> None:
+    """Found by the lab dry run: 51 compactions in one batch all created "new:1"; the proof
+    resolved every group to the last one and reported changed flows."""
+    from app.enforce.plan import item_ops
+
+    def compaction(group: str, first: str, last: str) -> dict[str, Any]:
+        return {
+            "ops": [
+                {
+                    "op": "create_object",
+                    "temp": "new:1",
+                    "kind": "range",
+                    "value": f"{first}-{last}",
+                },
+                {"op": "update_group", "object": group, "members": [{"temp": "new:1"}]},
+            ]
+        }
+
+    model = Model(
+        objects={
+            "G1": ("network_group", None),
+            "G2": ("network_group", None),
+            "a": ("host", "10.0.0.1/32"),
+            "b": ("host", "10.0.0.2/32"),
+            "c": ("host", "10.9.0.1/32"),
+            "d": ("host", "10.9.0.2/32"),
+        },
+        members={
+            "G1": [("a", None, None), ("b", None, None)],
+            "G2": [("c", None, None), ("d", None, None)],
+        },
+        policies={},
+    )
+    plans = [compaction("G1", "10.0.0.1", "10.0.0.2"), compaction("G2", "10.9.0.1", "10.9.0.2")]
+    ops = [op for n, plan in enumerate(plans, 1) for op in item_ops(plan, n)]
+    after = apply_plan(model, ops).resolver()
+    assert after.leaves("G1").addresses == {"10.0.0.1-10.0.0.2"}
+    assert after.leaves("G2").addresses == {"10.9.0.1-10.9.0.2"}
+    # Unscoped, both groups point at the last "new:1": what the proof used to see.
+    raw = apply_plan(model, [op for plan in plans for op in plan["ops"]]).resolver()
+    assert raw.leaves("G1").addresses == {"10.9.0.1-10.9.0.2"}

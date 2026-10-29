@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.enforce.plan import item_ops
 from app.enforce.proof import Model, apply_plan, compare, load_model
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.recommendations import behavior
@@ -32,7 +33,7 @@ def batch_plans(
         .where(ChangesetItem.changeset_id == changeset_id)
         .order_by(ChangesetItem.batch_seq, ChangesetItem.position)
     ):
-        ops[item.batch_seq].extend(item.plan.get("ops", []))
+        ops[item.batch_seq].extend(item_ops(item.plan, item.position))
         kinds[item.batch_seq].add(behavior(item.kind))
     return dict(ops), {
         seq: "changes" if "changes" in k else "preserves" for seq, k in kinds.items()

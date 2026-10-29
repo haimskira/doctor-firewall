@@ -15,6 +15,10 @@ A flow's verdict is the first enabled rule that matches it — MONITOR rules log
 evaluation continue — or the policy's default action: the action, plus the intrusion and file
 policy for traffic that is let through (TRUST and FASTPATH skip inspection).
 
+Objects a plan creates are named by temp ids (`new:1`, `new:2` ...) numbered per plan; inside a
+batch every item's temp ids get the item's prefix (`app.enforce.plan.item_ops`), in the proof and in
+the executor alike, so two plans never share a created object.
+
 ## Why the probe flows are enough
 
 A rule is *touched* when it is created, deleted, or its verdict or match space changed — the

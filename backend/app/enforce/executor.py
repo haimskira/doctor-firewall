@@ -42,7 +42,7 @@ from app.core.config import Settings
 from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
 from app.enforce.batch_proof import batch_plans, model_before
-from app.enforce.plan import identity
+from app.enforce.plan import identity, item_ops
 from app.enforce.proof import SPACE_FIELDS, Model, RuleModel, apply_plan, compare
 from app.enforce.watch import open_watch
 from app.fmc.adapters import FmcAdapter, select_adapter
@@ -949,7 +949,7 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
                 .order_by(ChangesetItem.position)
             )
         )
-        ops = [op for item in items for op in item.plan.get("ops", [])]
+        ops = [op for item in items for op in item_ops(item.plan, item.position)]
         if len(ops) != b.op_count:
             raise BatchError("batch_inconsistent", f"{len(ops)} != {b.op_count}")
         b.status, b.started_at, b.error, b.journal = "running", datetime.now(UTC), None, []

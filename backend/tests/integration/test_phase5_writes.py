@@ -316,10 +316,16 @@ def test_compact_port_group_merges_consecutive_ports(
     assert [m["value"] for m in compact["merged"]] == ["TCP/8080-8082"]
     assert (compact["members_before"], compact["members_after"]) == (6, 3)
     assert detail["ace_delta"] == -3  # COMPACT_PORT_RULE: 1 x 1 x 6 services -> 3
-    cs_id, batch_id = flow.approved_batch([rec])
+    # Together with the network compaction in one batch: written, proved and verified together.
+    network = flow.find("compact_group", "GRP_COMPACT_ME")
+    cs_id, batch_id = flow.approved_batch([rec, network])
     assert _run(batch_id)["ok"] is True
     cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["batches"][0]["proof"]["ok"] is True
+    assert cs["batches"][0]["proof_after"]["ok"] is True
     assert cs["batches"][0]["proof_after"]["behavior"] == "preserves"
+    ranges = {r["value"] for r in mock("GET", CONFIG + "/object/ranges")["items"]}
+    assert "10.70.1.1-10.70.1.4" in ranges
     group = next(
         g
         for g in mock("GET", CONFIG + "/object/portobjectgroups")["items"]

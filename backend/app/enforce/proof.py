@@ -227,7 +227,7 @@ def apply_plan(model: Model, ops: list[dict[str, Any]]) -> Model:
                 for fld, refs in op.get("set", {}).items():
                     new.refs[fld] = [_ref_member(x) for x in refs]
                 anchor = str(op["insert_after"])
-                if anchor.startswith("new:"):
+                if anchor.startswith("new:") or "/new:" in anchor:  # created by the batch
                     anchor = f"temp:{anchor}"
                 at = next(i for i, r in enumerate(rules) if r.key == anchor)
                 rules.insert(at + 1, new)
