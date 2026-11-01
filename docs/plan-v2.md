@@ -203,3 +203,4 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 - [x] Resumable rollback with an undo journal (found when the lab VPN dropped mid-batch).
 - [x] Docker Hub 0.7.0 — unblocked by the 3.12.16 base image (no vendored packages needed).
 - [x] Docker Hub 0.7.1 (commit 1f730874e257, 2026-10-29): policy world, Swagger, ACE shares, temp-id fix, install scripts apply docker-compose.local.yml.
+- [x] Docker Hub 0.7.2 (commit 97cb3003e865, 2026-11-01): failure handling (cancel failed changesets, held conflicts, read retries, lost jobs closed, resumed revert = reverted, batch explanations), pyasn1 0.6.5, minimatch 11.0.3.
