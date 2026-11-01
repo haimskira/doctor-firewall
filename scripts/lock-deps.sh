@@ -16,6 +16,7 @@ CUTOFF="$("$PYTHON" -c 'import datetime as d; print((d.date.today()-d.timedelta(
 EXCEPTIONS=()
 while read -r pkg date advisory _reason; do
     [[ -z "$pkg" || "${pkg:0:1}" == "#" ]] && continue
+    [[ "$pkg" == npm:* ]] && continue  # npm: recorded here, applied by package.json "overrides"
     [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && -n "$advisory" ]] || die "bad line in lock-exceptions.txt: $pkg"
     EXCEPTIONS+=(--exclude-newer-package "$pkg=$date" --upgrade-package "$pkg")
     log "age-floor exception: $pkg up to $date ($advisory)"

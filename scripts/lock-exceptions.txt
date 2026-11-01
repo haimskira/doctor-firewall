@@ -1,7 +1,9 @@
 # Security exceptions to the 14-day release-age floor of scripts/lock-deps.sh.
 # One per line: <package> <cutoff YYYY-MM-DD> <advisory> <reason>. Remove the line once the
 # fixed release is older than 14 days (the normal cutoff then covers it).
+# npm:<package> lines document a frontend exception applied through package.json "overrides".
 certifi 2026-10-21 GHSA-6q48-6c7w-9gw2 fix released 2026-10-19; CA bundle from the PyPA-trusted maintainer
 opentelemetry-api 2026-10-26 CVE-2026-114603 fixed in 1.45.1; runtime dependency of fastapi
 filelock 2026-10-26 CVE-2026-112907 fixed in 4.2.1 (also CVE-2026-112913, CVE-2026-112940); dev/CI only (pip-audit)
 pyasn1 2026-10-28 CVE-2026-119194 fixed in 0.6.5 (also CVE-2026-119195, -119196, -119197); runtime dependency of ldap3
+npm:minimatch 2026-10-28 GHSA-g3hv-75wg-m249 fixed only in 11.x (11.0.3 + @isaacs/nonrecursive-glob-match 1.0.3, same maintainer); dev/lint only (eslint), via package.json overrides; remove the override once eslint depends on ^11
