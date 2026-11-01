@@ -272,7 +272,8 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
                 )}
               </div>
             </header>
-            {b.error !== null && <Alert kind="error">{batchError(b.error)}</Alert>}
+            <p className={`batch-what batch-what-${b.status}`}>{t(`dep.what.${b.status}`)}</p>
+            {b.error !== null && <Alert kind={b.status === 'failed' ? 'error' : 'info'}>{batchError(b.error)}</Alert>}
             <ProofView
               batch={b}
               canAcknowledge={mayAct && b.status === 'pending'}

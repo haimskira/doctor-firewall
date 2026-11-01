@@ -73,7 +73,9 @@ def _reconcile(db: Session, runs: list[JobRun]) -> None:
             redis = redis or get_redis()
             try:
                 state = Job.fetch(run.rq_job_id, connection=redis, serializer=JSONSerializer)
-                status = str(state.get_status(refresh=True) or "")
+                raw = state.get_status(refresh=True)
+                # JobStatus is a str Enum: str() gives "JobStatus.FAILED", its value "failed".
+                status = str(getattr(raw, "value", raw) or "")
             except NoSuchJobError:
                 status = "missing"
             if status in LOST_STATES or status == "missing":

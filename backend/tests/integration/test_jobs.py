@@ -7,12 +7,15 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from rq.job import Job, JobStatus
+from rq.serializers import JSONSerializer
 from sqlalchemy import select
 
 from app.collector import runner
 from app.db.session import get_sessionmaker
 from app.fmc.client import ThrottlePolicy
 from app.models.jobs import JobRun
+from app.runtime import get_redis
 from app.workers import jobs, progress
 from tests.integration.conftest import login, make_user
 from tests.integration.test_collection import _collect, _connection
@@ -111,9 +114,18 @@ def test_failures_lost_workers_and_visibility(client: TestClient, admin: dict[st
         assert row is not None
         row.created_at = datetime.now(UTC) - timedelta(minutes=10)
     fresh = progress.create_run(sessions, "analyze", "FMC-HA", "jobs-admin", snapshot_id=sid)
+    # Found on the lab: the worker died mid-revert and RQ marked the job failed; the run kept
+    # spinning for 60 hours (RQ's status is an Enum whose str() is "JobStatus.FAILED").
+    dead = progress.create_run(sessions, "revert", "FMC-HA", "jobs-admin", snapshot_id=sid)
+    rq_job = Job.create(
+        "app.workers.jobs.verify_audit_chain", connection=get_redis(), serializer=JSONSerializer
+    )
+    rq_job.set_status(JobStatus.FAILED)
+    progress.set_rq_job(sessions, dead, rq_job.id)
     listing = client.get("/api/jobs?state=all&limit=50").json()
     by_id = {r["id"]: r for r in listing["rows"]}
     assert (by_id[lost]["status"], by_id[lost]["error"]) == ("failed", "worker_lost")
+    assert (by_id[dead]["status"], by_id[dead]["error"]) == ("failed", "worker_lost")
     assert (by_id[stuck]["status"], by_id[stuck]["error"]) == ("failed", "not_queued")
     assert by_id[fresh]["status"] == "queued"  # just created, not yet handed to the queue
     assert listing["active"] >= 1

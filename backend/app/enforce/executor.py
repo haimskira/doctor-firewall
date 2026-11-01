@@ -1071,7 +1071,9 @@ def _finish(
             return
         b.status, b.error, b.results = status, error, results
         b.finished_at, b.deploy_job_id = datetime.now(UTC), task_id
-        if status == "deployed":
+        if status == "reverted":
+            pass  # a deployed batch undone on request: the changeset keeps its state
+        elif status == "deployed":
             if settings is not None:
                 open_watch(db, b, settings, b.finished_at)
             remaining = db.scalar(
@@ -1087,8 +1089,10 @@ def _finish(
             AuditEvent(
                 actor="system:enforcer",
                 actor_id=None,
-                action=f"changeset.batch_{status}",
-                outcome="success" if status == "deployed" else "failure",
+                action="changeset.batch_revert_ok"
+                if status == "reverted"
+                else f"changeset.batch_{status}",
+                outcome="success" if status in ("deployed", "reverted") else "failure",
                 target=plan.title[:256],
                 details={
                     "changeset_id": plan.changeset_id,
@@ -1292,6 +1296,9 @@ async def resume_rollback(
         connection, targets = _connection_and_targets(db, cs, b)
         journal = copy.deepcopy(b.journal)
         previous = (b.status, b.error)
+        # A deployed batch whose revert lost its worker (it was deployed: finished_at is set)
+        # ends "reverted" — undone on request, not rolled back after a failure.
+        reverting = b.status == "running" and b.finished_at is not None
         results = [r for r in b.results if r.get("op") != "undo_failed"]
         b.status = "running"
         plan = _Plan(
@@ -1367,7 +1374,7 @@ async def resume_rollback(
         return put_back(f"{exc.code}: {scrub_text(str(exc))[:200]}")
     finally:
         await release()
-    status = "rolled_back" if not left else "failed"
+    status = ("reverted" if reverting else "rolled_back") if not left else "failed"
     _finish(
         sessions,
         audit,

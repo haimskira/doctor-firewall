@@ -566,6 +566,42 @@ def test_a_failed_traffic_proof_rolls_back_before_deploying(
     flow.close()
 
 
+def test_a_revert_whose_worker_died_finishes_as_reverted(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """Found on the lab: the worker restarted mid-revert. The run spun for days and "finish
+    the rollback" ended it as "rolled back after a failure" and failed the changeset again."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)
+    assert _run(batch_id)["ok"] is True
+    assert "MIXED_TIERS_SQL_SILVER" in flow.rules(policy)
+    # The revert takes the batch and dies before writing (here: by hand, long ago).
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.status = "running"
+        b.started_at = datetime.now(UTC) - timedelta(days=2)
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["rollback_resumable"] is True
+    url = f"/api/changesets/{cs_id}/batches/1/rollback"
+    assert flow.appr.post(url, headers=flow.ah).status_code == 202
+    result = _resume(batch_id)
+    assert (result["ok"], result["status"]) == (True, "reverted"), result
+    assert list(flow.rules(policy)) == list(before)
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["batches"][0]["status"] == "reverted"
+    assert cs["status"] != "failed"
+    with get_sessionmaker()() as s:
+        actions = list(
+            s.scalars(select(AuditRecord.action).where(AuditRecord.actor == "system:enforcer"))
+        )
+    assert actions[-1] == "changeset.batch_revert_ok"
+    flow.close()
+
+
 def test_history_shows_every_change_and_reverts_exactly(
     client: TestClient, admin: dict[str, str]
 ) -> None:

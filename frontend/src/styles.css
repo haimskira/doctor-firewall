@@ -1079,3 +1079,6 @@ a.button-link:hover { background: var(--primary-soft); }
 .swagger-host { background: #fff; color: #3b4151; border-radius: var(--radius); }
 .swagger-host .information-container { padding-block: 0; }
 .page-filters { gap: 0.75rem 1.25rem; align-items: center; margin-inline-start: auto; }
+.batch-what { margin: 0.25rem 0 0.5rem; font-weight: 600; }
+.batch-what-deployed { color: var(--ok); }
+.batch-what-failed { color: var(--danger); }
