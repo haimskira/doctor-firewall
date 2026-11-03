@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,30 @@ def register_error_handlers(app: FastAPI) -> None:
                 "request_id": _request_id(request),
             },
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    @app.exception_handler(DataError)
+    async def bad_value(request: Request, exc: DataError) -> JSONResponse:
+        # A value the database cannot hold (an id beyond its integer range, a NUL character):
+        # the request is wrong, not the server.
+        log.info(
+            "rejected value", extra={"request_id": _request_id(request), "path": request.url.path}
+        )
+        return JSONResponse(
+            {"detail": "invalid_value", "request_id": _request_id(request)},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def conflict(request: Request, exc: IntegrityError) -> JSONResponse:
+        # Two requests creating the same row at once (double click, two operators).
+        log.warning(
+            "integrity conflict",
+            extra={"request_id": _request_id(request), "path": request.url.path},
+        )
+        return JSONResponse(
+            {"detail": "conflict", "request_id": _request_id(request)},
+            status_code=status.HTTP_409_CONFLICT,
         )
 
     @app.exception_handler(Exception)

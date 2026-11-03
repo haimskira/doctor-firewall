@@ -42,7 +42,7 @@ from app.core.config import Settings
 from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
 from app.enforce.batch_proof import batch_plans, model_before
-from app.enforce.plan import identity, item_ops
+from app.enforce.plan import identity, is_temp, item_ops
 from app.enforce.proof import SPACE_FIELDS, Model, RuleModel, apply_plan, compare
 from app.enforce.watch import open_watch
 from app.fmc.adapters import FmcAdapter, select_adapter
@@ -288,7 +288,7 @@ class Writer:
                 body[key] = value
 
     def rule_path(self, op: dict[str, Any], rule: str) -> str:
-        if rule.startswith("new:"):
+        if is_temp(rule):
             made = self.temps.get(rule)
             if made is None:
                 raise BatchError("unresolved_reference", rule)

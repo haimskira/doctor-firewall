@@ -52,6 +52,12 @@ def identity(ref: dict[str, Any]) -> str:
     return f"l:{ref.get('literal')}"
 
 
+def is_temp(value: str) -> bool:
+    """A reference to an object or rule the batch creates: ``new:N``, or ``i<pos>/new:N``
+    once :func:`item_ops` scoped it to its item."""
+    return value.startswith("new:") or "/new:" in value
+
+
 def item_ops(plan: dict[str, Any], item: int) -> list[dict[str, Any]]:
     """A plan's operations as they run inside a batch: its temp ids (``new:1`` ...) are numbered
     per plan, so they get the item's prefix — two plans in one batch never share an object."""

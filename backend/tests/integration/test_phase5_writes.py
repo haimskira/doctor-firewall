@@ -21,7 +21,7 @@ from app.fmc.client import FmcSession, build_ssl_context
 from app.models.audit import AuditRecord
 from app.models.enforce import Batch, DeployWatch
 from app.models.fmc import FmcConnection
-from app.models.recommendations import behavior
+from app.models.recommendations import Recommendation, behavior
 from app.runtime import get_audit, get_redis, get_secretbox
 from app.workers import jobs
 from tests.integration.conftest import login, make_user
@@ -396,6 +396,33 @@ def test_deploy_watch_alerts_when_blocks_behind_a_change_fire(
     assert flow.appr.post(url, headers=flow.ah).json() == {"status": "dismissed"}
     assert flow.appr.post(url, headers=flow.ah).status_code == 409
     assert client.get("/api/jobs").json()["alerts"] == alerts_before
+    flow.close()
+
+
+def test_a_rule_created_after_another_new_rule_is_placed(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """A split into three tiers creates the second new rule after the first one (its anchor is
+    a temp id). Found by review: once temps were scoped per item ("i<pos>/new:1") the executor
+    no longer resolved such an anchor and every three-tier split rolled back."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    with get_sessionmaker().begin() as s:
+        rec = s.get(Recommendation, split["id"])
+        assert rec is not None
+        ops = list(rec.plan["ops"])
+        first = next(op for op in ops if op["op"] == "create_rule")
+        # A second copy right after the first new rule (same match: traffic unchanged).
+        ops.append(
+            {**first, "temp": "new:9", "insert_after": first["temp"], "name": first["name"] + "_2"}
+        )
+        rec.plan = {**rec.plan, "ops": ops}
+    _cs_id, batch_id = flow.approved_batch([split])
+    result = _run(batch_id)
+    assert result["ok"] is True, result
+    rules = list(flow.rules(split["policy_fmc_id"]))
+    at = rules.index("MIXED_TIERS_SQL")
+    assert rules[at + 1 : at + 3] == [first["name"], first["name"] + "_2"]
     flow.close()
 
 
