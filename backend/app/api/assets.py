@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.responses import JSONResponse, Response
-from pydantic import AfterValidator, BaseModel, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,15 @@ CSV_ASSET_COLUMNS = ("asset", "asset_kind")
 MAX_CSV_BYTES = 1_000_000
 MAX_CSV_ROWS = 20_000
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_BOM = "\ufeff"
+_REPLACEMENT_CHAR = "\ufffd"  # what a non-UTF-8 file (Excel's windows-1255) decodes into
+
+
+def _not_null(value: object) -> object:
+    """PATCH: a field that cannot be empty in the database may be left out, never null."""
+    if value is None:
+        raise ValueError("may be omitted but not null")
+    return value
 
 
 def _canonical_network(value: str) -> str:
@@ -73,6 +82,11 @@ class AssetPatch(StrictModel):
     ports: Annotated[str, Field(max_length=256)] | None = None
     notes: Annotated[str, Field(max_length=512)] | None = None
     confirmed: bool | None = None
+
+    # group_id and user_type are nullable (stand-alone / no user population); the rest are not.
+    _required = field_validator(
+        "system", "tier", "system_type", "ports", "notes", "confirmed", mode="after"
+    )(_not_null)
 
 
 class AssetOut(BaseModel):
@@ -110,6 +124,11 @@ class GroupPatch(StrictModel):
     user_type: UserType | None = None
     owner: Annotated[str, Field(max_length=128)] | None = None
     description: Annotated[str, Field(max_length=512)] | None = None
+
+    # user_type is nullable; the rest are not.
+    _required = field_validator("name", "kind", "tier", "owner", "description", mode="after")(
+        _not_null
+    )
 
 
 class ComponentIn(StrictModel):
@@ -287,21 +306,34 @@ def import_assets(
     body: CsvImport, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
 ) -> ImportResult | JSONResponse:
     """Upsert assets from CSV (header row required). All-or-nothing: any invalid row
-    rejects the whole file with per-line errors."""
-    reader = csv.DictReader(io.StringIO(body.csv))
-    if reader.fieldnames is None or "network" not in reader.fieldnames:
+    rejects the whole file with per-line errors.
+
+    Accepts what Excel saves: a UTF-8 byte-order mark, ';' as the separator (locales with a
+    decimal comma) and header names in any case. A file that was not UTF-8 (Excel's
+    windows-1255 for Hebrew) is refused rather than imported garbled."""
+    text = body.csv.removeprefix(_BOM)
+    if _REPLACEMENT_CHAR in text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "csv_encoding")
+    try:
+        parsed = _parse_csv(text)
+    except csv.Error as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "csv_malformed") from exc
+    if parsed is None or "network" not in parsed[0]:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "csv_header_missing")
-    unknown = set(reader.fieldnames) - set(CSV_COLUMNS) - set(CSV_ASSET_COLUMNS)
+    header, records = parsed
+    unknown = set(header) - {""} - set(CSV_COLUMNS) - set(CSV_ASSET_COLUMNS)
     if unknown:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "csv_unknown_columns")
     rows: dict[str, AssetIn] = {}
     # The asset (name, kind) each network belongs to, when the CSV says so.
     owners: dict[str, tuple[str, str]] = {}
     errors: list[dict[str, object]] = []
-    for line, raw in enumerate(reader, start=2):
+    for line, cells in enumerate(records, start=2):
         if line > MAX_CSV_ROWS + 1:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "csv_too_many_rows")
-        cleaned = {k: (v or "").strip() for k, v in raw.items() if k}
+        if not any(v.strip() for v in cells):
+            continue  # an empty line (Excel adds them at the end)
+        cleaned = {k: _unescape_cell(v.strip()) for k, v in zip(header, cells, strict=False) if k}
         asset_name = cleaned.pop("asset", "")
         asset_kind = cleaned.pop("asset_kind", "") or "system"
         if len(asset_name) > 128 or asset_kind not in ASSET_KINDS:
@@ -368,9 +400,33 @@ def import_assets(
     return ImportResult(created=created, updated=updated)
 
 
+def _parse_csv(text: str) -> tuple[list[str], list[list[str]]] | None:
+    """Header (stripped, lower case) and data rows; None when there is no header row.
+    The separator is ',' or ';' (sniffed from the header line; ',' when unsure)."""
+    first_line = text.split("\n", 1)[0]
+    delimiter = ","
+    if ";" in first_line:
+        try:
+            delimiter = csv.Sniffer().sniff(first_line, delimiters=",;").delimiter
+        except csv.Error:
+            delimiter = ","
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter, strict=True)
+    header = next(reader, None)
+    if header is None:
+        return None
+    return [h.strip().lower() for h in header], list(reader)
+
+
 def _safe_cell(value: str) -> str:
     """Neutralise spreadsheet formula injection in exported cells."""
     return "'" + value if value.startswith(_FORMULA_PREFIXES) else value
+
+
+def _unescape_cell(value: str) -> str:
+    """Undo :func:`_safe_cell` on import, so an exported file imports back unchanged."""
+    if value.startswith("'") and value[1:].startswith(_FORMULA_PREFIXES):
+        return value[1:]
+    return value
 
 
 @router.get("/assets/export")
@@ -402,7 +458,8 @@ def export_assets(db: DbDep, _: ReaderDep) -> Response:
             ]
         )
     return Response(
-        out.getvalue(),
+        # The byte-order mark makes Excel read the file as UTF-8 (Hebrew names stay legible).
+        _BOM + out.getvalue(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="assets.csv"'},
     )

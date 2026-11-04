@@ -11,7 +11,14 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.connectivity import RISK_ORDER
-from app.api.scope import PolicyQuery, ace_delta_in, enforced, ensure_scoped, in_policy
+from app.api.scope import (
+    PolicyQuery,
+    ace_delta_in,
+    enforced,
+    ensure_scoped,
+    in_policy,
+    rule_policies,
+)
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
@@ -99,7 +106,10 @@ def dashboard(snapshot_id: int, db: DbDep, _: ReaderDep, policy: PolicyQuery = N
             db.scalar(select(func.count()).select_from(model).where(model.snapshot_id == sid)) or 0
         )
 
-    rule_scope = [Rule.policy_fmc_id == policy] if policy is not None else []
+    # The policy's world: its own rules and those of the policies it links (prefilter ...).
+    rule_scope = (
+        [Rule.policy_fmc_id.in_(rule_policies(db, sid, policy))] if policy is not None else []
+    )
     rules_in_scope = select(Rule.id).where(Rule.snapshot_id == sid, *rule_scope)
     governing = set(
         db.scalars(

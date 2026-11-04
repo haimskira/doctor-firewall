@@ -14,7 +14,7 @@ from sqlalchemy import BigInteger, ColumnElement, case, func, select, true
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.analysis import policy_scope
-from app.models.inventory import ClusterPolicy, Snapshot
+from app.models.inventory import ClusterPolicy, Policy, Snapshot
 from app.models.recommendations import Recommendation
 
 PolicyQuery = Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
@@ -64,3 +64,14 @@ def ensure_scoped(db: Session, snapshot_id: int, policy: str | None) -> None:
         return
     policy_scope.assign(db, snapshot_id)
     db.commit()
+
+
+def rule_policies(db: Session, snapshot_id: int, policy: str) -> list[str]:
+    """The policies whose rules belong to one access policy's world: the policy itself and the
+    policies it links (prefilter, decryption ...), as :class:`policy_scope.PolicyIndex` maps
+    them for findings."""
+    links = db.scalar(
+        select(Policy.links).where(Policy.snapshot_id == snapshot_id, Policy.fmc_id == policy)
+    )
+    linked = {str(link["id"]) for link in links or [] if link.get("id")}
+    return sorted(linked | {policy})

@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.serializers import JSONSerializer
@@ -78,6 +79,11 @@ def _reconcile(db: Session, runs: list[JobRun]) -> None:
                 status = str(getattr(raw, "value", raw) or "")
             except NoSuchJobError:
                 status = "missing"
+            except RedisError:
+                # Redis unreachable: the queue's state is unknown, so nothing is reconciled
+                # now (the list itself comes from the database and is still shown).
+                log.warning("job reconcile skipped: redis unavailable")
+                break
             if status in LOST_STATES or status == "missing":
                 lost = "worker_lost"
             elif status == "finished":

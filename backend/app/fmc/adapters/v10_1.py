@@ -12,6 +12,8 @@ must be re-validated against sanitised production payloads before go-live
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -69,6 +71,7 @@ class LiteralModel(_M):
     protocol: Annotated[str, Field(max_length=16)] | None = None
     url: ShortText | None = None
     icmpType: str | int | None = None  # noqa: N815 - FMC field name
+    code: str | int | None = None
 
 
 class ObjList(_M):
@@ -79,12 +82,22 @@ class ObjList(_M):
 class AppList(_M):
     applications: list[RefModel] = Field(default_factory=list, max_length=10_000)
     applicationFilters: list[RefModel] = Field(default_factory=list, max_length=10_000)  # noqa: N815
+    inlineApplicationFilters: list[dict[str, Any]] = Field(  # noqa: N815
+        default_factory=list, max_length=10_000
+    )
 
 
 class UrlList(ObjList):
     urlCategoriesWithReputation: list[dict[str, Any]] = Field(  # noqa: N815
         default_factory=list, max_length=10_000
     )
+
+
+class VlanList(_M):
+    """VLAN tags: objects, and literals (``{"startTag": 10, "endTag": 20}``) kept raw."""
+
+    objects: list[RefModel] = Field(default_factory=list, max_length=10_000)
+    literals: list[dict[str, Any]] = Field(default_factory=list, max_length=10_000)
 
 
 class RuleMetadata(_M):
@@ -124,7 +137,8 @@ class RuleModel(_M):
     sourceDynamicObjects: ObjList | None = None  # noqa: N815
     destinationDynamicObjects: ObjList | None = None  # noqa: N815
     users: ObjList | None = None
-    vlanTags: ObjList | None = None  # noqa: N815
+    vlanTags: VlanList | None = None  # noqa: N815
+    timeRangeObjects: list[RefModel] = Field(default_factory=list, max_length=1_000)  # noqa: N815
     ipsPolicy: RefModel | None = None  # noqa: N815
     filePolicy: RefModel | None = None  # noqa: N815
     variableSet: RefModel | None = None  # noqa: N815
@@ -337,12 +351,21 @@ def _network_literal(lit: LiteralModel) -> Ref:
     return Ref(literal=value, literal_kind="range" if t == "range" else "address")
 
 
+def _icmp_part(value: str | int | None) -> str:
+    """An ICMP type or code: the number as given (0 is echo-reply, not "any"); ``any`` for
+    none, blank or "Any" (the FMC spells it both ways)."""
+    if value is None:
+        return "any"
+    text = str(value).strip()
+    return "any" if not text or text.lower() == "any" else text
+
+
 def _port_literal(lit: LiteralModel) -> Ref:
     if lit.icmpType is not None:
-        return Ref(
-            literal=f"{normalize.protocol(lit.protocol or 'ICMP')}/{lit.icmpType}",
-            literal_kind="icmp",
-        )
+        value = f"{normalize.protocol(lit.protocol or 'ICMP')}/{_icmp_part(lit.icmpType)}"
+        if lit.code is not None and str(lit.code).strip():
+            value += f"/{_icmp_part(lit.code)}"
+        return Ref(literal=value, literal_kind="icmp")
     return Ref(literal=normalize.port_spec(lit.protocol, lit.port), literal_kind="port")
 
 
@@ -413,9 +436,10 @@ def map_object(resource: str, item: Any) -> ObjectRecord:
             case ObjectKind.PORT:
                 value = normalize.port_spec(m.protocol, m.port)
             case ObjectKind.ICMP:
-                value = f"{'ICMPV6' if 'v6' in m.type.lower() else 'ICMP'}/{m.icmpType or 'any'}"
-                if m.code is not None:
-                    value += f"/{m.code}"
+                family = "ICMPV6" if "v6" in m.type.lower() else "ICMP"
+                value = f"{family}/{_icmp_part(m.icmpType)}"
+                if m.code is not None and str(m.code).strip():
+                    value += f"/{_icmp_part(m.code)}"
             case ObjectKind.SGT:
                 value = str(m.tag) if m.tag is not None else None
             case ObjectKind.DYNAMIC:
@@ -474,7 +498,7 @@ def map_rule(item: Any, position: int) -> RuleRecord:
         add(RuleField.SRC_DYN, _refs(m.sourceDynamicObjects, None))
         add(RuleField.DST_DYN, _refs(m.destinationDynamicObjects, None))
         add(RuleField.USER, _refs(m.users, None))
-        add(RuleField.VLAN, _refs(m.vlanTags, None))
+        add(RuleField.VLAN, [_ref(o) for o in m.vlanTags.objects] if m.vlanTags else [])
     except ValueError as exc:
         raise AdapterError(f"accessrule {m.id}: invalid literal") from exc
     if m.applications is not None:
@@ -485,6 +509,7 @@ def map_rule(item: Any, position: int) -> RuleRecord:
         attrs["description"] = normalize.text(m.description)
     if m.urls is not None and m.urls.urlCategoriesWithReputation:
         attrs["url_categories"] = len(m.urls.urlCategoriesWithReputation)
+    _record_conditions(attrs, m, item)
     if m.metadata.timestamp:
         changed = datetime.fromtimestamp(m.metadata.timestamp / 1000, UTC)
         attrs["modified_at"] = changed.isoformat()
@@ -695,9 +720,10 @@ class GenericRuleModel(_M):
     applications: AppList | None = None
     urls: UrlList | None = None
     users: ObjList | None = None
-    vlanTags: ObjList | None = None  # noqa: N815
+    vlanTags: VlanList | None = None  # noqa: N815
     sourceSecurityGroupTags: ObjList | None = None  # noqa: N815
     destinationSecurityGroupTags: ObjList | None = None  # noqa: N815
+    timeRangeObjects: list[RefModel] = Field(default_factory=list, max_length=1_000)  # noqa: N815
     logBegin: bool = False  # noqa: N815
     logEnd: bool = False  # noqa: N815
     sendEventsToFMC: bool = False  # noqa: N815
@@ -707,6 +733,119 @@ class GenericRuleModel(_M):
 class PrefilterRuleModel(GenericRuleModel):
     action: Literal["ANALYZE", "BLOCK", "FASTPATH"]
     ruleType: Literal["PREFILTER", "TUNNEL"] = "PREFILTER"  # noqa: N815
+    encapsulationPorts: list[Annotated[str, Field(max_length=32)]] = Field(  # noqa: N815
+        default_factory=list, max_length=64
+    )
+    bidirectional: bool = False
+
+
+# Match conditions the analysis does not model. Their presence is recorded on the rule (see
+# ``app.fmc.records.CONDITION_DIMENSIONS``) so it is never treated as matching "any" on them.
+_DECRYPTION_CONDITION_KEYS = (
+    "certificates",
+    "certificateStatus",
+    "certificateStatuses",
+    "distinguishedNames",
+    "subjectDistinguishedNames",
+    "issuerDistinguishedNames",
+    "cipherSuites",
+    "cipherSuiteList",
+    "supportedVersions",
+    "tlsVersions",
+    "sslVersions",
+    "versions",
+    "certificateValidity",
+)
+_OTHER_CONDITION_KEYS = ("originalClientNetworks",)
+
+
+def _without_links(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _without_links(v) for k, v in value.items() if k != "links"}
+    if isinstance(value, list):
+        return [_without_links(v) for v in value]
+    return value
+
+
+def _digest(value: Any) -> str:
+    """Stable short digest of a raw condition (equal conditions -> equal digest)."""
+    text = json.dumps(_without_links(value), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _present(value: Any) -> bool:
+    """A raw condition value that restricts the match (not empty, false or "any")."""
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "any")
+    if isinstance(value, dict):
+        return any(_present(v) for k, v in value.items() if k not in ("type", "links"))
+    if isinstance(value, list):
+        return any(_present(v) for v in value)
+    return True
+
+
+def _vlan_literal(entry: dict[str, Any]) -> str:
+    start, end = entry.get("startTag"), entry.get("endTag")
+    if end in (None, ""):
+        end = start
+    if str(start).strip().isdigit() and str(end).strip().isdigit():
+        return f"{int(str(start))}-{int(str(end))}"
+    return _digest(entry)
+
+
+def _record_conditions(
+    attrs: dict[str, Any],
+    m: RuleModel | GenericRuleModel,
+    item: Any,
+    *,
+    decryption: bool = False,
+) -> None:
+    """Record the rule's unmodelled match conditions in ``attrs``.
+
+    ``attrs["unmodelled"]``: sorted condition names; ``attrs["conditions"]``: per match
+    dimension, opaque tokens standing for them (equal only when the conditions are equal).
+    """
+    conditions: dict[str, set[str]] = {}
+    names: set[str] = set()
+
+    def add(name: str, dim: str, token: str) -> None:
+        names.add(name)
+        conditions.setdefault(dim, set()).add(token)
+
+    if m.urls is not None:
+        for entry in m.urls.urlCategoriesWithReputation:
+            add("url_categories", "url", f"urlcat:{_digest(entry)}")
+    if m.applications is not None:
+        for entry in m.applications.inlineApplicationFilters:
+            add("inline_application_filters", "app", f"appfilter:{_digest(entry)}")
+    if m.vlanTags is not None:
+        for entry in m.vlanTags.literals:
+            add("vlan_literals", "vlan", f"vlan:{_vlan_literal(entry)}")
+    if m.timeRangeObjects:
+        add("time_range", "time", "time:" + ",".join(sorted({t.id for t in m.timeRangeObjects})))
+    if isinstance(m, PrefilterRuleModel):
+        if m.ruleType == "TUNNEL" or m.encapsulationPorts:
+            tunnel = {
+                "type": m.ruleType,
+                "encapsulation": sorted({p.upper() for p in m.encapsulationPorts}),
+                "bidirectional": m.bidirectional,
+            }
+            add("tunnel", "tunnel", f"tunnel:{_digest(tunnel)}")
+        if m.bidirectional:
+            names.add("bidirectional")  # matches the reverse direction too: wider, not narrower
+    raw = item if isinstance(item, dict) else {}
+    keys = _OTHER_CONDITION_KEYS + (_DECRYPTION_CONDITION_KEYS if decryption else ())
+    extra = {k: raw[k] for k in keys if _present(raw.get(k))}
+    for key in sorted(extra):
+        names.add("tls_conditions" if key in _DECRYPTION_CONDITION_KEYS else key)
+    if extra:
+        # Several conditions together narrow the match (AND): one token for all of them.
+        conditions.setdefault("other", set()).add(f"other:{_digest(extra)}")
+    if names:
+        attrs["unmodelled"] = sorted(names)
+        attrs["conditions"] = {dim: sorted(tokens) for dim, tokens in sorted(conditions.items())}
 
 
 def _generic_refs(m: GenericRuleModel) -> list[tuple[RuleField, Ref]]:
@@ -723,7 +862,7 @@ def _generic_refs(m: GenericRuleModel) -> list[tuple[RuleField, Ref]]:
     add(RuleField.DST_PORT, _refs(m.destinationPorts, _port_literal))
     add(RuleField.URL, _refs(m.urls, _url_literal))
     add(RuleField.USER, _refs(m.users, None))
-    add(RuleField.VLAN, _refs(m.vlanTags, None))
+    add(RuleField.VLAN, [_ref(o) for o in m.vlanTags.objects] if m.vlanTags else [])
     add(RuleField.SRC_SGT, _refs(m.sourceSecurityGroupTags, None))
     add(RuleField.DST_SGT, _refs(m.destinationSecurityGroupTags, None))
     if m.applications is not None:
@@ -741,6 +880,9 @@ def _generic_rule(model: type[GenericRuleModel], what: str, item: Any, position:
     attrs: dict[str, Any] = {}
     if m.description and m.description.strip():
         attrs["description"] = normalize.text(m.description)
+    if m.urls is not None and m.urls.urlCategoriesWithReputation:
+        attrs["url_categories"] = len(m.urls.urlCategoriesWithReputation)
+    _record_conditions(attrs, m, item, decryption=what == "decryptionpolicyrule")
     return RuleRecord(
         fmc_id=m.id,
         rule_index=m.metadata.ruleIndex or position,

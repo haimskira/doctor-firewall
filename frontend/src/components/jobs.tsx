@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { JobRun, JobsList } from '../api/types';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
+import { Ltr } from './common';
 
 /* Background jobs, live: a provider polls /api/jobs — every 2 s while something is queued or
    running, every 15 s otherwise, slower while the tab is hidden — and raises a notice when a job
@@ -121,10 +122,36 @@ export function jobLink(job: JobRun): string {
   if (job.kind === 'collect') return '/snapshots';
   if (job.kind === 'analyze') return job.snapshot_id === null ? '/findings' : `/recommendations?snapshot=${String(job.snapshot_id)}`;
   if (job.kind === 'audit_verify') return '/audit';
+  if (job.kind === 'revert') return '/history';
   return job.changeset_id === null ? '/deploy' : `/deploy?changeset=${String(job.changeset_id)}`;
 }
 
-export function useJobText(): { kind: (job: JobRun) => string; step: (job: JobRun) => string; error: (job: JobRun) => string } {
+/** Split a stored error ("code: detail", or "SomeError: code") into its code and detail. */
+export function splitError(raw: string): { code: string; detail: string } {
+  let parts = raw.split(': ');
+  // A Python exception name in front of the code ("LookupError: changeset_without_snapshot").
+  if (parts.length > 1 && /^[A-Z]\w*(Error|Exception)$/.test(parts[0] ?? '')) parts = parts.slice(1);
+  const [code = '', ...rest] = parts;
+  return { code: code.trim(), detail: rest.join(': ').replace(/^drift: /, '') };
+}
+
+/** Human text for a batch / revert error ("code: detail"): dep.err.<code>, else error.<code>, else as is. */
+export function useBatchError(): (raw: string) => string {
+  const { t } = useI18n();
+  return useCallback(
+    (raw: string) => {
+      const { code, detail } = splitError(raw);
+      const key = `dep.err.${code}`;
+      if (isMessageKey(key)) return t(key, { detail });
+      const plain = `error.${code}`;
+      if (isMessageKey(plain)) return t(plain);
+      return t('dep.error', { error: raw });
+    },
+    [t],
+  );
+}
+
+export function useJobText(): { kind: (job: JobRun) => string; step: (job: JobRun) => string; error: (job: JobRun) => ReactNode } {
   const { t } = useI18n();
   return {
     kind: (job) => {
@@ -141,8 +168,21 @@ export function useJobText(): { kind: (job: JobRun) => string; step: (job: JobRu
     },
     error: (job) => {
       if (job.error === null) return '';
-      const key = `jobs.error.${job.error}`;
-      return isMessageKey(key) ? t(key) : job.error;
+      const { code, detail } = splitError(job.error);
+      const own = `jobs.error.${code}`;
+      if (isMessageKey(own)) return t(own);
+      const batch = `dep.err.${code}`;
+      if (isMessageKey(batch)) return t(batch, { detail });
+      const plain = `error.${code}`;
+      if (isMessageKey(plain)) return t(plain);
+      return (
+        <>
+          {t('jobs.failed')}{' '}
+          <span className="muted">
+            (<Ltr>{code === '' ? job.error : code}</Ltr>)
+          </span>
+        </>
+      );
     },
   };
 }

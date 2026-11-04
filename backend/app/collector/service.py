@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -57,6 +59,15 @@ class CollectionError(FmcError):
 
 class ConfigChangedError(CollectionError):
     code = "config_changed"
+
+
+class SupersededError(CollectionError):
+    """This run no longer owns the snapshot (it was declared stale and restarted)."""
+
+    code = "superseded"
+
+
+HEARTBEAT_SECONDS = 30.0  # at most one heartbeat write per this many seconds
 
 
 MAX_CLI_OUTPUT = 20_000_000  # characters; a larger answer is not parsed
@@ -105,9 +116,13 @@ class Collector:
         adapter: FmcAdapter,
         sessions: sessionmaker[Session],
         collect_runtime_routes: bool = True,
+        run_started_at: datetime | None = None,
     ) -> None:
         self.snapshot_id = snapshot_id
         self.collect_runtime_routes = collect_runtime_routes
+        # The start time this run wrote on the snapshot: the run owns it while it matches.
+        self.run_started_at = run_started_at
+        self._last_beat = time.monotonic()
         self.fmc = fmc
         self.adapter = adapter
         self.sessions = sessions
@@ -116,6 +131,26 @@ class Collector:
 
     def _path(self, suffix: str) -> str:
         return self.adapter.config_path(self.domain, suffix)
+
+    def heartbeat(self, *, force: bool = False) -> None:
+        """Tell the world this run is alive during network reads that store nothing for a
+        while (checkpointed pages beat through ``store.advance``). Raises
+        :class:`SupersededError` when the snapshot was declared stale and taken over."""
+        now = time.monotonic()
+        if not force and now - self._last_beat < HEARTBEAT_SECONDS:
+            return
+        self._last_beat = now
+        owned = Snapshot.status == "running"
+        if self.run_started_at is not None:
+            owned = owned & (Snapshot.started_at == self.run_started_at)
+        with self.sessions.begin() as session:
+            result = session.execute(
+                update(Snapshot)
+                .where(Snapshot.id == self.snapshot_id, owned)
+                .values(heartbeat_at=datetime.now(UTC))
+            )
+        if getattr(result, "rowcount", 1) == 0:
+            raise SupersededError(f"snapshot {self.snapshot_id} was taken over")
 
     # ------------------------------------------------------------ generic paging
 
@@ -166,10 +201,12 @@ class Collector:
         async for _, page in self.fmc.iter_pages(path, optional=optional):
             items.extend(page)
             self.stats.pages += 1
+            self.heartbeat()
         return items
 
     async def _total(self, path: str) -> int:
         raw = await self.fmc.get_json(path, {"offset": 0, "limit": 1})
+        self.heartbeat()
         paging = raw.get("paging") if isinstance(raw, dict) else None
         count = paging.get("count") if isinstance(paging, dict) else None
         if not isinstance(count, int) or count < 0:
@@ -250,6 +287,7 @@ class Collector:
                 )
             )
         for oid in ids:
+            self.heartbeat()
             path = self._path(f"/object/dynamicobjects/{oid}/mappings")
             try:
                 items = await self._fetch_all(path, optional=True)
@@ -494,6 +532,7 @@ class Collector:
         outcome: dict[str, Any] = {"status": "unavailable", "routes": 0}
         for member in cluster["members"]:
             result = await self._show_route(member["id"])
+            self.heartbeat()
             if isinstance(result, str):
                 outcome = {"status": result, "routes": 0, "device": member["name"]}
                 if result == "unsupported":

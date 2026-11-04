@@ -77,6 +77,17 @@ class AssetIndex:
                 top = max(top, e.hi)
                 reach.append(top)
             self._by_version[version] = (items, [e.lo for e in items], reach)
+        # Per IP version: the union of all assets as merged (touching joined) blocks, with
+        # their starts, for "is every address inside some asset" queries.
+        self._covered: dict[int, tuple[list[tuple[int, int]], list[int]]] = {}
+        for version in (4, 6):
+            merged: list[tuple[int, int]] = []
+            for e in self._by_version[version][0]:
+                if merged and e.lo <= merged[-1][1] + 1:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], e.hi))
+                else:
+                    merged.append((e.lo, e.hi))
+            self._covered[version] = (merged, [lo for lo, _ in merged])
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -102,18 +113,10 @@ class AssetIndex:
         if addresses.any:
             return False
         for version, intervals in ((4, addresses.v4), (6, addresses.v6)):
-            blocks = [(e.lo, e.hi) for e in self.entries if e.version == version]
+            blocks, starts = self._covered[version]
             for lo, hi in intervals:
-                cursor = lo
-                for b_lo, b_hi in sorted(blocks):
-                    if b_hi < cursor or b_lo > hi:
-                        continue
-                    if b_lo > cursor:
-                        return True
-                    cursor = b_hi + 1
-                    if cursor > hi:
-                        break
-                if cursor <= hi:
+                i = bisect_right(starts, lo) - 1
+                if i < 0 or blocks[i][1] < hi:
                     return True
         return False
 

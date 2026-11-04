@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { ChangeEvent, SyntheticEvent } from 'react';
 import { SortedTable } from '../components/sort';
 
-import { ApiError, api, errorCode } from '../api/client';
+import { ApiError, api, errorCode, notifyUnauthorized } from '../api/client';
 import { ASSET_KINDS, TIERS } from '../api/types';
 import type { Asset, AssetGroup, AssetKind, Tier } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
@@ -102,14 +102,27 @@ export function AssetsPage() {
   }
 
   async function exportCsv() {
-    const response = await fetch('/api/assets/export', { credentials: 'same-origin', cache: 'no-store' });
-    if (!response.ok) return;
-    const url = URL.createObjectURL(await response.blob());
+    let url: string;
+    try {
+      const response = await fetch('/api/assets/export', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) {
+        if (response.status === 401) notifyUnauthorized();
+        setMessage({ kind: 'error', text: tError(response.status === 401 ? 'not_authenticated' : response.status === 403 ? 'forbidden' : 'http_error') });
+        return;
+      }
+      url = URL.createObjectURL(await response.blob());
+    } catch {
+      setMessage({ kind: 'error', text: tError('network_error') });
+      return;
+    }
     const link = document.createElement('a');
     link.href = url;
     link.download = 'assets.csv';
     link.click();
-    URL.revokeObjectURL(url);
+    // Revoking at once can cancel the download in some browsers: let it start first.
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
   }
 
   return (

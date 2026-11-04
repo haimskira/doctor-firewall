@@ -287,6 +287,10 @@ async def check(
             return w.status if w is not None else "gone"
         b = db.get(Batch, w.batch_id)
         cs = db.get(Changeset, b.changeset_id) if b is not None else None
+        if b is not None and b.status == "running":
+            # Being reverted: it may still be put back "deployed" (nothing written). Wait.
+            w.next_check_at = now + timedelta(minutes=settings.deploy_watch_minutes)
+            return w.status
         if b is None or cs is None or b.status != "deployed" or cs.snapshot_id is None:
             w.status, w.next_check_at = "ended", None
             return w.status

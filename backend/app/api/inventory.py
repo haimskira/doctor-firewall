@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis import routing
 from app.analysis.expand import ACE_FIELDS
-from app.api.scope import ensure_scoped, in_policy
+from app.api.scope import ensure_scoped, in_policy, rule_policies
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -598,6 +598,7 @@ def worst_rules(
 ) -> list[ScoredRule]:
     """The optimisation queue: lowest-scoring permit rules first, with their reasons."""
     _snapshot(db, snapshot_id)
+    ensure_scoped(db, snapshot_id, policy_id)
     query = (
         select(RuleScore, Rule, Policy.name)
         .join(Rule, Rule.id == RuleScore.rule_id)
@@ -606,8 +607,8 @@ def worst_rules(
         )
         .where(RuleScore.snapshot_id == snapshot_id, RuleScore.score.is_not(None))
     )
-    if policy_id:
-        query = query.where(Rule.policy_fmc_id == policy_id)
+    if policy_id:  # the policy's world: its rules and those of the policies it links
+        query = query.where(Rule.policy_fmc_id.in_(rule_policies(db, snapshot_id, policy_id)))
     columns: SortColumns = {
         "score": RuleScore.score,
         "ace": RuleScore.ace_count,

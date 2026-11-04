@@ -307,10 +307,15 @@ class SslAdvisor:
             key: _Node(key[0], key[1], AddressSet.build(values))
             for key, values in sorted(networks.items())
         }
-        self.exposed: dict[tuple[str, str], _Node] = {}
+        # Access policy -> its exposed (tier, system) nodes: each access policy is decrypted by
+        # the decryption policy it links, never by another one.
+        self.exposed: dict[str, dict[tuple[str, str], _Node]] = {}
+        self.access_policies: dict[str, Policy] = {}
         self.decryption: list[tuple[Policy, list[RuleInfo]]] = []
 
     def access(self, policy: Policy, rules: list[RuleInfo]) -> None:
+        self.access_policies[policy.fmc_id] = policy
+        exposed_here = self.exposed.setdefault(policy.fmc_id, {})
         for info in rules:
             r = info.rule
             if not (r.enabled and info.permit) or info.score is None:
@@ -330,7 +335,9 @@ class SslAdvisor:
                 continue
             for key, node in self.nodes.items():
                 if node.tier in ("GOLD", "SILVER") and space.dst_net.intersects(node.addresses):
-                    exposed = self.exposed.setdefault(key, node)
+                    exposed = exposed_here.setdefault(
+                        key, _Node(node.tier, node.system, node.addresses)
+                    )
                     if len(exposed.rules) < SAMPLE:
                         exposed.rules.append(
                             {
@@ -368,6 +375,8 @@ class SslAdvisor:
                 continue
             dst = build_space(info.leaves).dst_net
             if r.action == "DO_NOT_DECRYPT":
+                if info.unmodelled:
+                    continue  # its other conditions may leave part of the traffic decrypted
                 exempt |= {n.system for n in core if dst.covers(n.addresses)}
             elif r.action in DECRYPT_ACTIONS:
                 hit = [n for n in core if n.system not in exempt and dst.intersects(n.addresses)]
@@ -418,6 +427,8 @@ class SslAdvisor:
             r = info.rule
             if not r.enabled:
                 continue
+            if info.unmodelled:
+                continue  # conditions the analysis does not model: proves nothing either way
             dst = build_space(info.leaves).dst_net
             if r.action == "DO_NOT_DECRYPT" and dst.covers(node.addresses):
                 return False
@@ -425,18 +436,53 @@ class SslAdvisor:
                 return True
         return False
 
+    @staticmethod
+    def _merge(into: dict[tuple[str, str], _Node], nodes: dict[tuple[str, str], _Node]) -> None:
+        for key, node in nodes.items():
+            mine = into.setdefault(key, _Node(node.tier, node.system, node.addresses))
+            mine.rules.extend(node.rules[: max(0, SAMPLE - len(mine.rules))])
+
+    def _targets(self) -> list[tuple[Policy | None, list[RuleInfo], list[_Node]]]:
+        """(decryption policy or None, its rules, the exposure it is responsible for).
+
+        An access policy's exposure belongs to the decryption policies it links; the exposure
+        of access policies linking none is reported once, without a policy. When no access
+        policy links any decryption policy (the FMC did not report the setting), every
+        decryption policy is checked against all the exposure, as nothing better is known."""
+        decryption = {p.fmc_id: (p, rules) for p, rules in self.decryption}
+        per_target: dict[str | None, dict[tuple[str, str], _Node]] = {}
+        targets: list[str | None]
+        any_link = False
+        for pid, nodes in self.exposed.items():
+            policy = self.access_policies[pid]
+            linked = sorted(
+                {str(link["id"]) for link in policy.links or [] if link.get("id")} & set(decryption)
+            )
+            any_link = any_link or bool(linked)
+            targets = list(linked) if linked else [None]
+            for target in targets:
+                self._merge(per_target.setdefault(target, {}), nodes)
+        if not any_link:
+            everything: dict[tuple[str, str], _Node] = {}
+            for nodes in self.exposed.values():
+                self._merge(everything, nodes)
+            if not decryption:
+                return [(None, [], list(everything.values()))]
+            return [(p, rules, list(everything.values())) for p, rules in self.decryption]
+        out: list[tuple[Policy | None, list[RuleInfo], list[_Node]]] = []
+        for target, nodes in per_target.items():
+            if target is None:
+                out.append((None, [], list(nodes.values())))
+            else:
+                policy, rules = decryption[target]
+                out.append((policy, rules, list(nodes.values())))
+        return sorted(out, key=lambda t: t[0].name if t[0] is not None else "")
+
     def _decrypt_inbound(self) -> list[Draft]:
         out: list[Draft] = []
-        targets: list[tuple[Policy | None, list[RuleInfo]]] = (
-            [(p, rules) for p, rules in self.decryption] if self.decryption else [(None, [])]
-        )
-        for policy, rules in targets:
+        for policy, rules, exposed in self._targets():
             for tier in ("GOLD", "SILVER"):
-                missing = [
-                    n
-                    for n in self.exposed.values()
-                    if n.tier == tier and not self._covered(rules, n)
-                ]
+                missing = [n for n in exposed if n.tier == tier and not self._covered(rules, n)]
                 if missing:
                     out.append(self._inbound_draft(policy, tier, missing))
         return out

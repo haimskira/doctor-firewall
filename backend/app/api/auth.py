@@ -163,11 +163,19 @@ def change_password(
     store: StoreDep,
     audit: AuditDep,
     principal: SelfDep,
+    throttle: Annotated[LoginThrottle, Depends(get_login_throttle)],
 ) -> MeResponse:
     user = db.get(User, principal.user_id)
     if user is None or user.auth_provider != "local":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "not_a_local_account")
+    ip = client_ip(request)
+    # Guesses at the current password count as failed sign-ins of this user: a stolen session
+    # must not become an unthrottled password oracle.
+    if throttle.is_locked(user.username, ip):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too_many_attempts")
     if not verify_password(user.password_hash, body.current_password):
+        failures = throttle.register_failure(user.username, ip)
+        locked = failures >= throttle.max_failures
         audit.record(
             db,
             AuditEvent(
@@ -175,10 +183,15 @@ def change_password(
                 actor_id=user.id,
                 action="auth.change_password",
                 outcome="failure",
-                source_ip=client_ip(request),
+                source_ip=ip,
+                details={"reason": "locked_out"} if locked else {},
             ),
         )
         db.commit()
+        if locked:
+            # Too many wrong guesses: end every session of this user (this one included).
+            store.delete_all_for_user(user.id)
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too_many_attempts")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid_current_password")
     if body.new_password == body.current_password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "password_unchanged")
@@ -201,6 +214,7 @@ def change_password(
         ),
     )
     db.commit()
+    throttle.reset(user.username)
 
     # Invalidate every other session of this user, then continue on a fresh one.
     store.delete_all_for_user(user.id)

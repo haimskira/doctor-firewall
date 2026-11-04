@@ -21,8 +21,8 @@ from app.collector.runner import SnapshotBusyError, request_collection, run_coll
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
 from app.enforce import watch
-from app.enforce.batch_proof import prove_changeset
-from app.enforce.executor import execute_batch, redis_lock, resume_rollback
+from app.enforce.batch_proof import prove_changeset, record_proof_error
+from app.enforce.executor import execute_batch, job_timeout_seconds, redis_lock, resume_rollback
 from app.enforce.revert import revert_batch
 from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
@@ -222,7 +222,7 @@ def enqueue_batch(batch_id: int, requested_by: str) -> int:
         kind="batch",
         title=title,
         requested_by=requested_by,
-        timeout=get_settings().deploy_timeout_seconds + 3600,
+        timeout=job_timeout_seconds(get_settings()),
         batch_id=batch_id,
         changeset_id=changeset_id,
     )
@@ -294,7 +294,21 @@ def prove_changeset_job(changeset_id: int, run_id: int | None = None) -> dict[st
     if run_id is None:
         run_id = progress.create_run(sessions, "proof", f"#{changeset_id}", "system")
     with progress.tracked(sessions, run_id):
-        outcome = prove_changeset(sessions, changeset_id)
+        try:
+            outcome = prove_changeset(sessions, changeset_id)
+        except Exception as exc:
+            # Never leave a batch without a proof and without a reason: it could never be
+            # approved, and nobody would know why (the UI offers to compute it again).
+            name = type(exc).__name__
+            if isinstance(exc, LookupError) and str(exc).strip("'") == "changeset_without_snapshot":
+                code = "changeset_without_snapshot"
+            elif "Timeout" in name:
+                code = "proof_timeout"
+            else:
+                code = "proof_error"
+            log.exception("traffic proof failed", extra={"changeset": changeset_id})
+            record_proof_error(sessions, changeset_id, code, name)
+            raise
     return {"ok": all(outcome.values()), "batches": {str(k): v for k, v in outcome.items()}}
 
 
@@ -307,7 +321,7 @@ def enqueue_revert(batch_ids: list[int], requested_by: str, title: str) -> int:
         batch_ids,
         requested_by,
         run_id=run_id,
-        job_timeout=(get_settings().deploy_timeout_seconds + 3600) * len(batch_ids),
+        job_timeout=job_timeout_seconds(get_settings()) * len(batch_ids),
     )
     progress.set_rq_job(sessions, run_id, str(job.id))
     return run_id
@@ -350,7 +364,7 @@ def enqueue_rollback(batch_id: int, requested_by: str) -> int:
         kind="rollback",
         title=title,
         requested_by=requested_by,
-        timeout=get_settings().deploy_timeout_seconds + 3600,
+        timeout=job_timeout_seconds(get_settings()),
         batch_id=batch_id,
         changeset_id=changeset_id,
     )

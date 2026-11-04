@@ -149,12 +149,9 @@ def test_last_admin_cannot_be_removed(client: TestClient) -> None:
         == 409
     )
     make_user("second", ["admin"])
-    assert (
-        client.patch(
-            f"/api/users/{admin_id}", json={"roles": ["viewer", "admin"]}, headers=h
-        ).status_code
-        == 200
-    )
+    # Even with a second admin, nobody changes his own roles (separation of duties).
+    own = client.patch(f"/api/users/{admin_id}", json={"roles": ["viewer", "admin"]}, headers=h)
+    assert (own.status_code, own.json()["detail"]) == (403, "cannot_change_own_roles")
 
 
 def test_deactivation_kills_sessions(client: TestClient) -> None:

@@ -83,6 +83,16 @@ class RuleField(StrEnum):
     NAT_TRANS_DPORT = "nat_trans_dport"
 
 
+# Rule match conditions the analysis does not model as values (URL categories, inline
+# application filters, VLAN literals, time ranges, tunnel encapsulation, TLS conditions ...).
+# The adapter records them in ``RuleRecord.attrs``: ``"unmodelled"`` (sorted condition names)
+# and ``"conditions"`` ({dimension: opaque tokens}). Dimensions are rule fields (``url``,
+# ``app``, ``vlan``: the tokens join that field's values) or one of these extra ones.
+CONDITION_DIMENSIONS = ("time", "tunnel", "other")
+# Conditions that make a rule match *more* than its modelled fields (e.g. both directions).
+WIDENING_CONDITIONS = frozenset({"bidirectional"})
+
+
 @dataclass(frozen=True)
 class Ref:
     """A reference to an FMC object (``object_id``) or an inline literal value."""

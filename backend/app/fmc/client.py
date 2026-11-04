@@ -19,6 +19,9 @@ Procedures implemented here (Cisco FMC REST API Quick Start Guide 10.1):
   when the connection drops or times out after it was sent (e.g. the FMC closed a kept-alive
   connection while a deploy is polled): reading twice changes nothing. Such failures of a
   write are never retried: the write might have landed.
+* A read answered with HTTP 502 / 503 / 504 (a gateway or the FMC itself briefly unavailable,
+  e.g. over a flaky VPN) is retried ``server_retries`` times with exponential backoff. A write
+  is never retried on a status code: it may have been applied behind the gateway.
 * Collections are read with ``offset``/``limit`` paging (max 1000 per page).
 
 TLS: the server certificate is always verified against the internal trust store,
@@ -77,6 +80,7 @@ def build_ssl_context(ca_bundle: Path) -> ssl.SSLContext:
 
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})  # repeating them changes nothing on the FMC
+RETRY_READ_STATUSES = frozenset({502, 503, 504})  # gateway / FMC briefly unavailable
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,7 @@ class ThrottlePolicy:
     backoff_base: float = 2.0
     max_backoff: float = 60.0
     connect_retries: int = 0  # brief network loss; the services pass settings.fmc_connect_retries
+    server_retries: int = 3  # a read answered 502 / 503 / 504 (never a write)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep, compare=False)
 
 
@@ -234,6 +239,7 @@ class FmcSession:
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         attempt = 0
         connect_attempt = 0
+        server_attempt = 0
         while True:
             await self._bucket.acquire()
             response: httpx.Response | None = None
@@ -257,6 +263,22 @@ class FmcSession:
                 log.warning("FMC connection failed; retrying", extra={"delay_s": delay})
                 await self._throttle.sleep(delay)
                 connect_attempt += 1
+                continue
+            if (
+                response.status_code in RETRY_READ_STATUSES
+                and method in SAFE_METHODS
+                and server_attempt < self._throttle.server_retries
+            ):
+                delay = min(
+                    self._throttle.backoff_base * float(2**server_attempt),
+                    self._throttle.max_backoff,
+                )
+                log.warning(
+                    "FMC read briefly unavailable; retrying",
+                    extra={"delay_s": delay, "path": path, "status": response.status_code},
+                )
+                await self._throttle.sleep(delay)
+                server_attempt += 1
                 continue
             if response.status_code != 429:
                 break

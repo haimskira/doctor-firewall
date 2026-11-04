@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { App } from './App';
+import { UNAUTHORIZED_EVENT, api } from './api/client';
 import type { Me, Permission, Role } from './api/types';
 import { AuthProvider } from './auth/AuthProvider';
 import { Ltr } from './components/common';
@@ -53,7 +54,8 @@ describe('App', () => {
       if (req.url === '/api/auth/me' && loggedIn) {
         return { status: 200, body: me(['viewer'], ['policy:read']) };
       }
-      return NO_SESSION;
+      // Signed in, other calls do not answer 401 (that would mean the session expired).
+      return loggedIn && !req.url.startsWith('/api/auth/') ? { status: 404, body: { detail: 'not_found' } } : NO_SESSION;
     });
     renderApp();
     const user = userEvent.setup();
@@ -193,6 +195,39 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Alice' }));
     await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(await screen.findByRole('button', { name: /Log In|כניסה/ })).toBeInTheDocument();
+  });
+});
+
+describe('session expiry', () => {
+  it('goes back to the sign-in page when a call answers 401', async () => {
+    let expired = false;
+    const calls = mockFetch((req) => {
+      if (req.url === '/api/auth/me') return { status: 200, body: me(['viewer'], ['policy:read']) };
+      if (expired) return NO_SESSION;
+      return NO_SNAPSHOTS(req.url) ?? { status: 404, body: { detail: 'not_found' } };
+    });
+    renderApp('/snapshots');
+    expect(await screen.findByRole('button', { name: 'Alice' })).toBeInTheDocument();
+    expired = true;
+    await act(async () => {
+      await api('/api/snapshots').catch(() => undefined);
+    });
+    expect(await screen.findByRole('button', { name: /Log In|כניסה/ })).toBeInTheDocument();
+    // The startup check is not repeated in a loop.
+    expect(calls.filter((c) => c.url === '/api/auth/me')).toHaveLength(1);
+  });
+
+  it('does not treat a failed sign-in as an expired session', async () => {
+    const seen: string[] = [];
+    const listener = () => seen.push('x');
+    window.addEventListener(UNAUTHORIZED_EVENT, listener);
+    mockFetch(() => NO_SESSION);
+    await api('/api/auth/login', 'POST', { username: 'a', password: 'b' }).catch(() => undefined);
+    await api('/api/auth/me').catch(() => undefined);
+    expect(seen).toHaveLength(0);
+    await api('/api/jobs').catch(() => undefined);
+    expect(seen).toHaveLength(1);
+    window.removeEventListener(UNAUTHORIZED_EVENT, listener);
   });
 });
 

@@ -46,14 +46,17 @@ from app.models.inventory import (
 
 DEPTH_LIMIT = 3
 MAX_LISTED = 50
+# Kinds whose stored value is the whole meaning of the object: two of them with one value are
+# interchangeable. Not FQDNs (DNS resolution settings are not collected), SGTs, dynamic
+# objects (their value is only "IP"), or anything else. Objects marked overridable may hold
+# another value on each device and are never duplicates either. The recommendations use the
+# same rule (``app.analysis.recommend``), so a finding and its fix always agree.
 VALUE_KINDS = (
     ObjectKind.HOST,
     ObjectKind.NETWORK,
     ObjectKind.RANGE,
-    ObjectKind.FQDN,
     ObjectKind.PORT,
     ObjectKind.ICMP,
-    ObjectKind.SGT,
     ObjectKind.URL,
 )
 
@@ -91,6 +94,7 @@ def duplicate_objects(session: Session, snapshot_id: int) -> list[FindingRow]:
             FwObject.stub.is_(False),
             FwObject.value.is_not(None),
             FwObject.kind.in_([k.value for k in VALUE_KINDS]),
+            FwObject.attrs["overridable"].astext.is_(None),  # only ever stored as true
         )
         .group_by(FwObject.kind, FwObject.value)
         .having(func.count() > 1)

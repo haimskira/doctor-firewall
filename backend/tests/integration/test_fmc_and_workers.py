@@ -117,6 +117,14 @@ def test_unreachable_and_update_delete(client: TestClient) -> None:
         json={"host": "fmc-does-not-exist", "port": 8443},
         headers=h,
     )
+    # The stored password is never sent to a new host: a host change carries one.
+    assert upd.status_code == 422
+    assert upd.json()["detail"] == "password_required"
+    upd = client.patch(
+        f"/api/fmc/connections/{conn['id']}",
+        json={"host": "fmc-does-not-exist", "port": 8443, "password": "Another-Pass-123"},
+        headers=h,
+    )
     assert upd.status_code == 200
     assert upd.json()["last_test_ok"] is None
     result = client.post(f"/api/fmc/connections/{conn['id']}/test", headers=h).json()

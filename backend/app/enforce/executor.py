@@ -43,18 +43,32 @@ from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
 from app.enforce.batch_proof import batch_plans, model_before
 from app.enforce.plan import identity, is_temp, item_ops
-from app.enforce.proof import SPACE_FIELDS, Model, RuleModel, apply_plan, compare
+from app.enforce.proof import (
+    SPACE_FIELDS,
+    Model,
+    RuleModel,
+    apply_plan,
+    compare,
+    condition_refs,
+)
+from app.enforce.staleness import stale_since
 from app.enforce.watch import open_watch
 from app.fmc.adapters import FmcAdapter, select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
-from app.fmc.errors import FmcError, FmcWriteRejectedError
+from app.fmc.errors import (
+    FmcError,
+    FmcProtocolError,
+    FmcRateLimitedError,
+    FmcUnavailableError,
+    FmcWriteRejectedError,
+)
 from app.fmc.probe import server_version
 from app.fmc.records import PolicyKind
 from app.fmc.records import Ref as RecordRef
 from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.fmc import FmcConnection
-from app.models.inventory import Cluster
+from app.models.inventory import Cluster, Snapshot
 from app.workers import progress
 
 log = logging.getLogger(__name__)
@@ -101,6 +115,11 @@ READ_ONLY_KEYS = ("id", "links", "metadata")
 DEPLOYED = frozenset({"deployed", "success", "succeeded", "completed"})
 ROLLBACK_ROUNDS = 3  # passes over the journal before a rollback is reported as incomplete
 DEPLOY_FAILED = frozenset({"failed", "error", "aborted", "cancelled"})
+# A deployment still running at its timeout is polled this much longer (share of the timeout)
+# before the batch gives up on it.
+DEPLOY_GRACE = 0.5
+# A result entry saying the batch is being reverted on request (set when a revert starts).
+REVERT_MARKER = "revert_started"
 
 
 class BatchError(Exception):
@@ -380,6 +399,7 @@ class Writer:
             body.update(members)
         else:
             raise BatchError("unsupported_object_kind", str(kind))
+        await self.absent(self.object_path(op["type"]), str(op["name"]), "object")
         step: dict[str, Any] = {
             "undo": "delete",
             "find": {"path": self.object_path(op["type"]), "name": op["name"]},
@@ -511,6 +531,7 @@ class Writer:
         body = self._clean(source)
         body["name"] = op["name"]
         self.apply_fields(body, op.get("set", {}))
+        await self.absent(self.rule_base(op), str(op["name"]), "rule")
         step: dict[str, Any] = {
             "undo": "delete",
             "find": {"path": self.rule_base(op), "name": op["name"]},
@@ -525,6 +546,21 @@ class Writer:
         path = f"{self.rule_base(op)}/{created.id}"
         self.results.append({"op": "create_rule", "name": created.name, "id": created.id})
         await self._expect_rule(op, path, op["name"])
+        anchor_path = self.rule_path(op, op["insert_after"])
+
+        async def placed() -> None:
+            # Where the rule landed: right after its anchor (read again: earlier writes of the
+            # batch may have moved both). Checked only when the FMC reports the index.
+            index = ((await self.get(path)).get("metadata") or {}).get("ruleIndex")
+            if not isinstance(index, int):
+                return
+            after = ((await self.get(anchor_path)).get("metadata") or {}).get("ruleIndex")
+            if not isinstance(after, int) or index != after + 1:
+                raise BatchError(
+                    "verification_failed", f"rule {op['name']} is not right after its anchor"
+                )
+
+        self.checks.append(placed)
 
     async def delete_rule(self, op: dict[str, Any]) -> None:
         path = self.rule_path(op, op["rule"])
@@ -682,6 +718,10 @@ class Writer:
                 refs.setdefault(fld.value, []).append(
                     (ref.object_id, ref.literal, ref.literal_kind)
                 )
+        # Conditions the space model does not represent (URL categories, time ranges ...)
+        # take part as opaque tokens, exactly as in the planned model.
+        for dim, members in condition_refs(rec.attrs).items():
+            refs.setdefault(dim, []).extend(members)
         return RuleModel(
             key=rec.fmc_id,
             name=rec.name,
@@ -781,11 +821,15 @@ class Writer:
                     for s in self.undo
                     if s.get("recreated_as") and s.get("recreates")
                 }
+                what = step.get("name") or step.get("path") or step.get("find", {}).get("name")
                 try:
                     await self._undo(step, remap)
                 except (BatchError, FmcError) as exc:
-                    what = step.get("name") or step.get("path") or step.get("find", {}).get("name")
                     failed.append(f"{step.get('undo')} {what}: {scrub_text(str(exc))[:120]}")
+                    continue
+                except Exception as exc:  # an odd answer or journal entry: report, go on
+                    log.exception("undo step failed", extra={"undo": step.get("undo")})
+                    failed.append(f"{step.get('undo')} {what}: {type(exc).__name__}")
                     continue
                 step["state"] = "undone"
                 self.save()
@@ -825,6 +869,14 @@ class Writer:
         else:
             raise BatchError("unknown_undo_step", str(kind))
 
+    async def absent(self, collection: str, name: str, what: str) -> None:
+        """Before a create: nothing by that name may exist yet. The plan was made on a
+        configuration without it; and the undo of a create whose answer was lost finds the
+        item by name, so it must never be able to find (and delete) one that was there before.
+        """
+        if await self._find(collection, name) is not None:
+            raise BatchError("drift", f"{what} {name} already exists in the FMC")
+
     async def _find(self, collection: str, name: str) -> str | None:
         """Id of the item named ``name`` in an FMC collection (names are unique there)."""
         async for _offset, items in self.fmc.iter_pages(collection, params={"expanded": "false"}):
@@ -848,6 +900,21 @@ class _DeployableList(BaseModel):
     items: list[_Deployable] = []
 
 
+def _version_number(version: str | int | None) -> int:
+    """A deployable device's version (a millisecond timestamp) as a number."""
+    try:
+        return int(str(version or "0").strip())
+    except ValueError:
+        return 0
+
+
+def _poll_error_tolerable(exc: FmcError) -> bool:
+    """A failed read of the deployment task that says nothing about the deployment itself."""
+    if isinstance(exc, FmcUnavailableError | FmcRateLimitedError):
+        return True
+    return isinstance(exc, FmcProtocolError) and exc.status is not None and exc.status >= 500
+
+
 async def deploy(
     fmc: FmcSession,
     adapter: FmcAdapter,
@@ -857,8 +924,15 @@ async def deploy(
     poll_seconds: float,
     timeout_seconds: float,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> str | None:
-    """Deploy pending changes to the target devices / HA pairs; returns the task id."""
+    """Deploy pending changes to the target devices / HA pairs; returns the task id.
+
+    The task is polled until it ends. A failed read of the task (FMC briefly unreachable, a
+    gateway error) is not the deployment failing: polling goes on. At ``timeout_seconds`` a
+    task the FMC still reports as running is given a grace period (``DEPLOY_GRACE``), so a
+    slow deployment is never rolled back while it is being applied on the devices.
+    """
     raw = await fmc.get_json(
         adapter.config_path(domain, "/deployment/deployabledevices"), {"expanded": "true"}
     )
@@ -869,7 +943,8 @@ async def deploy(
     chosen = [d for d in listing.items if str(d.device.get("id")) in targets]
     if not chosen:
         return None
-    version = max(str(d.version or "0") for d in chosen)
+    newest = max(chosen, key=lambda d: _version_number(d.version))
+    version = str(newest.version or "0")
     response = await fmc.write_json(
         "POST",
         adapter.config_path(domain, "/deployment/deploymentrequests"),
@@ -885,21 +960,33 @@ async def deploy(
     task_id = task.get("id")
     if not isinstance(task_id, str):
         raise BatchError("unexpected_response", "deployment request without task id")
-    started = time.monotonic()
+    started = clock()
     deadline = started + timeout_seconds
+    grace_until = deadline + timeout_seconds * DEPLOY_GRACE
+    state = ""
     while True:
-        status_body = await fmc.get_json(
-            adapter.config_path(domain, f"/job/taskstatuses/{task_id}")
-        )
-        state = str((status_body or {}).get("status", "")).lower()
-        elapsed = int(time.monotonic() - started)
+        try:
+            status_body = await fmc.get_json(
+                adapter.config_path(domain, f"/job/taskstatuses/{task_id}")
+            )
+        except FmcError as exc:
+            if not _poll_error_tolerable(exc):
+                raise
+            log.warning("deployment task unreadable; polling on", extra={"task": task_id})
+            status_body, read = None, False
+        else:
+            state = str((status_body or {}).get("status", "")).lower()
+            read = True
+        elapsed = int(clock() - started)
         # A deployment on FTDv takes about a minute: creep towards the end, never reach it.
         progress.advance(min(elapsed, 170), 180, state=state[:24], seconds=elapsed)
-        if state in DEPLOYED:
+        if read and state in DEPLOYED:
             return task_id
-        if state in DEPLOY_FAILED:
+        if read and state in DEPLOY_FAILED:
             raise BatchError("deploy_failed", str((status_body or {}).get("message", ""))[:200])
-        if time.monotonic() > deadline:
+        now = clock()
+        # Past the deadline, only a task the FMC just reported as still running is waited for.
+        if now > grace_until or (now > deadline and not read):
             raise BatchError("deploy_timeout", task_id)
         await sleep(poll_seconds)
 
@@ -952,6 +1039,14 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
         ops = [op for item in items for op in item_ops(item.plan, item.position)]
         if len(ops) != b.op_count:
             raise BatchError("batch_inconsistent", f"{len(ops)} != {b.op_count}")
+        snap = db.get(Snapshot, cs.snapshot_id) if cs.snapshot_id is not None else None
+        # Another changeset changed the FMC since the snapshot this one was planned on (its own
+        # earlier batches are part of its plan): the plan no longer matches the FMC.
+        stale = stale_since(db, snap, exclude_changeset=cs.id) if snap is not None else None
+        if stale is not None:
+            raise BatchError(
+                "snapshot_stale", f"changeset {stale['changeset_id']} batch {stale['batch']}"
+            )
         b.status, b.started_at, b.error, b.journal = "running", datetime.now(UTC), None, []
         cs.status = "in_progress"
         return _Plan(
@@ -1053,6 +1148,30 @@ def _unclaim(sessions: sessionmaker[Session], plan: _Plan, error: str | None = N
             b.status, b.started_at, b.error = "approved", None, error
 
 
+def _not_started(
+    sessions: sessionmaker[Session], audit: AuditLog, batch_id: int, reason: str
+) -> None:
+    """The batch was refused before it was taken: it stays approved, the reason is kept."""
+    with sessions.begin() as db:
+        b = db.get(Batch, batch_id, with_for_update=True)
+        cs = db.get(Changeset, b.changeset_id) if b is not None else None
+        if b is None or cs is None:
+            return
+        if b.status == "approved":
+            b.error = reason[:500]
+        audit.record(
+            db,
+            AuditEvent(
+                actor="system:enforcer",
+                actor_id=None,
+                action="changeset.batch_not_started",
+                outcome="failure",
+                target=cs.title[:256],
+                details={"changeset_id": cs.id, "batch_id": b.id, "error": reason},
+            ),
+        )
+
+
 def _finish(
     sessions: sessionmaker[Session],
     audit: AuditLog,
@@ -1063,7 +1182,10 @@ def _finish(
     results: list[dict[str, Any]],
     task_id: str | None,
     settings: Settings | None = None,
+    keep_changeset: bool = False,
 ) -> None:
+    """End a batch. ``keep_changeset``: a revert (of a deployed batch) — whatever its outcome,
+    the changeset keeps its state."""
     with sessions.begin() as db:
         b = db.get(Batch, plan.batch_id, with_for_update=True)
         cs = db.get(Changeset, plan.changeset_id, with_for_update=True)
@@ -1071,7 +1193,7 @@ def _finish(
             return
         b.status, b.error, b.results = status, error, results
         b.finished_at, b.deploy_job_id = datetime.now(UTC), task_id
-        if status == "reverted":
+        if status == "reverted" or keep_changeset:
             pass  # a deployed batch undone on request: the changeset keeps its state
         elif status == "deployed":
             if settings is not None:
@@ -1120,9 +1242,21 @@ async def execute_batch(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> dict[str, Any]:
     """Apply one approved batch. ``lock(key, ttl)`` returns a release callable or None if busy."""
-    plan = _load(sessions, batch_id, settings)
+    try:
+        plan = _load(sessions, batch_id, settings)
+    except BatchError as exc:
+        if exc.code != "snapshot_stale":
+            raise
+        reason = f"{exc.code}: {exc.detail}"
+        log.warning("batch refused", extra={"batch": batch_id, "reason": reason})
+        _not_started(sessions, audit, batch_id, reason)
+        return {"ok": False, "error": exc.code, "status": "approved", "detail": reason}
     host, port, username, token, context = plan.connection
-    release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
+    try:
+        release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
+    except Exception:
+        _unclaim(sessions, plan, "write_lock_error")  # nothing written: it can run again
+        raise
     if release is None:
         # Another batch is writing to this FMC: nothing happened, the batch stays approved.
         _unclaim(sessions, plan)
@@ -1133,6 +1267,7 @@ async def execute_batch(
 
     writer: Writer | None = None
     task_id: str | None = None
+    finished = False  # the batch's outcome is recorded
     try:
         async with FmcSession(
             host=host,
@@ -1176,15 +1311,24 @@ async def execute_batch(
                     if poll_seconds is None
                     else poll_seconds,
                     timeout_seconds=settings.deploy_timeout_seconds,
+                    sleep=sleep,
                 )
-            except (BatchError, FmcError) as exc:
-                code = exc.code
-                # A BatchError's text already starts with its code: keep the detail only.
-                detail = scrub_text(exc.detail if isinstance(exc, BatchError) else str(exc))[:300]
-                log.error(
-                    "batch failed, rolling back",
-                    extra={"batch": batch_id, "code": code, "detail": detail},
-                )
+            except Exception as exc:
+                # Any failure after the session opened — the FMC's, or an unexpected one (a
+                # database error saving the journal, an odd answer) — is rolled back the same.
+                expected = isinstance(exc, BatchError | FmcError)
+                if isinstance(exc, BatchError | FmcError):
+                    code = exc.code
+                    # A BatchError's text already starts with its code: keep the detail only.
+                    detail = scrub_text(exc.detail if isinstance(exc, BatchError) else str(exc))
+                    log.error(
+                        "batch failed, rolling back",
+                        extra={"batch": batch_id, "code": code, "detail": detail[:300]},
+                    )
+                else:
+                    code, detail = "internal_error", type(exc).__name__
+                    log.exception("batch failed unexpectedly, rolling back")
+                detail = detail[:300]
                 progress.phase("rolling_back", 66, 85)
                 left = await writer.rollback(ROLLBACK_ROUNDS, settings.rollback_retry_seconds)
                 if writer.undo and not left:
@@ -1200,6 +1344,7 @@ async def execute_batch(
                             if poll_seconds is None
                             else poll_seconds,
                             timeout_seconds=settings.deploy_timeout_seconds,
+                            sleep=sleep,
                         )
                     except (BatchError, FmcError) as again:
                         left.append(f"redeploy after rollback: {scrub_text(str(again))[:120]}")
@@ -1214,6 +1359,9 @@ async def execute_batch(
                     results=results,
                     task_id=task_id,
                 )
+                finished = True
+                if not expected:
+                    raise  # recorded and rolled back; the job shows the error
                 return {"ok": False, "error": code, "status": status, "undo_failed": left}
     except FmcError as exc:
         # Could not even open the session / read the version: nothing was written, so the
@@ -1232,6 +1380,10 @@ async def execute_batch(
         with sessions.begin() as db:
             audit.record(db, audit_db_event)
         return {"ok": False, "error": exc.code, "status": "approved", "detail": reason}
+    except Exception as exc:
+        if not finished:
+            _abandon(sessions, audit, plan, writer, type(exc).__name__)
+        raise
     finally:
         await release()
     _finish(
@@ -1252,6 +1404,39 @@ async def execute_batch(
     }
 
 
+def _abandon(
+    sessions: sessionmaker[Session],
+    audit: AuditLog,
+    plan: _Plan,
+    writer: Writer | None,
+    reason: str,
+) -> None:
+    """An unexpected error outside the writes left the batch ``running``: never leave it so.
+
+    Nothing journaled — nothing was written — and it goes back to approved; otherwise it is
+    failed with its journal, so the rollback can be resumed (best effort: the database may be
+    what failed; a batch left running is resumable once stale).
+    """
+    try:
+        if writer is None or not writer.undo:
+            _unclaim(sessions, plan, f"internal_error: {reason}")
+            return
+        _finish(
+            sessions,
+            audit,
+            plan,
+            "failed",
+            error=f"internal_error: {reason}"[:500],
+            results=[
+                *writer.results,
+                {"op": "undo_failed", "detail": f"interrupted: {reason}"[:200]},
+            ],
+            task_id=None,
+        )
+    except Exception:
+        log.exception("could not record the end of a batch", extra={"batch": plan.batch_id})
+
+
 def rollback_resumable(b: Batch, now: datetime, stale_after: timedelta) -> bool:
     """A failed batch with undo left to do (journal steps, or the re-deploy after them), or
     one whose worker died mid-run."""
@@ -1265,6 +1450,26 @@ def rollback_resumable(b: Batch, now: datetime, stale_after: timedelta) -> bool:
         and b.started_at is not None
         and now - b.started_at > stale_after
         and bool(b.journal)
+    )
+
+
+def abandoned_unwritten(b: Batch, now: datetime, stale_after: timedelta) -> bool:
+    """A batch still ``running`` long after its job must have ended, with no undo step saved:
+    its worker died before the first write (every write is journaled before it is sent), so
+    nothing was written. Its changeset can be cancelled."""
+    return (
+        b.status == "running"
+        and b.started_at is not None
+        and now - b.started_at > stale_after
+        and not b.journal
+    )
+
+
+def reverting(b: Batch) -> bool:
+    """The batch was deployed and is (or was being) reverted on request."""
+    return any(r.get("op") == REVERT_MARKER for r in b.results) or (
+        # Reverts started before the marker existed: only a revert runs a finished batch.
+        b.status == "running" and b.finished_at is not None
     )
 
 
@@ -1284,7 +1489,8 @@ async def resume_rollback(
 
     Every undo step is idempotent, so steps that already took effect (or writes that never
     landed) are harmless. The batch ends ``rolled_back``, or stays ``failed`` with what is
-    still left.
+    still left. A batch whose revert was interrupted ends ``reverted`` (undone on request, not
+    after a failure), and its changeset keeps its state whatever the outcome.
     """
     with sessions.begin() as db:
         b = db.get(Batch, batch_id, with_for_update=True)
@@ -1296,11 +1502,10 @@ async def resume_rollback(
         connection, targets = _connection_and_targets(db, cs, b)
         journal = copy.deepcopy(b.journal)
         previous = (b.status, b.error)
-        # A deployed batch whose revert lost its worker (it was deployed: finished_at is set)
-        # ends "reverted" — undone on request, not rolled back after a failure.
-        reverting = b.status == "running" and b.finished_at is not None
+        was_reverting = reverting(b)
         results = [r for r in b.results if r.get("op") != "undo_failed"]
-        b.status = "running"
+        # started_at: a live resume is not offered again as "stale" (rollback_resumable).
+        b.status, b.started_at = "running", datetime.now(UTC)
         plan = _Plan(
             batch_id=b.id,
             seq=b.seq,
@@ -1322,7 +1527,11 @@ async def resume_rollback(
         return {"ok": False, "error": reason, "status": "failed"}
 
     host, port, username, token, context = connection
-    release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
+    try:
+        release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
+    except Exception:
+        put_back("write_lock_error")
+        raise
     if release is None:
         return put_back("write_lock_busy")
 
@@ -1367,14 +1576,18 @@ async def resume_rollback(
                         if poll_seconds is None
                         else poll_seconds,
                         timeout_seconds=settings.deploy_timeout_seconds,
+                        sleep=sleep,
                     )
                 except (BatchError, FmcError) as again:
                     left.append(f"redeploy after rollback: {scrub_text(str(again))[:120]}")
     except FmcError as exc:
         return put_back(f"{exc.code}: {scrub_text(str(exc))[:200]}")
+    except Exception as exc:
+        put_back(f"internal_error: {type(exc).__name__}")
+        raise
     finally:
         await release()
-    status = ("reverted" if reverting else "rolled_back") if not left else "failed"
+    status = ("reverted" if was_reverting else "rolled_back") if not left else "failed"
     _finish(
         sessions,
         audit,
@@ -1383,13 +1596,30 @@ async def resume_rollback(
         error=previous[1] if not left else f"{previous[1] or ''} | resume: incomplete"[:500],
         results=[*results, *({"op": "undo_failed", "detail": x} for x in left)],
         task_id=None,
+        keep_changeset=was_reverting,
     )
     return {"ok": not left, "status": status, "undo_failed": left}
 
 
+def job_timeout_seconds(settings: Settings) -> int:
+    """How long a write job (run, resume, one revert) may take: a deployment and the re-deploy
+    after a rollback, each with its grace period, and the writes and undo around them."""
+    return int(2 * settings.deploy_timeout_seconds * (1 + DEPLOY_GRACE)) + 3600
+
+
 def stale_after_run(settings: Settings) -> timedelta:
     """A batch still ``running`` after this long has lost its worker (the job timed out)."""
-    return timedelta(seconds=settings.deploy_timeout_seconds + 3600)
+    return timedelta(seconds=job_timeout_seconds(settings))
+
+
+# Delete the lock only if it still holds our token, atomically (it may have expired and been
+# taken by another writer between a GET and a DEL).
+_RELEASE_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
 
 
 def redis_lock(redis: Any) -> Callable[[str, int], Awaitable[Callable[[], Awaitable[None]] | None]]:
@@ -1401,8 +1631,7 @@ def redis_lock(redis: Any) -> Callable[[str, int], Awaitable[Callable[[], Awaita
             return None
 
         async def release() -> None:
-            if redis.get(key) in (owner, owner.encode()):
-                redis.delete(key)
+            redis.eval(_RELEASE_SCRIPT, 1, key, owner)
 
         return release
 

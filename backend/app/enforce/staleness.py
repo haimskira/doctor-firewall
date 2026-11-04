@@ -16,23 +16,30 @@ from sqlalchemy.orm import Session
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.inventory import Snapshot
 
-CHANGED_FMC = ("deployed", "failed")
+# A reverted batch changed the FMC too: the revert itself (re-created objects get new ids).
+CHANGED_FMC = ("deployed", "failed", "reverted")
 
 
 def _left_changes(batch: Batch) -> bool:
     """Did this batch leave changes on the FMC?"""
-    if batch.status == "deployed":
+    if batch.status in ("deployed", "reverted"):
         return True
     if batch.journal:  # failed: only what its rollback could not undo is left
         return any(step.get("state") != "undone" for step in batch.journal)
     return any(r.get("op") != "undo_failed" for r in batch.results)  # before the journal
 
 
-def stale_since(db: Session, snap: Snapshot) -> dict[str, Any] | None:
-    """The latest batch that changed this snapshot's FMC after the snapshot was taken."""
+def stale_since(
+    db: Session, snap: Snapshot, *, exclude_changeset: int | None = None
+) -> dict[str, Any] | None:
+    """The latest batch that changed this snapshot's FMC after the snapshot was taken.
+
+    ``exclude_changeset``: a changeset planned on this snapshot — its own earlier batches are
+    part of its plan (each batch is planned on the snapshot with the earlier ones applied).
+    """
     if snap.connection_id is None:
         return None
-    for changeset_id, title, batch in db.execute(
+    query = (
         select(Changeset.id, Changeset.title, Batch)
         .join(Batch, Batch.changeset_id == Changeset.id)
         .where(
@@ -42,7 +49,10 @@ def stale_since(db: Session, snap: Snapshot) -> dict[str, Any] | None:
             Batch.finished_at > snap.created_at,
         )
         .order_by(Batch.finished_at.desc())
-    ):
+    )
+    if exclude_changeset is not None:
+        query = query.where(Changeset.id != exclude_changeset)
+    for changeset_id, title, batch in db.execute(query):
         if _left_changes(batch):
             return {
                 "changeset_id": changeset_id,

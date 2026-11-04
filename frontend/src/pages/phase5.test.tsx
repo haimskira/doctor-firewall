@@ -4,8 +4,9 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ChangesetDetail, Me, Permission } from '../api/types';
+import type { ChangesetDetail, JobRun, Me, Permission } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
+import { JobsProvider } from '../components/jobs';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
 import type { Recorded } from '../test/fetchMock';
@@ -59,9 +60,15 @@ const CS: ChangesetDetail = {
   ],
 };
 
-function setup(user: Me, cs: ChangesetDetail, extra?: (req: Recorded) => { status: number; body?: unknown } | undefined): Recorded[] {
+function setup(
+  user: Me,
+  cs: ChangesetDetail,
+  extra?: (req: Recorded) => { status: number; body?: unknown } | undefined,
+  jobs?: JobRun[],
+): Recorded[] {
   const calls = mockFetch((req) => {
     if (req.url === '/api/auth/me') return { status: 200, body: user };
+    if (jobs !== undefined && req.url.startsWith('/api/jobs')) return { status: 200, body: { active: 0, rows: jobs } };
     if (req.url === '/api/changesets') return { status: 200, body: [cs] };
     if (req.url === '/api/changesets/3') return { status: 200, body: cs };
     return extra?.(req) ?? { status: 404, body: { detail: 'not_found' } };
@@ -71,7 +78,13 @@ function setup(user: Me, cs: ChangesetDetail, extra?: (req: Recorded) => { statu
     <I18nProvider>
       <AuthProvider>
         <MemoryRouter initialEntries={['/deploy?changeset=3']}>
-          <Routes>{routes}</Routes>
+          {jobs === undefined ? (
+            <Routes>{routes}</Routes>
+          ) : (
+            <JobsProvider username={user.username} enabled>
+              <Routes>{routes}</Routes>
+            </JobsProvider>
+          )}
         </MemoryRouter>
       </AuthProvider>
     </I18nProvider>,
@@ -166,8 +179,57 @@ describe('DeployPage', () => {
     await waitFor(() => {
       expect(calls.find((c) => c.url.endsWith('/batches/2/approve'))?.body).toEqual({ acknowledge_change: true });
     });
+    // The acknowledgement was for that approval only: it does not carry over.
+    await waitFor(() => {
+      expect(within(screen.getByRole('article', { name: 'Changeset 3.2' })).getByRole('checkbox')).not.toBeChecked();
+    });
     // The first, deployed batch shows its proof against the FMC as well (none in this fixture).
     expect(within(screen.getByRole('article', { name: 'Changeset 3.2' })).queryByText(/cannot be approved/)).not.toBeInTheDocument();
+  });
+
+  it('shows a failed traffic proof and offers to recompute it', async () => {
+    const [first, second] = CS.batches;
+    if (first === undefined || second === undefined) throw new Error('fixture');
+    const failed: ChangesetDetail = {
+      ...CS,
+      batches: [
+        first,
+        {
+          ...second,
+          proof: {
+            ok: false, error: 'changeset_without_snapshot', exhaustive: false, flows: 0, differences: 0, behavior: 'preserves',
+            seconds: 0, computed_at: '2026-10-21T08:12:00Z', policies: [],
+          },
+        },
+      ],
+    };
+    const calls = setup(me('appr', ['policy:read', 'deploy:approve', 'changeset:write']), failed, (req) =>
+      req.url === '/api/changesets/3/prove' ? { status: 202, body: { queued: true } } : undefined,
+    );
+    const batch = await screen.findByRole('article', { name: 'Changeset 3.2' });
+    expect(within(batch).getByText(/could not be computed: This changeset has no snapshot/)).toBeInTheDocument();
+    expect(within(batch).queryByText(/Computing the traffic proof/)).not.toBeInTheDocument();
+    expect(within(batch).getByRole('button', { name: 'Approve' })).toBeDisabled();
+    await userEvent.click(within(batch).getByRole('button', { name: 'Recompute the traffic proof' }));
+    await waitFor(() => {
+      expect(calls.some((c) => c.method === 'POST' && c.url === '/api/changesets/3/prove')).toBe(true);
+    });
+    expect(await screen.findByText('The traffic proof is being recomputed.')).toBeInTheDocument();
+  });
+
+  it('stops waiting for a proof whose job failed', async () => {
+    const [first, second] = CS.batches;
+    if (first === undefined || second === undefined) throw new Error('fixture');
+    const missing: ChangesetDetail = { ...CS, batches: [first, { ...second, proof: null }] };
+    const job: JobRun = {
+      id: 40, kind: 'proof', title: 'Q4 clean-up', requested_by: 'opt', status: 'failed', progress: 30, step: 'proof',
+      step_args: {}, error: 'LookupError: changeset_without_snapshot', snapshot_id: 7, batch_id: null, changeset_id: 3,
+      created_at: '2026-10-21T08:12:00Z', started_at: '2026-10-21T08:12:01Z', updated_at: null, finished_at: '2026-10-21T08:12:05Z',
+    };
+    setup(me('appr', ['policy:read', 'deploy:approve', 'changeset:write']), missing, undefined, [job]);
+    const batch = await screen.findByRole('article', { name: 'Changeset 3.2' });
+    expect(await within(batch).findByText(/could not be computed: This changeset has no snapshot/)).toBeInTheDocument();
+    expect(within(batch).getByRole('button', { name: 'Recompute the traffic proof' })).toBeEnabled();
   });
 
   it('never offers approval to the author', async () => {

@@ -9,6 +9,10 @@
 Both are decided on group membership only (not on address arithmetic), so the matched traffic is
 exactly the same before and after; the fix only removes noise, duplicate ACEs and the confusion
 of "which level is this rule really using?".
+
+Safety: a group in a membership cycle, or marked overridable (other members per device), never
+stands for what it contains and is never edited; a reference is only removed while the group
+containing it stays; a rule field or a group is never emptied (an empty field means "any").
 """
 
 from __future__ import annotations
@@ -16,9 +20,11 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from app.analysis.expand import rule_conditions
 from app.analysis.recommend import (
     Draft,
     Estate,
+    Ref,
     RuleInfo,
     _object_target,
     _plan,
@@ -47,13 +53,18 @@ REF_FIELDS = (
 
 
 def member_paths(estate: Estate, group_id: str) -> dict[str, list[str]]:
-    """Every object reachable inside a group -> the shortest chain of names leading to it."""
+    """Every object reachable inside a group -> the shortest chain of names leading to it.
+
+    Overridable groups are reached but not entered: their members may differ per device."""
     found: dict[str, list[str]] = {}
     queue: deque[tuple[str, list[str], int]] = deque([(group_id, [], 0)])
     seen = {group_id}
     while queue:
         current, path, depth = queue.popleft()
         if depth >= MAX_DEPTH:
+            continue
+        holder = estate.objects.get(current)
+        if current != group_id and holder is not None and holder.overridable:
             continue
         for member in estate.members.get(current, []):
             oid = member.object_id
@@ -74,6 +85,57 @@ def _cached_paths(
     return cache[gid]
 
 
+def _container(estate: Estate, ref: Ref) -> bool:
+    """A group that may stand for its members: not cyclic, not overridable, not empty."""
+    oid = ref.object_id
+    if oid is None or not estate.members.get(oid) or oid in estate.cyclic_groups():
+        return False
+    obj = estate.objects.get(oid)
+    return obj is None or not obj.overridable
+
+
+def redundant(
+    estate: Estate, cache: dict[str, dict[str, list[str]]], refs: list[Ref]
+) -> tuple[list[Ref], list[tuple[Ref, Ref, list[str]]]]:
+    """(kept refs, [(removed ref, kept group containing it, chain)]) of one rule field or of
+    the members of one group. A reference goes only if a group that stays in the same list
+    contains it, and the list is never emptied (then nothing goes)."""
+    containers = [i for i, r in enumerate(refs) if _container(estate, r)]
+    options: dict[int, list[int]] = {}
+    for i, ref in enumerate(refs):
+        if ref.object_id is None:
+            continue
+        found = [
+            g
+            for g in containers
+            if g != i
+            and refs[g].object_id != ref.object_id
+            and ref.object_id in _cached_paths(estate, cache, refs[g].object_id or "")
+        ]
+        if found:
+            options[i] = found
+    removed: dict[int, int] = {i: found[0] for i, found in options.items()}
+    changed = True
+    while changed:  # a container that is removed itself cannot justify a removal
+        changed = False
+        for i in sorted(removed):
+            if i not in removed or removed[i] not in removed:
+                continue
+            kept = [g for g in options[i] if g not in removed]
+            if kept:
+                removed[i] = kept[0]
+            else:
+                del removed[i]
+            changed = True
+    if not removed or len(removed) == len(refs):
+        return list(refs), []
+    gone: list[tuple[Ref, Ref, list[str]]] = []
+    for i, g in sorted(removed.items()):
+        paths = _cached_paths(estate, cache, refs[g].object_id or "")
+        gone.append((refs[i], refs[g], paths[refs[i].object_id or ""]))
+    return [r for i, r in enumerate(refs) if i not in removed], gone
+
+
 def recommend_redundant_references(
     estate: Estate, policy: Policy, rules: list[RuleInfo]
 ) -> list[Draft]:
@@ -84,29 +146,12 @@ def recommend_redundant_references(
             continue  # removed instead
         new_refs = {f: list(v) for f, v in info.refs.items()}
         why: list[dict[str, Any]] = []
+        held = set(rule_conditions(info.rule.attrs))
         for fld in REF_FIELDS:
-            refs = info.refs.get(fld, [])
-            groups = [
-                r for r in refs if r.object_id is not None and estate.members.get(r.object_id)
-            ]
-            if not groups:
-                continue
-            keep = []
-            for ref in refs:
-                container = next(
-                    (
-                        (g, _cached_paths(estate, cache, g.object_id or "")[ref.object_id])
-                        for g in groups
-                        if ref.object_id is not None
-                        and g.object_id != ref.object_id
-                        and ref.object_id in _cached_paths(estate, cache, g.object_id or "")
-                    ),
-                    None,
-                )
-                if container is None:
-                    keep.append(ref)
-                    continue
-                group, chain = container
+            if fld in held:
+                continue  # writing the field back would drop its unmodelled conditions
+            keep, gone = redundant(estate, cache, info.refs.get(fld, []))
+            for ref, group, chain in gone:
                 why.append(
                     {
                         "field": fld,
@@ -115,7 +160,8 @@ def recommend_redundant_references(
                         "chain": [group.name, *chain],
                     }
                 )
-            new_refs[fld] = keep
+            if gone:
+                new_refs[fld] = keep
         if not why:
             continue
         r = info.rule
@@ -160,28 +206,15 @@ def recommend_redundant_members(estate: Estate) -> list[Draft]:
     drafts: list[Draft] = []
     for group in sorted(estate.objects.values(), key=lambda o: o.name):
         members = estate.members.get(group.fmc_id, [])
-        nested = [m for m in members if m.object_id is not None and estate.members.get(m.object_id)]
-        if group.fixed or not nested:
+        if group.fixed or group.overridable or group.fmc_id in estate.cyclic_groups():
             continue
-        keep = []
-        why: list[dict[str, Any]] = []
-        for m in members:
-            via = next(
-                (
-                    (n, _cached_paths(estate, cache, n.object_id or "")[m.object_id])
-                    for n in nested
-                    if m.object_id is not None
-                    and n.object_id != m.object_id
-                    and m.object_id in _cached_paths(estate, cache, n.object_id or "")
-                ),
-                None,
-            )
-            if via is None:
-                keep.append(m)
-            else:
-                why.append(
-                    {"removed": m.name, "kept": via[0].name, "chain": [via[0].name, *via[1]]}
-                )
+        if not any(_container(estate, m) for m in members):
+            continue
+        keep, gone = redundant(estate, cache, members)
+        why: list[dict[str, Any]] = [
+            {"removed": m.name, "kept": via.name, "chain": [via.name, *chain]}
+            for m, via, chain in gone
+        ]
         if not why:
             continue
         drafts.append(

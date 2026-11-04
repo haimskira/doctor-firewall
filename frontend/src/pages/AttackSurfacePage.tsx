@@ -6,7 +6,7 @@ import { AttackMap } from '../components/AttackMap';
 import type { Highlight } from '../components/AttackMap';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
-import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
 import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 
@@ -22,8 +22,9 @@ export function AttackSurfacePage() {
   const hops = (n: number) => (n === 1 ? t('atk.oneHop') : t('atk.hops', { count: n }));
   const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
   const [modeParam, setMode] = useQueryParam('mode');
-  const [system, setSystem] = useQueryParam('system');
-  const [address, setAddress] = useQueryParam('address');
+  const [system] = useQueryParam('system');
+  const [address] = useQueryParam('address');
+  const setParams = useSetQueryParams();
   const [depthParam, setDepth] = useQueryParam('depth');
   const [cluster, setCluster] = useQueryParam('cluster');
   const [draft, setDraft] = useState(address ?? '');
@@ -77,14 +78,12 @@ export function AttackSurfacePage() {
 
   function chooseSystem(value: string) {
     setSelection(null);
-    setAddress(null);
-    setSystem(value === '' ? null : value);
+    setParams({ address: null, system: value === '' ? null : value });
   }
 
   function submitAddress() {
     setSelection(null);
-    setSystem(null);
-    setAddress(draft.trim() === '' ? null : draft.trim());
+    setParams({ system: null, address: draft.trim() === '' ? null : draft.trim() });
   }
 
   const byTier = new Map<string, AttackTarget[]>();

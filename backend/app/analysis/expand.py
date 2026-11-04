@@ -7,13 +7,15 @@ graph — exactly what the FMC does when it flattens groups into Lina ACEs.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import prod
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analysis.space import AddressSet, MatchSpace, PortSet, TokenSet
+from app.analysis.space import TOKEN_DIMENSIONS, AddressSet, MatchSpace, PortSet, TokenSet
 from app.fmc.records import ObjectKind
 from app.models.inventory import FwObject, GroupMember, Rule, RuleRef
 
@@ -54,28 +56,54 @@ def literal_leaves(literal: str, kind: str | None) -> Leaves:
     return leaves
 
 
+def unmodelled(attrs: Mapping[str, Any] | None) -> frozenset[str]:
+    """Names of a rule's match conditions the space model does not represent."""
+    names = (attrs or {}).get("unmodelled") or ()
+    return frozenset(str(n) for n in names)
+
+
+def rule_conditions(attrs: Mapping[str, Any] | None) -> dict[str, frozenset[str]]:
+    """Opaque tokens of a rule's unmodelled conditions, per match dimension."""
+    raw = (attrs or {}).get("conditions") or {}
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        str(dim): frozenset(str(t) for t in tokens)
+        for dim, tokens in raw.items()
+        if isinstance(tokens, list | tuple) and tokens
+    }
+
+
 class Resolver:
-    """Object id -> Leaves, memoised and safe against group cycles."""
+    """Object id -> Leaves, memoised and safe against group cycles.
+
+    ``opaque`` objects (overridable: their value may differ per device) resolve to a token
+    of their own instead of their default value or members.
+    """
 
     def __init__(
         self,
         objects: dict[str, tuple[str, str | None]],
         members: dict[str, list[tuple[str | None, str | None, str | None]]],
+        opaque: frozenset[str] = frozenset(),
     ) -> None:
         self._objects = objects
         self._members = members
+        self._opaque = opaque
         self._cache: dict[str, Leaves] = {}
 
     @staticmethod
     def load(session: Session, snapshot_id: int) -> Resolver:
-        objects = {
-            fid: (kind, value)
-            for fid, kind, value in session.execute(
-                select(FwObject.fmc_id, FwObject.kind, FwObject.value).where(
-                    FwObject.snapshot_id == snapshot_id
-                )
-            ).all()
-        }
+        objects: dict[str, tuple[str, str | None]] = {}
+        opaque: set[str] = set()
+        for fid, kind, value, attrs in session.execute(
+            select(FwObject.fmc_id, FwObject.kind, FwObject.value, FwObject.attrs).where(
+                FwObject.snapshot_id == snapshot_id
+            )
+        ).all():
+            objects[fid] = (kind, value)
+            if (attrs or {}).get("overridable"):
+                opaque.add(fid)
         members: dict[str, list[tuple[str | None, str | None, str | None]]] = defaultdict(list)
         for group, member, literal, literal_kind in session.execute(
             select(
@@ -88,7 +116,7 @@ class Resolver:
             .order_by(GroupMember.id)
         ).all():
             members[group].append((member, literal, literal_kind))
-        return Resolver(objects, dict(members))
+        return Resolver(objects, dict(members), frozenset(opaque))
 
     def leaves(self, object_id: str) -> Leaves:
         if object_id in self._cache:
@@ -103,7 +131,12 @@ class Resolver:
                 continue
             seen.add(oid)
             kind, value = self._objects.get(oid, (ObjectKind.OTHER.value, None))
-            if kind in _GROUP_KINDS:
+            if oid in self._opaque:
+                if kind in _ADDRESS_KINDS or kind == ObjectKind.NETWORK_GROUP.value:
+                    result.address_tokens.add(f"device:{oid}")
+                else:
+                    result.tokens.add(f"device:{oid}")
+            elif kind in _GROUP_KINDS:
                 for member, literal, literal_kind in self._members.get(oid, []):
                     if member is not None:
                         stack.append(member)
@@ -159,7 +192,23 @@ _SPACE_FIELDS = (
 ACE_FIELDS = ("src_zone", "dst_zone", "src_net", "dst_net", "src_port", "dst_port")
 
 
-def build_space(field_leaves: dict[str, Leaves]) -> MatchSpace:
+def build_space(
+    field_leaves: dict[str, Leaves], attrs: Mapping[str, Any] | None = None
+) -> MatchSpace:
+    """The match space of a rule's resolved fields; ``attrs`` (the rule's) adds its
+    unmodelled conditions as opaque tokens (see :mod:`app.analysis.space`)."""
+    conditions = rule_conditions(attrs)
+    if conditions:
+        field_leaves = dict(field_leaves)
+        for dim, values in conditions.items():
+            if dim not in TOKEN_DIMENSIONS:
+                continue  # conditions only ever name token dimensions
+            merged = Leaves()
+            if dim in field_leaves:
+                merged.update(field_leaves[dim])
+            merged.tokens |= {f"cond:{v}" for v in values}
+            field_leaves[dim] = merged
+
     def addresses(name: str) -> AddressSet:
         leaves = field_leaves.get(name)
         if leaves is None:
@@ -177,18 +226,7 @@ def build_space(field_leaves: dict[str, Leaves]) -> MatchSpace:
         )
 
     tokens = []
-    for dim in (
-        "src_zone",
-        "dst_zone",
-        "app",
-        "url",
-        "src_sgt",
-        "dst_sgt",
-        "src_dyn",
-        "dst_dyn",
-        "user",
-        "vlan",
-    ):
+    for dim in TOKEN_DIMENSIONS:
         leaves = field_leaves.get(dim)
         if leaves is not None:
             tokens.append(
@@ -205,6 +243,7 @@ def build_space(field_leaves: dict[str, Leaves]) -> MatchSpace:
         src_port=ports("src_port"),
         dst_port=ports("dst_port"),
         tokens=tuple(tokens),
+        unmodelled=unmodelled(attrs),
     )
 
 
@@ -259,7 +298,7 @@ def rule_spaces(
                 enabled=r.enabled,
                 action=r.action,
                 hit_count=r.hit_count,
-                space=build_space(fields),
+                space=build_space(fields, r.attrs),
                 ace_count=ace_estimate(fields),
                 leaf_counts={f: fields[f].count() for f in fields},
             )

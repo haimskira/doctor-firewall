@@ -34,8 +34,18 @@ from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from app.analysis.assets import effective_assets
+from app.analysis.basic import VALUE_KINDS
 from app.analysis.connectivity import NodeMapper, edges_for, rule_risk, worst
-from app.analysis.expand import Leaves, Resolver, ace_estimate, build_space, literal_leaves
+from app.analysis.expand import (
+    Leaves,
+    Resolver,
+    ace_estimate,
+    build_space,
+    literal_leaves,
+    rule_conditions,
+    unmodelled,
+)
+from app.analysis.graph import GroupGraph, strongly_connected
 from app.analysis.naming import (
     MAX_NAME,
     Convention,
@@ -69,6 +79,10 @@ UNCLASSIFIED = "UNCLASSIFIED"
 ACE_KINDS = frozenset({"access", "prefilter"})
 GROUP_KINDS = frozenset({"network_group", "port_group"})
 ADDRESS_KINDS = frozenset({"host", "network", "range"})
+# Objects interchangeable by value (merged, or reused for a literal): the duplicate findings'
+# kinds. FQDN, SGT, dynamic objects ... carry a value that does not say everything they match.
+VALUE_MERGE_KINDS = frozenset(k.value for k in VALUE_KINDS)
+IN_CHUNK = 10_000  # ids per SQL IN list (PostgreSQL allows at most 65535 bind parameters)
 WIDE_PORTS = 100
 SAMPLE = 20  # affected rules listed in a preview
 MAX_EXPAND_DEPTH = 8
@@ -125,6 +139,12 @@ class RuleInfo:
     def permit(self) -> bool:
         return self.rule.action in PERMIT_ACTIONS
 
+    @property
+    def unmodelled(self) -> bool:
+        """The rule has match conditions the analysis does not model (URL categories, time
+        ranges ...): it is never split, merged or tightened, and never covers another rule."""
+        return bool(unmodelled(self.rule.attrs))
+
 
 @dataclass
 class Draft:
@@ -178,6 +198,7 @@ class Obj:
     value: str | None
     stub: bool
     read_only: bool = False  # built-in FMC object: never deleted, renamed or edited
+    overridable: bool = False  # may hold another value per device: never merged or reused
 
     @property
     def fixed(self) -> bool:
@@ -188,6 +209,12 @@ class Obj:
 # ------------------------------------------------------------------ estate
 
 
+def _chunks(ids: Sequence[int]) -> Iterable[Sequence[int]]:
+    """``ids`` in slices small enough for one SQL IN list."""
+    for start in range(0, len(ids), IN_CHUNK):
+        yield ids[start : start + IN_CHUNK]
+
+
 class Estate:
     """Everything the recommenders need about one snapshot, loaded once."""
 
@@ -195,7 +222,15 @@ class Estate:
         self.session = session
         self.snapshot_id = snapshot_id
         self.objects: dict[str, Obj] = {
-            fid: Obj(fid, name, kind, value, stub, bool((attrs or {}).get("read_only")))
+            fid: Obj(
+                fid,
+                name,
+                kind,
+                value,
+                stub,
+                bool((attrs or {}).get("read_only")),
+                bool((attrs or {}).get("overridable")),
+            )
             for fid, name, kind, value, stub, attrs in session.execute(
                 select(
                     FwObject.fmc_id,
@@ -239,6 +274,19 @@ class Estate:
             p.fmc_id: p
             for p in session.scalars(select(Policy).where(Policy.snapshot_id == snapshot_id))
         }
+        # Policy -> the access policies it belongs to (itself, or those linking it), as
+        # app.analysis.policy_scope.PolicyIndex.by_policy.
+        linking: dict[str, set[str]] = defaultdict(set)
+        for p in self.policies.values():
+            if p.kind != "access":
+                continue
+            linking[p.fmc_id].add(p.fmc_id)
+            for link in p.links or []:
+                if link.get("id"):
+                    linking[str(link["id"])].add(p.fmc_id)
+        self.policy_access: dict[str, frozenset[str]] = {
+            pid: frozenset(owners) for pid, owners in linking.items()
+        }
         # Direct rule references per object (rule db id, policy) and route usage.
         self.rule_users: dict[str, set[int]] = defaultdict(set)
         for oid, rule_id in session.execute(
@@ -266,7 +314,7 @@ class Estate:
         }
         by_value: dict[tuple[str, str], list[Obj]] = defaultdict(list)
         for o in self.objects.values():
-            if o.value and not o.stub:
+            if o.value and not o.stub and not o.overridable and o.kind in VALUE_MERGE_KINDS:
                 by_value[(o.kind, o.value)].append(o)
         self.by_value = by_value
         self.rule_headers: dict[int, tuple[str, int, str, str]] = {}
@@ -289,12 +337,27 @@ class Estate:
                 ).all()
             )
         )
+        self._cyclic: frozenset[str] | None = None
         # (policy, zones) -> networks behind them; many rules share the same zones.
         self.zone_networks: dict[
             tuple[str, tuple[str, ...]], list[tuple[str, str | None, str]] | None
         ] = {}
 
     # ---- helpers
+
+    def cyclic_groups(self) -> frozenset[str]:
+        """Groups that (transitively) contain themselves: their membership has no well-defined
+        meaning to reason about, so no recommendation relies on it."""
+        if self._cyclic is None:
+            graph = GroupGraph(
+                {
+                    gid: [m.object_id for m in refs if m.object_id is not None]
+                    for gid, refs in self.members.items()
+                    if refs
+                }
+            )
+            self._cyclic = frozenset(g for cycle in strongly_connected(graph) for g in cycle)
+        return self._cyclic
 
     def ref_json(self, ref: Ref) -> dict[str, Any]:
         """A reference as it goes into a plan (object with its FMC type, or a literal)."""
@@ -314,33 +377,58 @@ class Estate:
 
     def rule_records(
         self, rule_ids: Iterable[int]
-    ) -> list[tuple[dict[str, Any], dict[str, list[Ref]]]]:
-        """(rule identity, references per field) of rules given by database id."""
+    ) -> list[tuple[dict[str, Any], dict[str, list[Ref]], set[str]]]:
+        """(rule identity, references per field, fields that also hold conditions the analysis
+        does not model) of rules given by database id."""
         ids = sorted(set(rule_ids))
         if not ids:
             return []
         heads: dict[int, dict[str, Any]] = {}
+        held: dict[int, set[str]] = {}
         refs: dict[int, dict[str, list[Ref]]] = defaultdict(lambda: defaultdict(list))
-        for rid, fmc_id, name, policy, policy_kind in self.session.execute(
-            select(Rule.id, Rule.fmc_id, Rule.name, Rule.policy_fmc_id, Rule.policy_kind).where(
-                Rule.id.in_(ids)
-            )
-        ).all():
-            heads[rid] = {"policy": policy, "policy_kind": policy_kind, "id": fmc_id, "name": name}
-        for rid, fld, oid, oname, literal, literal_kind in self.session.execute(
-            select(
-                RuleRef.rule_id,
-                RuleRef.field,
-                RuleRef.object_fmc_id,
-                RuleRef.object_name,
-                RuleRef.literal,
-                RuleRef.literal_kind,
-            )
-            .where(RuleRef.rule_id.in_(ids))
-            .order_by(RuleRef.id)
-        ).all():
-            refs[rid][fld].append(Ref(oid, oname or (literal or ""), literal, literal_kind))
-        return [(heads[rid], dict(refs[rid])) for rid in ids if rid in heads]
+        for chunk in _chunks(ids):
+            for rid, fmc_id, name, policy, policy_kind, attrs in self.session.execute(
+                select(
+                    Rule.id,
+                    Rule.fmc_id,
+                    Rule.name,
+                    Rule.policy_fmc_id,
+                    Rule.policy_kind,
+                    Rule.attrs,
+                ).where(Rule.id.in_(chunk))
+            ).all():
+                heads[rid] = {
+                    "policy": policy,
+                    "policy_kind": policy_kind,
+                    "id": fmc_id,
+                    "name": name,
+                }
+                held[rid] = set(rule_conditions(attrs))
+            for rid, fld, oid, oname, literal, literal_kind in self.session.execute(
+                select(
+                    RuleRef.rule_id,
+                    RuleRef.field,
+                    RuleRef.object_fmc_id,
+                    RuleRef.object_name,
+                    RuleRef.literal,
+                    RuleRef.literal_kind,
+                )
+                .where(RuleRef.rule_id.in_(chunk))
+                .order_by(RuleRef.id)
+            ).all():
+                refs[rid][fld].append(Ref(oid, oname or (literal or ""), literal, literal_kind))
+        return [(heads[rid], dict(refs[rid]), held[rid]) for rid in ids if rid in heads]
+
+    def access_policies(self, rule_ids: Iterable[int]) -> list[str]:
+        """Every access policy the given rules (database ids) belong to."""
+        ids = sorted(set(rule_ids))
+        found: set[str] = set()
+        for chunk in _chunks(ids):
+            for policy in self.session.scalars(
+                select(Rule.policy_fmc_id).where(Rule.id.in_(chunk)).distinct()
+            ):
+                found |= self.policy_access.get(policy, frozenset())
+        return sorted(found)
 
     def repoint(
         self,
@@ -378,7 +466,7 @@ class Estate:
                     unique.append(x)
             return unique, changed
 
-        for rule, fields in self.rule_records(rule_ids):
+        for rule, fields, held in self.rule_records(rule_ids):
             old: dict[str, list[dict[str, Any]]] = {}
             new: dict[str, list[dict[str, Any]]] = {}
             for f, refs in fields.items():
@@ -386,6 +474,10 @@ class Estate:
                 if changed:
                     old[f] = self.refs_json(refs)
                     new[f] = rewritten
+            if set(new) & held:
+                # Writing the field back would drop what the analysis does not model in it
+                # (URL categories, inline application filters, VLAN literals).
+                pb.block("unmodelled_conditions")
             if new:
                 pb.update_rule(rule, old, new)
         for gid in sorted(set(groups)):
@@ -482,10 +574,10 @@ class Estate:
     def rule_sample(self, rule_ids: Iterable[int]) -> list[dict[str, Any]]:
         ids = sorted(rule_ids)
         missing = [i for i in ids if i not in self.rule_headers]
-        if missing:
+        for chunk in _chunks(missing):
             for rid, fmc_id, index, name, policy in self.session.execute(
                 select(Rule.id, Rule.fmc_id, Rule.rule_index, Rule.name, Rule.policy_fmc_id).where(
-                    Rule.id.in_(missing)
+                    Rule.id.in_(chunk)
                 )
             ).all():
                 self.rule_headers[rid] = (fmc_id, index, name, policy)
@@ -765,8 +857,8 @@ def recommend_removals(estate: Estate, policy: Policy, rules: list[RuleInfo]) ->
         shadow_id = info.score.shadowed_by if info.score else None
         if shadow_id is not None and r.enabled:
             by = by_fmc.get(shadow_id)
-            if by is None:
-                continue
+            if by is None or by.unmodelled:
+                continue  # only a fully modelled rule is proven to match all of it
             conflict = verdict(by.rule.action) != verdict(r.action)
             drafts.append(
                 Draft(
@@ -900,7 +992,7 @@ def recommend_split_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
         r = info.rule
         if not (r.enabled and info.permit and "multi_tier_destination" in _reasons(info)):
             continue
-        if shadowed(info):
+        if shadowed(info) or info.unmodelled:
             continue
         if info.refs.get("dst_sgt") or info.refs.get("dst_dyn") or not info.refs.get("dst_net"):
             continue
@@ -990,10 +1082,15 @@ def _merge_key(info: RuleInfo) -> tuple[Any, ...]:
         r.section,
         r.category,
         r.action,
+        r.rule_type,
         r.ips_policy_id,
         r.file_policy_id,
+        r.variable_set,
         r.log_begin,
         r.log_end,
+        r.send_events,
+        tuple(sorted(unmodelled(r.attrs))),
+        tuple(sorted((d, tuple(sorted(t))) for d, t in rule_conditions(r.attrs).items())),
         fields,
     )
 
@@ -1005,7 +1102,7 @@ def recommend_merge_rules(estate: Estate, policy: Policy, rules: list[RuleInfo])
     run: list[RuleInfo] = []
 
     def eligible(i: RuleInfo) -> bool:
-        return i.rule.enabled and i.permit and bool(i.refs.get("src_net"))
+        return i.rule.enabled and i.permit and bool(i.refs.get("src_net")) and not i.unmodelled
 
     def flush() -> None:
         if len(run) >= 2:
@@ -1144,7 +1241,7 @@ def recommend_tighten(estate: Estate, policy: Policy, rules: list[RuleInfo]) -> 
     drafts: list[Draft] = []
     for info in rules:
         r = info.rule
-        if not (r.enabled and info.permit) or shadowed(info):
+        if not (r.enabled and info.permit) or shadowed(info) or info.unmodelled:
             continue
         source_any = not any(info.refs.get(f) for f in ("src_net", "src_sgt", "src_dyn", "user"))
         zones = {x.object_id for x in info.refs.get("src_zone", []) if x.object_id}
@@ -1413,7 +1510,7 @@ def recommend_object_merges(estate: Estate) -> list[Draft]:
             )
     by_leaves: dict[tuple[str, frozenset[str]], list[Obj]] = defaultdict(list)
     for o in estate.objects.values():
-        if o.kind not in GROUP_KINDS or o.stub:
+        if o.kind not in GROUP_KINDS or o.stub or o.overridable:
             continue
         leaves = estate.resolver.leaves(o.fmc_id)
         if leaves.tokens or leaves.address_tokens:
@@ -1440,7 +1537,9 @@ def recommend_split_groups(estate: Estate) -> list[Draft]:
     convention = estate.conventions.get("network_group")
     taken = {o.name for o in estate.objects.values()}
     for o in sorted(estate.objects.values(), key=lambda x: x.name):
-        if o.kind != "network_group" or o.fixed or not estate.rule_users.get(o.fmc_id):
+        if o.kind != "network_group" or o.fixed or o.overridable:
+            continue
+        if not estate.rule_users.get(o.fmc_id):
             continue
         parts: dict[str, list[Ref]] = defaultdict(list)
         splittable = True
@@ -1753,6 +1852,8 @@ def recommend_literals(estate: Estate) -> list[Draft]:
                         "create": create,
                     },
                     "affected_rules": {"total": len(rules), "sample": estate.rule_sample(rules)},
+                    # Every access policy of every affected rule (the sample is capped).
+                    "policies": estate.access_policies(rules),
                 },
                 plan=pb.build(),
             )
@@ -1829,7 +1930,10 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
         rules = load_policy_rules(estate, policy.fmc_id)
         if not rules:
             continue
-        drafts += recommend_removals(estate, policy, rules)
+        if policy.kind != "decryption":
+            # Decryption rule conditions (certificates, TLS versions ...) are not modelled:
+            # no decryption rule is ever proven unreachable.
+            drafts += recommend_removals(estate, policy, rules)
         if policy.kind in ACE_KINDS:
             ace_rules.update((info.rule.id, info) for info in rules)
         if policy.kind in ("access", "prefilter"):

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { JobRun, JobsList } from '../api/types';
@@ -40,6 +40,13 @@ export function JobsPage() {
     return () => {
       window.clearInterval(id);
     };
+  }, [active, reload]);
+
+  // The count of running jobs changed (also to none): look again, so a job that just ended shows it.
+  const lastActive = useRef(active);
+  useEffect(() => {
+    if (lastActive.current !== active) reload();
+    lastActive.current = active;
   }, [active, reload]);
 
   const rows = history.data?.rows ?? [];

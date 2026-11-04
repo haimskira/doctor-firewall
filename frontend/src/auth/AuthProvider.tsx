@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { ApiError, api, setCsrfToken } from '../api/client';
+import { ApiError, UNAUTHORIZED_EVENT, api, setCsrfToken } from '../api/client';
 import type { Language, Me, Permission, Theme } from '../api/types';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -67,6 +67,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [setMe]);
+
+  // The session expired (any API call answered 401): back to the sign-in page.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setCsrfToken(null);
+      setState((current) => (current.status === 'authenticated' ? { status: 'anonymous' } : current));
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    };
+  }, []);
 
   const login = useCallback(
     async (username: string, password: string) => {

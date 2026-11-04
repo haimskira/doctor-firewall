@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     deploy_timeout_seconds: int = Field(default=1800, ge=60, le=6 * 3600)
     # A rollback that could not finish (FMC unreachable) is retried after this pause.
     rollback_retry_seconds: float = Field(default=30.0, ge=0, le=600)
-    write_lock_ttl_seconds: int = Field(default=2 * 3600, ge=300, le=24 * 3600)
+    write_lock_ttl_seconds: int = Field(default=4 * 3600, ge=300, le=24 * 3600)
     # After a deployment: watch hit counters this long, this often (app.enforce.watch); alert
     # when a BLOCK rule behind a changed rule gets at least this many new hits and this many
     # times its rate before the deployment.

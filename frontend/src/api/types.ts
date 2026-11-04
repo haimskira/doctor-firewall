@@ -790,6 +790,8 @@ export interface ProofDifference {
 
 export interface TrafficProof {
   ok: boolean;
+  /** Set when the proof could not be computed (then ok is false and the counts may be missing). */
+  error?: string | null;
   exhaustive: boolean;
   flows: number;
   differences: number;

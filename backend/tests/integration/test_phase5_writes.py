@@ -623,7 +623,11 @@ def test_a_revert_whose_worker_died_finishes_as_reverted(
     assert cs["status"] != "failed"
     with get_sessionmaker()() as s:
         actions = list(
-            s.scalars(select(AuditRecord.action).where(AuditRecord.actor == "system:enforcer"))
+            s.scalars(
+                select(AuditRecord.action)
+                .where(AuditRecord.actor == "system:enforcer")
+                .order_by(AuditRecord.id)
+            )
         )
     assert actions[-1] == "changeset.batch_revert_ok"
     flow.close()
@@ -783,4 +787,365 @@ def test_unreachable_fmc_leaves_the_batch_approved(
         assert (batch.error or "").startswith("unreachable")
         actions = list(s.scalars(select(AuditRecord.action)))
     assert "changeset.batch_not_started" in actions
+    flow.close()
+
+
+# ---------------------------------------------------------------- review: state-machine holes
+
+
+def _revert(batch_id: int) -> dict[str, Any]:
+    from app.enforce.revert import revert_batch
+
+    return asyncio.run(
+        revert_batch(
+            batch_id,
+            sessions=get_sessionmaker(),
+            box=get_secretbox(),
+            audit=get_audit(),
+            settings=get_settings(),
+            lock=redis_lock(get_redis()),
+            requested_by="p5w-appr",
+            poll_seconds=0,
+            sleep=_no_wait,
+        )
+    )
+
+
+def _stage(flow: Flow, recs: list[dict[str, Any]], title: str) -> dict[str, Any]:
+    """Accept and stage recommendations (no proof, no approval)."""
+    for rec in recs:
+        flow.opt.put(
+            f"/api/snapshots/{flow.sid}/recommendations/{rec['id']}/decision",
+            headers=flow.oh,
+            json={"status": "accepted"},
+        )
+    made = flow.opt.post(
+        "/api/changesets",
+        headers=flow.oh,
+        json={
+            "snapshot_id": flow.sid,
+            "recommendation_ids": [r["id"] for r in recs],
+            "title": title,
+            "ticket_id": "CHG-5100",
+        },
+    )
+    assert made.status_code == 201, made.text
+    cs: dict[str, Any] = made.json()
+    return cs
+
+
+def test_an_unexpected_error_after_writes_is_rolled_back(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review: only FMC / batch errors were rolled back; any other exception after a write
+    escaped with the writes in place and the batch "running" for good."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)["MIXED_TIERS_SQL"]
+
+    def boom(_self: Any) -> None:
+        raise KeyError("odd answer")
+
+    monkeypatch.setattr(executor.Writer, "record_after", boom)
+    with pytest.raises(KeyError):
+        _run(batch_id)
+    after = flow.rules(policy)
+    assert "MIXED_TIERS_SQL_SILVER" not in after
+    assert after["MIXED_TIERS_SQL"]["destinationNetworks"] == before["destinationNetworks"]
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["status"] == "rolled_back"
+    assert batch["error"].startswith("internal_error: KeyError")
+    flow.close()
+
+
+def test_a_batch_whose_worker_died_before_writing_can_be_closed(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """Review: "running" with an empty journal was neither resumable nor cancellable."""
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs_id, batch_id = flow.approved_batch([unused])
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.status, b.journal = "running", []
+        b.started_at = datetime.now(UTC) - timedelta(minutes=5)
+    cancel = f"/api/changesets/{cs_id}/cancel"
+    refused = flow.opt.post(cancel, headers=flow.oh)  # may still be running: not yet
+    assert (refused.status_code, refused.json()["detail"]) == (409, "batch_running")
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.started_at = datetime.now(UTC) - timedelta(days=2)
+    closed = flow.opt.post(cancel, headers=flow.oh)
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "cancelled"
+    assert closed.json()["batches"][0]["status"] == "cancelled"
+    flow.close()
+
+
+def test_a_revert_that_fails_before_writing_leaves_the_batch_deployed(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review: an FMC error before the first undo write made a deployed batch "failed", and the
+    resume then undid it without the changed-since checks."""
+    from app.enforce import revert as revert_module
+    from app.fmc.errors import FmcUnavailableError
+
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    assert _run(batch_id)["ok"] is True
+    with get_sessionmaker()() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        started, results = b.started_at, list(b.results)
+
+    async def unreachable(_fmc: Any) -> str:
+        raise FmcUnavailableError("FMC unreachable: ConnectTimeout")
+
+    monkeypatch.setattr(revert_module, "server_version", unreachable)
+    result = _revert(batch_id)
+    assert (result["ok"], result["status"], result["error"]) == (False, "deployed", "unreachable")
+    with get_sessionmaker()() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        assert (b.status, b.started_at, b.results) == ("deployed", started, results)
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["rollback_resumable"] is False
+    assert "MIXED_TIERS_SQL_SILVER" in flow.rules(split["policy_fmc_id"])
+    flow.close()
+
+
+def test_an_interrupted_revert_is_finished_as_a_revert(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """Review: a revert that ended "failed" (undo incomplete) was resumed as the rollback of a
+    failed run: "rolled_back", and the completed changeset turned "failed"."""
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    policy = split["policy_fmc_id"]
+    before = flow.rules(policy)
+    assert _run(batch_id)["ok"] is True
+    with get_sessionmaker()() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        deployed_at = b.finished_at
+    assert deployed_at is not None
+    # The restore of the rule lands, its answer is lost and the FMC goes away.
+    mock("POST", "/mock/faults", {"outage_on": "MIXED_TIERS_SQL"})
+    result = _revert(batch_id)
+    assert (result["ok"], result["status"]) == (False, "failed"), result
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["status"] == "completed"  # a revert never touches the changeset
+    batch = cs["batches"][0]
+    assert batch["rollback_resumable"] is True
+    # The revert restarted the clock: a live revert is not offered as a stale run.
+    assert datetime.fromisoformat(batch["started_at"]) > deployed_at
+    mock("POST", "/mock/faults", {})
+    resumed = _resume(batch_id)
+    assert (resumed["ok"], resumed["status"]) == (True, "reverted"), resumed
+    assert list(flow.rules(policy)) == list(before)
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["status"] == "completed"
+    assert cs["batches"][0]["status"] == "reverted"
+    flow.close()
+
+
+def test_a_revert_not_restored_as_before_can_still_be_redeployed(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review: undone in the FMC but not verified: "failed" with nothing left to resume, while
+    the devices still ran the batch. Now the re-deploy is left to do."""
+    from app.enforce import revert as revert_module
+
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    cs_id, batch_id = flow.approved_batch([split])
+    assert _run(batch_id)["ok"] is True
+
+    async def differs(*_args: Any) -> list[str]:
+        return ["MIXED_TIERS_SQL: differs from before the batch"]
+
+    monkeypatch.setattr(revert_module, "_not_restored", differs)
+    result = _revert(batch_id)
+    assert (result["ok"], result["status"]) == (False, "failed"), result
+    assert result["error"].startswith("not_restored")
+    batch = client.get(f"/api/changesets/{cs_id}").json()["batches"][0]
+    assert batch["rollback_resumable"] is True
+    assert any(
+        r["op"] == "undo_failed" and "redeploy after revert" in r["detail"]
+        for r in batch["results"]
+    )
+    url = f"/api/changesets/{cs_id}/batches/1/rollback"
+    assert flow.appr.post(url, headers=flow.ah).status_code == 202
+    resumed = _resume(batch_id)
+    assert (resumed["ok"], resumed["status"]) == (True, "reverted"), resumed
+    assert "items" not in mock("GET", CONFIG + "/deployment/deployabledevices")  # redeployed
+    cs = client.get(f"/api/changesets/{cs_id}").json()
+    assert cs["status"] == "completed"
+    flow.close()
+
+
+def test_a_batch_planned_before_another_changeset_ran_is_refused(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """Review: staleness was only checked when staging. Two changesets from one snapshot: once
+    one deploys, the other's plan no longer matches the FMC — neither approved nor run."""
+    from app.enforce.staleness import stale_since
+    from app.models.inventory import Snapshot
+
+    flow = Flow(client, admin)
+    split = flow.find("split_rule", "MIXED_TIERS_SQL")
+    rename = flow.find("rename_role", "GRP_10.30.0.0")
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    first_id, first = flow.approved_batch([split])
+    second_id, second = flow.approved_batch([rename])
+    third = _stage(flow, [unused], "planned on the same snapshot")
+    jobs.prove_changeset_job(third["id"])
+
+    assert _run(first)["ok"] is True
+    with get_sessionmaker()() as s:
+        snap = s.get(Snapshot, flow.sid)
+        assert snap is not None
+        # A changeset's own batches are part of its plan: never stale because of them.
+        assert stale_since(s, snap, exclude_changeset=first_id) is None
+        assert stale_since(s, snap, exclude_changeset=second_id) is not None
+
+    result = _run(second)
+    assert (result["ok"], result["error"], result["status"]) == (
+        False,
+        "snapshot_stale",
+        "approved",
+    )
+    with get_sessionmaker()() as s:
+        b = s.get(Batch, second)
+        assert b is not None
+        assert b.status == "approved"
+        assert (b.error or "").startswith("snapshot_stale")
+        assert b.journal == []
+    groups = {g["name"] for g in mock("GET", CONFIG + "/object/networkgroups")["items"]}
+    assert "GRP_10.30.0.0" in groups  # nothing written
+
+    refused = flow.appr.post(f"/api/changesets/{third['id']}/batches/1/approve", headers=flow.ah)
+    assert refused.status_code == 409
+    assert (refused.json()["detail"], refused.json()["changeset"]) == ("snapshot_stale", first_id)
+    flow.close()
+
+
+def test_a_reverted_batch_makes_older_snapshots_stale(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    from app.enforce.staleness import stale_since
+    from app.models.inventory import Snapshot
+
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs_id, batch_id = flow.approved_batch([unused])
+    assert _run(batch_id)["ok"] is True
+    assert _revert(batch_id)["ok"] is True
+    with get_sessionmaker()() as s:
+        snap = s.get(Snapshot, flow.sid)
+        assert snap is not None
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        assert b.status == "reverted"
+        # GRP_UNUSED was re-created with a new id: the snapshot's model no longer matches.
+        stale = stale_since(s, snap)
+        assert stale is not None
+        assert stale["changeset_id"] == cs_id
+    flow.close()
+
+
+def test_staging_takes_a_lock_per_fmc(client: TestClient, admin: dict[str, str]) -> None:
+    """Review: two stagings at once (a double submit) both passed the "already staged" check.
+    The check and the insert now run under a transaction-scoped advisory lock per FMC."""
+    import threading
+
+    from sqlalchemy import text
+
+    from app.api.changesets import staging_lock_key
+    from app.models.inventory import Snapshot
+
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    flow.opt.put(
+        f"/api/snapshots/{flow.sid}/recommendations/{unused['id']}/decision",
+        headers=flow.oh,
+        json={"status": "accepted"},
+    )
+    with get_sessionmaker()() as s:
+        snap = s.get(Snapshot, flow.sid)
+        assert snap is not None
+        key = staging_lock_key(snap.connection_id)
+    body = {
+        "snapshot_id": flow.sid,
+        "recommendation_ids": [unused["id"]],
+        "title": "double submit",
+        "ticket_id": "CHG-5101",
+    }
+    answers: list[Any] = []
+    holder = get_sessionmaker()()
+    try:
+        holder.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
+        worker = threading.Thread(
+            target=lambda: answers.append(
+                flow.opt.post("/api/changesets", headers=flow.oh, json=body)
+            )
+        )
+        worker.start()
+        worker.join(timeout=2)
+        assert worker.is_alive()  # waits for the lock
+    finally:
+        holder.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+        holder.close()
+    worker.join(timeout=30)
+    assert answers[0].status_code == 201, answers[0].text
+    again = flow.opt.post("/api/changesets", headers=flow.oh, json=body)
+    assert (again.status_code, again.json()["detail"]) == (409, "already_staged")
+    flow.close()
+
+
+def test_a_failed_proof_is_shown_and_can_be_computed_again(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review: when the proof job failed, the proof stayed empty and the batch could never be
+    approved. The failure is recorded on the batch; POST .../prove computes it again."""
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs = _stage(flow, [unused], "proof fails")
+
+    def broken(*_args: Any) -> dict[int, bool]:
+        raise RuntimeError("worker trouble")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(jobs, "prove_changeset", broken)
+        with pytest.raises(RuntimeError):
+            jobs.prove_changeset_job(cs["id"])
+    batch = client.get(f"/api/changesets/{cs['id']}").json()["batches"][0]
+    assert batch["proof"]["ok"] is False
+    assert batch["proof"]["error"] == "proof_error"
+    approve = f"/api/changesets/{cs['id']}/batches/1/approve"
+    refused = flow.appr.post(approve, headers=flow.ah)
+    assert (refused.status_code, refused.json()["detail"]) == (409, "proof_error")
+
+    prove = f"/api/changesets/{cs['id']}/prove"
+    make_user("p5w-view2", ["viewer"])
+    with TestClient(client.app, base_url="https://testserver") as viewer:
+        denied = viewer.post(prove, headers={"X-CSRF-Token": login(viewer, "p5w-view2")})
+        assert denied.status_code == 403
+    queued = flow.opt.post(prove, headers=flow.oh)
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["batches"] == [1]
+    assert isinstance(queued.json()["run_id"], int)
+    jobs.prove_changeset_job(cs["id"])  # what the worker does
+    batch = client.get(f"/api/changesets/{cs['id']}").json()["batches"][0]
+    assert batch["proof"]["ok"] is True
+    assert "error" not in batch["proof"]
+    again = flow.opt.post(prove, headers=flow.oh)
+    assert (again.status_code, again.json()["detail"]) == (409, "proof_not_needed")
+    assert flow.appr.post(approve, headers=flow.ah).status_code == 200
     flow.close()

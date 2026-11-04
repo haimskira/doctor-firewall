@@ -36,6 +36,14 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+/** Window event raised when the session is gone (a 401 outside /api/auth/*); AuthProvider listens. */
+export const UNAUTHORIZED_EVENT = 'df:unauthorized';
+
+/** Tell the app the session has ended (for callers that use fetch() directly). */
+export function notifyUnauthorized(): void {
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -72,6 +80,8 @@ export async function api<T>(path: string, method: Method = 'GET', body?: unknow
     data = null;
   }
   if (!response.ok) {
+    // The login / session-check calls answer 401 by design: only other calls mean "session expired".
+    if (response.status === 401 && !path.startsWith('/api/auth/')) notifyUnauthorized();
     const code = isRecord(data) && typeof data['detail'] === 'string' ? data['detail'] : 'http_error';
     throw new ApiError(response.status, code, data);
   }

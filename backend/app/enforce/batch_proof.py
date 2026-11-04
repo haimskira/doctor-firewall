@@ -52,8 +52,36 @@ def model_before(db: Session, changeset_id: int, seq: int) -> Model:
     return model
 
 
+def needs_proof(proof: dict[str, Any] | None) -> bool:
+    """No proof yet, or the computation failed (``{"ok": false, "error": ...}``)."""
+    return proof is None or "error" in proof
+
+
+def record_proof_error(
+    sessions: sessionmaker[Session], changeset_id: int, code: str, detail: str
+) -> list[int]:
+    """The proof could not be computed: say so on every batch still without one (the batch
+    cannot be approved; ``POST /api/changesets/{id}/prove`` computes it again)."""
+    report: dict[str, Any] = {
+        "ok": False,
+        "error": code,
+        "detail": detail[:200],
+        "computed_at": datetime.now(UTC).isoformat(),
+    }
+    marked: list[int] = []
+    with sessions.begin() as db:
+        for batch in db.scalars(
+            select(Batch).where(Batch.changeset_id == changeset_id).with_for_update()
+        ):
+            if batch.proof is None:
+                batch.proof = dict(report)
+                marked.append(batch.seq)
+    return marked
+
+
 def prove_changeset(sessions: sessionmaker[Session], changeset_id: int) -> dict[int, bool]:
-    """Compute and store the proof of every batch; returns batch seq -> proof ok."""
+    """Compute and store the proof of every batch that has none (or whose computation failed);
+    returns batch seq -> proof ok. A proof already computed is never replaced."""
     with sessions() as db:
         cs = db.get(Changeset, changeset_id)
         if cs is None or cs.snapshot_id is None:
@@ -67,14 +95,24 @@ def prove_changeset(sessions: sessionmaker[Session], changeset_id: int) -> dict[
     for n, seq in enumerate(seqs):
         progress.advance(n, len(seqs), batch=seq)
         after = apply_plan(model, ops[seq])
+        with sessions() as db:
+            existing = db.scalar(
+                select(Batch.proof).where(Batch.changeset_id == changeset_id, Batch.seq == seq)
+            )
+        if not needs_proof(existing):
+            outcome[seq] = bool((existing or {}).get("ok"))
+            model = after
+            continue
         report = compare(model, after)
         report["behavior"] = behaviors.get(seq, "preserves")
         report["computed_at"] = datetime.now(UTC).isoformat()
         with sessions.begin() as db:
             batch = db.scalar(
-                select(Batch).where(Batch.changeset_id == changeset_id, Batch.seq == seq)
+                select(Batch)
+                .where(Batch.changeset_id == changeset_id, Batch.seq == seq)
+                .with_for_update()
             )
-            if batch is not None:
+            if batch is not None and needs_proof(batch.proof):
                 batch.proof = report
         outcome[seq] = bool(report["ok"])
         model = after

@@ -124,6 +124,39 @@ describe('RecommendationsPage', () => {
     expect(calls.filter((c) => c.url.endsWith('/decisions')).map((c) => c.body)[1]).toEqual({ status: 'accepted', kind: 'split_rule' });
   });
 
+  it('accepts all only within the chosen access policy', async () => {
+    const calls = setup(
+      '/recommendations?policy=p1',
+      <Route path="/recommendations" element={<RecommendationsPage />} />,
+      recRoutes((req) => {
+        if (req.url === '/api/snapshots/7/policies') {
+          return {
+            status: 200,
+            body: [{ id: 'p1', kind: 'access', name: 'HQ-ACP', default_action: 'BLOCK', rule_count: 40, links: [], attrs: {}, clusters: ['c1'] }],
+          };
+        }
+        if (req.url === '/api/snapshots/7/recommendations/decisions') {
+          return {
+            status: 200,
+            body: { count: 3, changing: 0, deploy_cost: 6, ace_delta: -2, skipped: {}, deploy_limit: 100, batches: 1 },
+          };
+        }
+        return undefined;
+      }),
+      ['policy:read', 'changeset:write'],
+    );
+    await screen.findByRole('option', { name: /HQ-ACP/ });
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept all' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Confirm a decision for many recommendations' });
+    expect(within(dialog).getByText('Only in access policy HQ-ACP.')).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Accept 3' }));
+    expect(await screen.findByText('3 recommendations accepted.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.url.endsWith('/decisions')).map((c) => c.body)).toEqual([
+      { status: 'accepted', policy: 'p1', dry_run: true },
+      { status: 'accepted', policy: 'p1' },
+    ]);
+  });
+
   it('shows the queue, the inline and split previews, and records a local decision', async () => {
     const calls = setup(
       '/recommendations',

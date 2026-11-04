@@ -134,6 +134,17 @@ def _strings(documents: Iterable[Any]) -> Iterable[str]:
             stack.extend(item)
 
 
+def _explicit(preview: Any) -> list[str] | None:
+    """The access policies a recommendation states itself (``preview["policies"]``): the
+    analysis knows every rule it affects, while the preview lists only a sample of them."""
+    if not isinstance(preview, dict):
+        return None
+    policies = preview.get("policies")
+    if not isinstance(policies, list):
+        return None
+    return sorted({str(p) for p in policies})
+
+
 def assign(session: Session, snapshot_id: int) -> None:
     """Store ``policy_ids`` on every finding and recommendation of the snapshot. Caller commits."""
     index = PolicyIndex(session, snapshot_id)
@@ -146,7 +157,14 @@ def assign(session: Session, snapshot_id: int) -> None:
         )
     ]
     recommendations = [
-        {"id": rid, "ids": index.of(policy, targets, preview)}
+        {
+            "id": rid,
+            "ids": (
+                explicit
+                if (explicit := _explicit(preview)) is not None
+                else index.of(policy, targets, preview)
+            ),
+        }
         for rid, policy, targets, preview in session.execute(
             select(
                 Recommendation.id,

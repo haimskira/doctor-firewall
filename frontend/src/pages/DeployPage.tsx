@@ -1,16 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { api, errorCode } from '../api/client';
-import type { BatchResult, Changeset, ChangesetBatch, ChangesetDetail, PlanOp, TrafficProof } from '../api/types';
+import type { BatchResult, Changeset, ChangesetBatch, ChangesetDetail, JobRun, PlanOp, TrafficProof } from '../api/types';
 import { useAuth, useMe } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
-import { JobProgress, useJobText, useJobs } from '../components/jobs';
+import { JobProgress, useBatchError, useJobText, useJobs } from '../components/jobs';
 import { tagGroup } from '../components/recommendations';
 import { SortedTable } from '../components/sort';
 import { useApi, useQueryParam } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 
 const REFRESH_MS = 4000;
+
+const CHANGESET_JOBS: ReadonlySet<JobRun['kind']> = new Set(['batch', 'rollback', 'revert', 'proof']);
+
+function isActive(job: JobRun): boolean {
+  return job.status === 'queued' || job.status === 'running';
+}
+
+/** The newest traffic-proof job of a changeset (the jobs list is newest first, but sort to be sure). */
+function latestProofJob(jobs: JobRun[], changesetId: number): JobRun | undefined {
+  return jobs.filter((j) => j.kind === 'proof' && j.changeset_id === changesetId).sort((a, b) => b.id - a.id)[0];
+}
 
 /** Human text for one plan operation. */
 export function useOpLabel(): (op: PlanOp) => string {
@@ -33,12 +45,30 @@ export function DeployPage() {
   const list = useApi<Changeset[]>('/api/changesets');
   const selected = selectedParam !== null && /^\d+$/.test(selectedParam) ? Number(selectedParam) : null;
   const detail = useApi<ChangesetDetail>(selected === null ? null : `/api/changesets/${String(selected)}`);
-  // Follow while a batch runs or its traffic proof is still being computed.
-  const running = (detail.data?.batches ?? []).some(
-    (b) => b.status === 'running' || b.status === 'approved' || (b.status === 'pending' && b.proof == null),
-  );
+  const { jobs } = useJobs();
+  // A job of this changeset (write, rollback, revert, proof) is queued or running.
+  const jobActive = selected !== null && jobs.some((j) => j.changeset_id === selected && CHANGESET_JOBS.has(j.kind) && isActive(j));
+  // The proof job ended (failed, or done without a proof): waiting for a proof would never end.
+  const proofJob = selected === null ? undefined : latestProofJob(jobs, selected);
+  const proofEnded = proofJob !== undefined && !isActive(proofJob);
+  // Follow while a batch runs, its traffic proof is still being computed, or a job of it runs.
+  const running =
+    jobActive ||
+    (detail.data?.batches ?? []).some(
+      (b) => b.status === 'running' || b.status === 'approved' || (b.status === 'pending' && b.proof == null && !proofEnded),
+    );
   const reloadList = list.reload;
   const reloadDetail = detail.reload;
+
+  // When the changeset's job ends, look once more (e.g. "Finish rollback" disappears).
+  const wasActive = useRef(jobActive);
+  useEffect(() => {
+    if (wasActive.current && !jobActive) {
+      reloadDetail();
+      reloadList();
+    }
+    wasActive.current = jobActive;
+  }, [jobActive, reloadDetail, reloadList]);
 
   // While a batch is queued or running, follow its progress.
   useEffect(() => {
@@ -147,14 +177,21 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
   const isAuthor = cs.created_by === me.username;
   const open = cs.status === 'open' || cs.status === 'in_progress';
   const opLabel = useOpLabel();
-  const batchError = (raw: string) => {
-    const [code = '', ...rest] = raw.split(': ');
-    const detail = rest.join(': ').replace(/^drift: /, '');
-    const key = `dep.err.${code}`;
-    return isMessageKey(key) ? t(key, { detail }) : t('dep.error', { error: raw });
-  };
+  const batchError = useBatchError();
+  const proofJob = latestProofJob(jobs.jobs, cs.id);
 
-  const [acknowledged, setAcknowledged] = useState(false);
+  // "I acknowledge the traffic change" holds for one batch only (its seq), until the next action.
+  const [acknowledgedSeq, setAcknowledgedSeq] = useState<number | null>(null);
+
+  /** Why the proof of a pending batch is missing for good (null while it may still come). */
+  function proofFailure(b: ChangesetBatch): ReactNode {
+    if (b.status !== 'pending') return null;
+    if (b.proof != null && typeof b.proof.error === 'string' && b.proof.error !== '') return tError(b.proof.error);
+    if (b.proof === null && proofJob !== undefined && !isActive(proofJob)) {
+      return proofJob.status === 'failed' ? jobText.error(proofJob) : tError('proof_pending');
+    }
+    return null;
+  }
 
   async function act(path: string, confirmText?: string, body?: unknown) {
     if (confirmText !== undefined && !window.confirm(confirmText)) return;
@@ -164,8 +201,10 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
     try {
       await api(path, 'POST', body);
       jobs.kick();
+      setAcknowledgedSeq(null);
       if (path.endsWith('/run')) setNotice(t('dep.queued'));
       if (path.endsWith('/rollback')) setNotice(t('dep.rollbackQueued'));
+      if (path.endsWith('/prove')) setNotice(t('dep.proof.requeued'));
       onChanged();
     } catch (err) {
       setError(errorCode(err));
@@ -213,6 +252,8 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
         const items = cs.items.filter((i) => i.batch_seq === b.seq);
         const isNext = firstOpen?.seq === b.seq;
         const mayAct = open && can('deploy:approve') && !isAuthor && isNext;
+        const acknowledged = acknowledgedSeq === b.seq;
+        const failure = proofFailure(b);
         return (
           <article key={b.seq} className={`batch batch-${b.status}`} aria-label={t('dep.batch', { cs: cs.id, seq: b.seq })}>
             <header className="row spread">
@@ -274,12 +315,29 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
             </header>
             <p className={`batch-what batch-what-${b.status}`}>{t(`dep.what.${b.status}`)}</p>
             {b.error !== null && <Alert kind={b.status === 'failed' ? 'error' : 'info'}>{batchError(b.error)}</Alert>}
-            <ProofView
-              batch={b}
-              canAcknowledge={mayAct && b.status === 'pending'}
-              acknowledged={acknowledged}
-              onAcknowledge={setAcknowledged}
-            />
+            {failure !== null ? (
+              <div className="stack">
+                <Alert kind="error">
+                  {t('dep.proof.failed')} {failure}
+                </Alert>
+                {open && can('changeset:write') && (
+                  <div className="row">
+                    <button type="button" className="secondary" disabled={busy} onClick={() => void act(`${base}/prove`)}>
+                      {t('dep.proof.retry')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ProofView
+                batch={b}
+                canAcknowledge={mayAct && b.status === 'pending'}
+                acknowledged={acknowledged}
+                onAcknowledge={(value) => {
+                  setAcknowledgedSeq(value ? b.seq : null);
+                }}
+              />
+            )}
             {running !== undefined && (b.status === 'running' || b.status === 'approved') && running.title.endsWith(` · ${String(b.seq)}`) && (
               <div className="batch-job">
                 <JobProgress job={running} />
@@ -323,6 +381,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
 function approvable(b: ChangesetBatch, acknowledged: boolean): boolean {
   const proof = b.proof;
   if (proof == null) return false;
+  if (proof.error != null) return false;
   if (proof.differences === 0) return true;
   return proof.behavior === 'changes' && acknowledged;
 }
@@ -397,6 +456,7 @@ function ProofView({
   if (proof === null) {
     return <p className="proof proof-pending muted small">{t('dep.proof.pending')}</p>;
   }
+  if (proof.error != null) return null; // shown by the panel, with the way to recompute it
   const scope = proof.exhaustive ? t('dep.proof.exhaustive') : t('dep.proof.sampled');
   return (
     <div className="stack proof-block">

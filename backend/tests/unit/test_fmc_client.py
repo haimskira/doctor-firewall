@@ -357,3 +357,49 @@ def test_build_ssl_context(tmp_path: Path) -> None:
     assert ctx.check_hostname
     assert ctx.verify_mode == ssl.CERT_REQUIRED
     assert ctx.minimum_version >= ssl.TLSVersion.TLSv1_2
+
+
+def test_gateway_errors_retry_reads_but_never_writes(store: TokenStore) -> None:
+    """Over the lab VPN a read sometimes gets 503 / 504 from the gateway: it is read again. A
+    write answered so may have been applied behind the gateway: never repeated."""
+    good = _transport(store)
+    fail = {"GET": 0, "POST": 0}
+    calls = {"GET": 0, "POST": 0}
+    slept: list[float] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in ("/read", "/write"):
+            calls[request.method] += 1
+            if fail[request.method] > 0:
+                fail[request.method] -= 1
+                return httpx.Response(503 if request.method == "GET" else 504)
+            return httpx.Response(200, json={"ok": True})
+        return await good.handle_async_request(request)
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    async def run() -> None:
+        async with FmcSession(
+            host="fmc-mock",
+            port=443,
+            username="api_user",
+            password_provider=lambda: bytearray(PASSWORD.encode()),
+            ssl_context=_ssl(),
+            timeout=5,
+            transport=httpx.MockTransport(handler),
+            throttle=ThrottlePolicy(sleep=fake_sleep),
+        ) as fmc:
+            fail["GET"] = 2
+            assert await fmc.get_json("/read") == {"ok": True}
+            fail["GET"] = 10  # more than the retries: it surfaces, with its status
+            with pytest.raises(FmcProtocolError) as raised:
+                await fmc.get_json("/read")
+            assert raised.value.status == 503
+            fail["POST"] = 1
+            with pytest.raises(FmcProtocolError):
+                await fmc.write_json("POST", "/write", {"name": "x"})
+
+    asyncio.run(run())
+    assert calls == {"GET": 3 + 4, "POST": 1}
+    assert [s for s in slept if s >= 1] == [2.0, 4.0, 2.0, 4.0, 8.0]

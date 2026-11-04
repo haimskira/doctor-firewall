@@ -12,11 +12,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.audit.chain import AuditEvent, AuditLog
-from app.collector.service import Collector, mark
+from app.collector.service import Collector, SupersededError, mark
 from app.core.config import Settings
 from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
@@ -31,6 +31,9 @@ from app.models.inventory import Snapshot
 log = logging.getLogger(__name__)
 
 ACTIVE = ("pending", "running")
+# Failed attempts are kept this long (for their error), then deleted; ``keep`` counts only
+# complete snapshots, so failed retries never push a good snapshot out.
+FAILED_RETENTION = timedelta(days=7)
 
 
 class SnapshotBusyError(Exception):
@@ -101,8 +104,11 @@ async def run_collection(
         conn = session.get(FmcConnection, snap.connection_id) if snap.connection_id else None
         now = datetime.now(UTC)
         snap.status, snap.error, snap.error_detail = "running", None, None
-        snap.started_at = snap.started_at or now
+        # This attempt's start: the run owns the snapshot while status and start still match
+        # (a run declared stale and restarted must not overwrite its successor's outcome).
+        snap.started_at = now
         snap.heartbeat_at = now
+        run_started_at = now
         actor, connection_name = snap.requested_by, snap.connection_name
         if conn is None:
             snap.status, snap.error, snap.finished_at = "failed", "connection_deleted", now
@@ -138,20 +144,26 @@ async def run_collection(
                 adapter=adapter,
                 sessions=sessions,
                 collect_runtime_routes=settings.collect_runtime_routes,
+                run_started_at=run_started_at,
             ).run()
+    except SupersededError:
+        log.warning("collection superseded", extra={"snapshot": snapshot_id})
+        return {"ok": False, "error": SupersededError.code}
     except FmcError as exc:
         detail = scrub_text(str(exc))[:500]
         log.warning(
             "collection failed", extra={"snapshot": snapshot_id, "code": exc.code, "detail": detail}
         )
-        mark(
+        if not _finish(
             sessions,
             snapshot_id,
+            run_started_at,
             status="failed",
             error=exc.code,
             error_detail=detail,
             finished_at=datetime.now(UTC),
-        )
+        ):
+            return {"ok": False, "error": SupersededError.code}
         _audit(
             sessions,
             audit,
@@ -163,13 +175,15 @@ async def run_collection(
         )
         return {"ok": False, "error": exc.code}
     except Exception:
-        mark(
+        if not _finish(
             sessions,
             snapshot_id,
+            run_started_at,
             status="failed",
             error="internal_error",
             finished_at=datetime.now(UTC),
-        )
+        ):
+            raise
         _audit(
             sessions,
             audit,
@@ -181,7 +195,16 @@ async def run_collection(
         )
         raise
 
-    mark(sessions, snapshot_id, status="complete", stats=stats, finished_at=datetime.now(UTC))
+    if not _finish(
+        sessions,
+        snapshot_id,
+        run_started_at,
+        status="complete",
+        stats=stats,
+        finished_at=datetime.now(UTC),
+    ):
+        log.warning("collection superseded", extra={"snapshot": snapshot_id})
+        return {"ok": False, "error": SupersededError.code}
     _audit(
         sessions,
         audit,
@@ -196,21 +219,51 @@ async def run_collection(
     return {"ok": True, **stats}
 
 
-def apply_retention(session: Session, connection_id: int, keep: int) -> int:
-    """Delete finished snapshots beyond the newest ``keep`` for a connection.
+def _finish(
+    sessions: sessionmaker[Session], snapshot_id: int, run_started_at: datetime, **values: Any
+) -> bool:
+    """Write this run's outcome, only if the run still owns the snapshot. False: superseded."""
+    with sessions.begin() as session:
+        result = session.execute(
+            update(Snapshot)
+            .where(
+                Snapshot.id == snapshot_id,
+                Snapshot.status == "running",
+                Snapshot.started_at == run_started_at,
+            )
+            .values(**values)
+        )
+    return bool(getattr(result, "rowcount", 0))
 
-    A snapshot a changeset was staged from is never deleted: it is the policy as it was before
-    those changes, kept for history, diffs and rollback.
+
+def apply_retention(
+    session: Session, connection_id: int, keep: int, now: datetime | None = None
+) -> int:
+    """Delete complete snapshots beyond the newest ``keep`` for a connection, and failed ones
+    older than ``FAILED_RETENTION``.
+
+    Only complete snapshots count toward ``keep``: a row of failed attempts (an FMC behind a
+    VPN that is down) never pushes the last good snapshots out. A snapshot a changeset was
+    staged from is never deleted: it is the policy as it was before those changes, kept for
+    history, diffs and rollback.
     """
     behind_changes = select(Changeset.snapshot_id).where(Changeset.snapshot_id.is_not(None))
-    old_ids = session.scalars(
+    old_complete = session.scalars(
         select(Snapshot.id)
-        .where(Snapshot.connection_id == connection_id, Snapshot.status.in_(("complete", "failed")))
+        .where(Snapshot.connection_id == connection_id, Snapshot.status == "complete")
         .order_by(Snapshot.created_at.desc(), Snapshot.id.desc())
         .offset(keep)
     ).all()
+    cutoff = (now or datetime.now(UTC)) - FAILED_RETENTION
+    old_failed = session.scalars(
+        select(Snapshot.id).where(
+            Snapshot.connection_id == connection_id,
+            Snapshot.status == "failed",
+            Snapshot.created_at < cutoff,
+        )
+    ).all()
     kept = set(session.scalars(behind_changes))
-    old_ids = [i for i in old_ids if i not in kept]
+    old_ids = [i for i in (*old_complete, *old_failed) if i not in kept]
     if old_ids:
         session.execute(delete(Snapshot).where(Snapshot.id.in_(old_ids)))
     return len(old_ids)

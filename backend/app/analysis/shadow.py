@@ -6,7 +6,9 @@
 * **Overlap conflict**: an earlier rule with the opposite verdict (permit vs deny)
   matches *part* of a later rule's traffic.
 
-MONITOR rules log and continue evaluation, so they never shadow anything.
+MONITOR rules log and continue evaluation, so they never shadow anything. A rule with match
+conditions the space model does not represent never shadows another one (see
+:class:`app.analysis.space.MatchSpace`).
 
 Scale: a naive pairwise scan is O(n^2) (~1 min for one 10K-rule policy). Rules are
 anchored on their destination, so earlier rules are indexed by the smallest CIDR block
@@ -27,6 +29,9 @@ from app.analysis.space import AddressSet
 
 NON_TERMINATING = frozenset({"MONITOR"})
 DENY_ACTIONS = frozenset({"BLOCK", "BLOCK_RESET", "BLOCK_INTERACTIVE", "BLOCK_RESET_INTERACTIVE"})
+# Prefilter outcomes that let traffic through differently: FASTPATH bypasses inspection,
+# ANALYZE hands it on to the access policy. They are neither "permit" nor each other.
+DISTINCT_VERDICTS = frozenset({"FASTPATH", "ANALYZE"})
 MAX_CONFLICTS_PER_RULE = 3
 
 
@@ -44,7 +49,14 @@ class Overlap:
 
 
 def verdict(action: str) -> str:
-    return "deny" if action in DENY_ACTIONS else "permit"
+    """What a rule does with the traffic it matches, for "same intent" comparisons: every
+    BLOCK variant denies, prefilter FASTPATH and ANALYZE are outcomes of their own, anything
+    else permits."""
+    if action in DENY_ACTIONS:
+        return "deny"
+    if action in DISTINCT_VERDICTS:
+        return action.lower()
+    return "permit"
 
 
 def _block(addresses: AddressSet) -> tuple[int, int] | None:
@@ -143,7 +155,8 @@ class _DestinationIndex:
         block = _block(dst)
         if block is None:
             return list(self.all)
-        return sorted(set(self.any) | set(self.ancestors(*block)))
+        # Disjoint lists (each position is indexed once): no set needed to deduplicate.
+        return sorted(self.any + self.ancestors(*block))
 
     def overlap_candidates(self, dst: AddressSet) -> list[int]:
         block = _block(dst)
@@ -151,8 +164,7 @@ class _DestinationIndex:
             return list(self.all)
         # A pure-IPv4 destination can only meet another rule's IPv4 part, whose block
         # then nests with ours; IPv6 / token parts of earlier rules cannot reach it.
-        found = set(self.any) | set(self.ancestors(*block)) | set(self.descendants(*block))
-        return sorted(found)
+        return sorted(self.any + self.ancestors(*block) + self.descendants(*block))
 
 
 def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:

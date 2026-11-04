@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api, errorCode } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
-import { useJobs } from '../components/jobs';
+import { useBatchError, useJobs } from '../components/jobs';
 import { SortedTable } from '../components/sort';
 import { useApi } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
+
+const REQUEST_HOLD_MS = 10000;
 
 interface HistoryEntry {
   changeset_id: number;
@@ -24,7 +26,7 @@ interface HistoryEntry {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
-  proof: { ok: boolean; flows: number; differences: number; behavior: string } | null;
+  proof: { ok: boolean; flows: number; differences: number; behavior: string; error?: string | null } | null;
   proof_after: { ok: boolean; flows: number; differences: number; rules?: number; touched?: number } | null;
   revert_blocker: string | null;
   watch?: Watch | null;
@@ -70,6 +72,26 @@ export function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const approver = can('deploy:approve');
+  // Changesets with a revert queued or running: their rows wait, and the page follows them.
+  const reverting = new Set(
+    jobs.jobs.filter((j) => j.kind === 'revert' && j.changeset_id !== null && (j.status === 'queued' || j.status === 'running')).map((j) => j.changeset_id),
+  );
+  // Asked for here, until the jobs list surely shows the revert job.
+  const [requested, setRequested] = useState<number[]>([]);
+  const revertActive = reverting.size > 0;
+  const reload = history.reload;
+  useEffect(() => {
+    if (!revertActive) return undefined;
+    const id = window.setInterval(reload, 4000);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [revertActive, reload]);
+  const wasActive = useRef(revertActive);
+  useEffect(() => {
+    if (wasActive.current && !revertActive) reload(); // the revert ended: show its result
+    wasActive.current = revertActive;
+  }, [revertActive, reload]);
 
   async function dismiss(e: HistoryEntry) {
     if (!window.confirm(t('watch.dismissConfirm', { cs: e.changeset_id, seq: e.seq }))) return;
@@ -88,7 +110,7 @@ export function HistoryPage() {
     }
   }
 
-  async function post(path: string, confirmText: string, body?: unknown) {
+  async function post(changesetId: number, path: string, confirmText: string, body?: unknown) {
     if (!window.confirm(confirmText)) return;
     setBusy(true);
     setError(null);
@@ -96,6 +118,11 @@ export function HistoryPage() {
     try {
       const out = await api<{ batches: unknown[] }>(path, 'POST', body);
       setNotice(t('hist.revertQueued', { count: out.batches.length }));
+      setRequested((ids) => [...ids, changesetId]);
+      // By then the jobs list shows the revert job, which keeps the row waiting while it runs.
+      window.setTimeout(() => {
+        setRequested((ids) => ids.filter((id) => id !== changesetId));
+      }, REQUEST_HOLD_MS);
       jobs.kick();
       history.reload();
     } catch (err) {
@@ -138,6 +165,7 @@ export function HistoryPage() {
               {(e) => {
                 const key = `${String(e.changeset_id)}-${String(e.seq)}`;
                 const statusKey = `dep.batch.${e.status}`;
+                const rowBusy = busy || reverting.has(e.changeset_id) || requested.includes(e.changeset_id);
                 return (
                   <HistoryRow
                     key={key}
@@ -151,7 +179,7 @@ export function HistoryPage() {
                       approver && e.status === 'deployed' ? (
                         <>
                           {e.watch?.status === 'alert' && (
-                            <button type="button" className="secondary" disabled={busy} onClick={() => void dismiss(e)}>
+                            <button type="button" className="secondary" disabled={rowBusy} onClick={() => void dismiss(e)}>
                               {t('watch.dismiss')}
                             </button>
                           )}
@@ -159,9 +187,10 @@ export function HistoryPage() {
                             <button
                               type="button"
                               className="danger"
-                              disabled={busy}
+                              disabled={rowBusy}
                               onClick={() =>
                                 void post(
+                                  e.changeset_id,
                                   `/api/changesets/${String(e.changeset_id)}/batches/${String(e.seq)}/revert`,
                                   t('hist.revertConfirm', { cs: e.changeset_id, title: e.title, seq: e.seq }),
                                 )
@@ -174,9 +203,10 @@ export function HistoryPage() {
                             <button
                               type="button"
                               className="secondary"
-                              disabled={busy}
+                              disabled={rowBusy}
                               onClick={() =>
                                 void post(
+                                  e.changeset_id,
                                   '/api/history/revert-to',
                                   t('hist.revertToConfirm', { cs: e.changeset_id, title: e.title, seq: e.seq }),
                                   { changeset_id: e.changeset_id, seq: e.seq },
@@ -221,6 +251,7 @@ function HistoryRow({
   actions: ReactNode;
 }) {
   const { t } = useI18n();
+  const batchError = useBatchError();
   return (
     <>
       <tr className={open ? 'selected' : ''}>
@@ -237,7 +268,7 @@ function HistoryRow({
         </td>
         <td>
           <span className={`badge batch-badge batch-${entry.status}`}>{statusLabel}</span>
-          {entry.error !== null && <div className="bad small">{entry.error}</div>}
+          {entry.error !== null && <div className="bad small">{batchError(entry.error)}</div>}
           {entry.watch !== null && entry.watch !== undefined && entry.status === 'deployed' && <WatchState watch={entry.watch} />}
         </td>
         <td>{entry.op_count}</td>
@@ -250,7 +281,7 @@ function HistoryRow({
                   : t('hist.proofOk', { flows: entry.proof_after.flows })
                 : t('hist.proofBad', { count: entry.proof_after.differences })}
             </span>
-          ) : entry.proof !== null ? (
+          ) : entry.proof !== null && entry.proof.error == null ? (
             <span className="muted">{t('hist.proofPlanned', { flows: entry.proof.flows, count: entry.proof.differences })}</span>
           ) : (
             <span className="muted">—</span>

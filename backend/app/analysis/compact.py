@@ -124,6 +124,8 @@ def _member(estate: Estate, ref: Ref, family: _Family = NETWORK) -> _Member:
             return _Member(ref, spans, bool(spans) and len(values) == 1)
         return _Member(ref, [], False)
     obj = estate.objects.get(ref.object_id)
+    if obj is not None and obj.overridable:
+        return _Member(ref, [], False)  # its value may differ per device: neither covers nor goes
     if obj is not None and obj.kind in family.member_kinds and obj.value and not obj.stub:
         spans = family.intervals([obj.value])
         # A port object for ICMP or all protocols has no spans: it stays as it is.
@@ -301,7 +303,7 @@ def recommend_compact_groups(
     families = {f.group_kind: f for f in (NETWORK, PORTS)}
     for group in sorted(estate.objects.values(), key=lambda o: o.name):
         family = families.get(group.kind)
-        if family is None or group.fixed or group.fmc_id in skip:
+        if family is None or group.fixed or group.overridable or group.fmc_id in skip:
             continue
         refs = estate.members.get(group.fmc_id, [])
         if len(refs) < 2 or len(refs) > MAX_MEMBERS:
@@ -444,8 +446,9 @@ def recommend_compact_groups(
         ace_delta = round(sum(mine.values()))
         by_policy: dict[str, float] = {}
         for rid, share in mine.items():
-            policy = infos[rid].rule.policy_fmc_id
-            by_policy[policy] = by_policy.get(policy, 0.0) + share
+            # A prefilter rule counts in every access policy linking its prefilter policy.
+            for policy in estate.policy_access.get(infos[rid].rule.policy_fmc_id, frozenset()):
+                by_policy[policy] = by_policy.get(policy, 0.0) + share
         # A group serves every policy using it: each policy's view shows its own part.
         draft.preview["compact"]["ace_by_policy"] = {p: round(v) for p, v in by_policy.items()}
         draft.ace_delta = ace_delta

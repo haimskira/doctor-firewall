@@ -107,7 +107,7 @@ export function ClustersPage() {
         </section>
       )}
 
-      {clusterId !== null && <LimitsEditor clusterId={clusterId} />}
+      {clusterId !== null && <LimitsEditor key={clusterId} clusterId={clusterId} />}
 
       {network.data !== null && (
         <>
@@ -145,7 +145,7 @@ export function ClustersPage() {
               </SortedTable>
             </table>
           </section>
-          <RouteLookupCard snapshotId={snapshotId} clusterId={clusterId} network={network.data} />
+          <RouteLookupCard key={clusterId ?? ''} snapshotId={snapshotId} clusterId={clusterId} network={network.data} />
           <section className="card">
             <h2>{t('clusters.routes')}</h2>
             <RuntimeNote network={network.data} />

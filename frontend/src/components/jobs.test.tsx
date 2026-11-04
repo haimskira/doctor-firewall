@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobRun, JobsList } from '../api/types';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
-import { JobsIndicator, JobsProvider, WatchAlert } from './jobs';
+import { JobsIndicator, JobsProvider, WatchAlert, jobLink } from './jobs';
 
 const RUNNING: JobRun = {
   id: 7,
@@ -110,5 +110,46 @@ describe('JobsProvider / JobsIndicator', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Blocked traffic after a deployment (2)');
     expect(screen.getByRole('link', { name: /Blocked traffic/ })).toHaveAttribute('href', '/history');
   });
-});
 
+  it('translates job errors instead of showing raw exception text', async () => {
+    const failed = (id: number, error: string, kind: JobRun['kind'] = 'batch'): JobRun => ({
+      ...RUNNING, id, kind, status: 'failed', error, changeset_id: 3, finished_at: '2026-10-27T09:01:00Z',
+    });
+    mockFetch((req) =>
+      req.url.startsWith('/api/jobs')
+        ? {
+            status: 200,
+            body: {
+              active: 0,
+              rows: [
+                failed(1, 'LookupError: changeset_without_snapshot', 'proof'),
+                failed(2, 'write_rejected: rule MIXED: 422'),
+                failed(3, 'ValueError: something odd'),
+              ],
+            },
+          }
+        : { status: 404 },
+    );
+    render(
+      <I18nProvider initial="en">
+        <MemoryRouter>
+          <JobsProvider username="someone" enabled>
+            <JobsIndicator />
+          </JobsProvider>
+        </MemoryRouter>
+      </I18nProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Jobs' }));
+    const panel = screen.getByRole('dialog', { name: 'Jobs' });
+    expect(within(panel).getByText('This changeset has no snapshot to check against.')).toBeInTheDocument();
+    expect(within(panel).getByText('The FMC refused a change: rule MIXED: 422')).toBeInTheDocument();
+    expect(within(panel).getByText(/The job failed\./)).toBeInTheDocument();
+    expect(within(panel).getByText('something odd')).toBeInTheDocument(); // the code, muted
+    expect(within(panel).queryByText(/LookupError/)).not.toBeInTheDocument();
+  });
+
+  it('links a revert job to the history', () => {
+    expect(jobLink({ ...RUNNING, kind: 'revert', changeset_id: 3 })).toBe('/history');
+    expect(jobLink({ ...RUNNING, kind: 'batch', changeset_id: 3 })).toBe('/deploy?changeset=3');
+  });
+});

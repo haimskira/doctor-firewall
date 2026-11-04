@@ -135,6 +135,9 @@ def update_user(
     )
     if loses_admin and _other_active_admins(db, user.id) == 0:
         raise HTTPException(status.HTTP_409_CONFLICT, "last_admin")
+    if user.id == admin.user_id and set(new_roles) != set(user.roles):
+        # Raising one's own rights (or dropping them by mistake) takes another administrator.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "cannot_change_own_roles")
 
     if body.display_name is not None and body.display_name != user.display_name:
         user.display_name = body.display_name

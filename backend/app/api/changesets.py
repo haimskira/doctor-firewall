@@ -18,8 +18,9 @@ from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.enforce.batch_proof import needs_proof
 from app.enforce.batching import Conflict, Item, ItemTooLargeError, batch, separate
-from app.enforce.executor import rollback_resumable, stale_after_run
+from app.enforce.executor import abandoned_unwritten, rollback_resumable, stale_after_run
 from app.enforce.staleness import stale_since
 from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
@@ -36,6 +37,12 @@ ReaderDep = Annotated[Principal, Depends(require(Permission.POLICY_READ))]
 OptimizerDep = Annotated[Principal, Depends(require(Permission.CHANGESET_WRITE))]
 ApproverDep = Annotated[Principal, Depends(require(Permission.DEPLOY_APPROVE))]
 TicketId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{1,63}$")]
+# Advisory lock (one bigint key per FMC connection): staging into changesets, one at a time.
+STAGING_LOCK = 0x4446_5354_0000_0000  # "DFST" in the high 32 bits, the connection id below
+
+
+def staging_lock_key(connection_id: int | None) -> int:
+    return STAGING_LOCK + (connection_id or 0)
 
 
 class ChangesetIn(StrictModel):
@@ -250,6 +257,9 @@ def create_changeset(
     blocked = {r.id: r.plan.get("blocked", []) for r, _ in rows if not r.plan.get("executable")}
     if blocked:
         return _conflict("not_executable", recommendations=blocked)
+    # Two stagings at once (a double submit) must not both pass the check below: one per FMC
+    # at a time, until this transaction ends.
+    db.execute(select(func.pg_advisory_xact_lock(staging_lock_key(snap.connection_id))))
     staged = set(
         db.scalars(
             select(ChangesetItem.fingerprint)
@@ -436,11 +446,12 @@ def approve_batch(
     audit: AuditDep,
     who: ApproverDep,
     body: ApproveIn | None = None,
-) -> ChangesetOut:
+) -> ChangesetOut | JSONResponse:
     """Approve the next batch. Four eyes: the changeset's author can never approve it.
 
     The batch's traffic proof must exist: a batch that preserves traffic is approved only with
-    no flow changed; one that changes traffic by design needs ``acknowledge_change``.
+    no flow changed; one that changes traffic by design needs ``acknowledge_change``. Nothing
+    may have changed the FMC since the changeset's snapshot (another changeset deployed).
     """
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
@@ -464,6 +475,18 @@ def approve_batch(
     proof = target.proof
     if proof is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "proof_pending")
+    if "error" in proof:
+        raise HTTPException(status.HTTP_409_CONFLICT, "proof_error")
+    snap = db.get(Snapshot, cs.snapshot_id) if cs.snapshot_id is not None else None
+    stale = stale_since(db, snap, exclude_changeset=cs.id) if snap is not None else None
+    if stale is not None:
+        # Planned on a configuration the FMC no longer holds (another changeset ran since).
+        return _conflict(
+            "snapshot_stale",
+            changeset=stale["changeset_id"],
+            batch=stale["batch"],
+            at=stale["at"].isoformat(),
+        )
     changed = int(proof.get("differences", 0))
     if proof.get("behavior") != "changes" and changed:
         raise HTTPException(status.HTTP_409_CONFLICT, "proof_failed")
@@ -586,8 +609,12 @@ def cancel_changeset(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     if cs.status not in ("open", "in_progress", "failed"):
         raise HTTPException(status.HTTP_409_CONFLICT, "changeset_closed")
-    batches = list(db.scalars(select(Batch).where(Batch.changeset_id == cs.id)))
-    if any(b.status == "running" for b in batches):
+    batches = list(db.scalars(select(Batch).where(Batch.changeset_id == cs.id).with_for_update()))
+    now, stale_after = datetime.now(UTC), stale_after_run(get_settings())
+    # A batch whose worker died before its first write (no undo step saved) wrote nothing:
+    # it does not hold the changeset open.
+    abandoned = [b for b in batches if abandoned_unwritten(b, now, stale_after)]
+    if any(b.status == "running" and b not in abandoned for b in batches):
         raise HTTPException(status.HTTP_409_CONFLICT, "batch_running")
     if any(
         b.status == "failed" and any(step.get("state") != "undone" for step in b.journal)
@@ -595,9 +622,57 @@ def cancel_changeset(
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "rollback_pending")
     for b in batches:
-        if b.status in ("pending", "approved"):
+        if b.status in ("pending", "approved") or b in abandoned:
             b.status = "cancelled"
     cs.status = "cancelled"
-    _audit(audit, db, who, request, "changeset.cancel", cs.title, {"changeset_id": cs.id})
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        "changeset.cancel",
+        cs.title,
+        {"changeset_id": cs.id, "abandoned_batches": [b.seq for b in abandoned]},
+    )
     db.commit()
     return _out(db, cs)
+
+
+class ProveOut(BaseModel):
+    run_id: int
+    batches: list[int]  # seqs of the batches whose proof is computed again
+
+
+@router.post(
+    "/changesets/{changeset_id}/prove",
+    response_model=ProveOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def prove_again(
+    changeset_id: int, request: Request, db: DbDep, audit: AuditDep, who: OptimizerDep
+) -> ProveOut:
+    """Compute the traffic proof again for batches that have none (the job was lost) or whose
+    computation failed. Proofs already computed are kept (asynchronous)."""
+    cs = db.get(Changeset, changeset_id, with_for_update=True)
+    if cs is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    if cs.status not in ("open", "in_progress"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "changeset_closed")
+    missing = [
+        b.seq
+        for b in db.scalars(select(Batch).where(Batch.changeset_id == cs.id).order_by(Batch.seq))
+        if needs_proof(b.proof)
+    ]
+    if not missing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "proof_not_needed")
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        "changeset.prove",
+        cs.title,
+        {"changeset_id": cs.id, "batches": missing},
+    )
+    db.commit()
+    return ProveOut(run_id=jobs.enqueue_proof(cs.id, who.username), batches=missing)

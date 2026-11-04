@@ -30,12 +30,18 @@ class LoginThrottle:
         user_fails, ip_fails = self._redis.mget(user_key, ip_key)
         return int(user_fails or 0) >= self._max or int(ip_fails or 0) >= self._max * 4
 
-    def register_failure(self, username: str, source_ip: str) -> None:
+    @property
+    def max_failures(self) -> int:
+        return self._max
+
+    def register_failure(self, username: str, source_ip: str) -> int:
+        """Count a failure; returns the user's failures within the lockout window."""
         pipe = self._redis.pipeline()
         for key in self._keys(username, source_ip):
             pipe.incr(key)
             pipe.expire(key, self._lockout)
-        pipe.execute()
+        results = pipe.execute()
+        return int(results[0])
 
     def reset(self, username: str) -> None:
         self._redis.delete(_key("user", username.lower()))

@@ -7,11 +7,12 @@ shown once; the OpenAPI document lists the GET operations only (writes stay in t
 
 from __future__ import annotations
 
-from datetime import datetime
+import copy
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,8 +35,19 @@ ReaderDep = Annotated[Principal, Depends(require(Permission.POLICY_READ))]
 MAX_TOKENS = 20  # live tokens per user
 
 
+def _stripped_name(value: str) -> str:
+    text = value.strip()
+    if len(text) < 3:
+        raise ValueError("name must have at least 3 characters besides spaces")
+    return text
+
+
 class TokenIn(StrictModel):
-    name: Annotated[str, Field(min_length=3, max_length=64, pattern=r"^[\w .:/-]+$")]
+    name: Annotated[
+        str,
+        Field(min_length=3, max_length=64, pattern=r"^[\w .:/-]+$"),
+        AfterValidator(_stripped_name),
+    ]
     days: Annotated[int, Field(ge=1, le=tokens.MAX_DAYS)] = 90
 
 
@@ -101,7 +113,11 @@ def create_token(
     if who.token_id is not None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "token_read_only")
     live = db.scalars(
-        select(ApiToken.id).where(ApiToken.user_id == who.user_id, ApiToken.revoked_at.is_(None))
+        select(ApiToken.id).where(
+            ApiToken.user_id == who.user_id,
+            ApiToken.revoked_at.is_(None),
+            ApiToken.expires_at > datetime.now(UTC),
+        )
     ).all()
     if len(live) >= MAX_TOKENS:
         raise HTTPException(status.HTTP_409_CONFLICT, "too_many_tokens")
@@ -143,7 +159,8 @@ def openapi(
 ) -> dict[str, Any]:
     """The API as OpenAPI 3: the read API (every GET operation, what tokens may use) or, with
     ``scope=all``, every operation (writes need a signed-in session and its CSRF header)."""
-    full = request.app.openapi()
+    # A private copy: FastAPI caches the schema and hands out the same object every call.
+    full = copy.deepcopy(request.app.openapi())
     paths: dict[str, Any] = {}
     for path, ops in full.get("paths", {}).items():
         if path == "/api/openapi.json":

@@ -5,6 +5,7 @@ All statements use the ORM/Core expression API with bound parameters.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
@@ -186,6 +187,15 @@ def add_stub_objects(
 # ------------------------------------------------------------------ rules
 
 
+def _signature(r: RuleRecord) -> str:
+    """The rule's match signature. A rule with conditions the analysis does not model (URL
+    categories, time ranges ...) is never "identical" to another one: its signature is its own."""
+    signature = rule_signature(r.action, r.refs)
+    if not r.attrs.get("unmodelled"):
+        return signature
+    return hashlib.sha256(f"{signature}|unmodelled|{r.fmc_id}".encode()).hexdigest()
+
+
 def store_rules(
     session: Session,
     snapshot_id: int,
@@ -221,7 +231,7 @@ def store_rules(
             "log_begin": r.log_begin,
             "log_end": r.log_end,
             "send_events": r.send_events,
-            "signature": rule_signature(r.action, r.refs),
+            "signature": _signature(r),
             "attrs": r.attrs,
         }
         for r in records

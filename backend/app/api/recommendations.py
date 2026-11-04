@@ -278,6 +278,20 @@ def _filtered(
     return query
 
 
+def _ace_in(rec: Recommendation, policy: str | None) -> int:
+    """A recommendation's ACE change on one policy's rules (as :func:`ace_delta_in` counts it
+    for the list): a compacted group serves every policy using it."""
+    if policy is None or rec.kind != "compact_group":
+        return rec.ace_delta
+    compact = rec.preview.get("compact")
+    by_policy = compact.get("ace_by_policy") if isinstance(compact, dict) else None
+    part = by_policy.get(policy) if isinstance(by_policy, dict) else None
+    try:
+        return int(part) if part is not None else rec.ace_delta
+    except (TypeError, ValueError):
+        return rec.ace_delta
+
+
 # ------------------------------------------------------------------ recommendations
 
 
@@ -379,6 +393,7 @@ def list_recommendations(
             .where(
                 Recommendation.snapshot_id == snapshot_id,
                 RecommendationDecision.status == "accepted",
+                scoped,
             )
         )
     )
@@ -489,6 +504,7 @@ def decide_many(
     """Accept or dismiss every open recommendation matching the filter, or reopen the accepted
     ones (local only — nothing is staged or sent). ``dry_run`` reports what would change."""
     snap = _snapshot(db, snapshot_id)
+    ensure_scoped(db, snapshot_id, body.policy)
     stale = stale_since(db, snap)
     if body.status != "open" and stale is not None:
         return JSONResponse(
@@ -545,7 +561,7 @@ def decide_many(
         changing=changing if body.status == "accepted" else 0,
         count=len(chosen),
         deploy_cost=cost,
-        ace_delta=sum(r.ace_delta for r in chosen),
+        ace_delta=sum(_ace_in(r, body.policy) for r in chosen),
         skipped=skipped,
         deploy_limit=limit,
         batches=-(-cost // limit) if body.status == "accepted" else 0,

@@ -196,6 +196,13 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 
 ## Running work outside the plan
 
+- [x] Full bug hunt 2026-11-03/04 (six code reviews + live penetration / fuzz / RBAC tests, all fixed with tests):
+      unmodelled rule conditions (URL category, time range, VLAN, tunnel, decryption) are opaque and never shadow or merge;
+      dynamic / FQDN / overridable objects never merged or reused; group cycles never empty a field; executor resolves
+      item-scoped temp anchors; batches and reverts can no longer get stuck or be recorded wrongly; staleness checked at
+      approve and run; deploy polling survives read errors; failed proofs can be recomputed; DB value errors -> 422, races -> 409;
+      CSV import robust (BOM, ';', encoding); FMC host change needs the password; no self role change; change-password throttled;
+      UI: per-policy bulk accept, per-batch acknowledgement, session expiry -> sign-in, translated job errors.
 - [x] Failure handling found by the dry run (changesets 7 and 8): a failed changeset can be cancelled (`rollback_pending` while undo steps remain); conflicting recommendations are held for the next changeset instead of refusing all; GET/HEAD are retried after a dropped connection (batch 2 failed twice on `RemoteProtocolError` after all writes, while verifying / deploying).
 - [x] Temp ids are scoped per item inside a batch (`plan.item_ops`): every plan numbers its new objects from `new:1`, so 51 group compactions in one batch shared one object in the traffic proof (269 "changed" flows, approval blocked; found by the dry run, changeset 7).
 - [x] Lab cleanup round 2 on the real FMC: changeset 3, 233 changes in 4 batches, all deployed.

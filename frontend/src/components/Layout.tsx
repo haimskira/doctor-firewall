@@ -301,9 +301,11 @@ export function Layout() {
                 <NavLink role="menuitem" to="/settings" onClick={closeMenu}>
                   {t('nav.settings')}
                 </NavLink>
-                <NavLink role="menuitem" to="/password" onClick={closeMenu}>
-                  {t('password.title')}
-                </NavLink>
+                {localAccount && (
+                  <NavLink role="menuitem" to="/password" onClick={closeMenu}>
+                    {t('password.title')}
+                  </NavLink>
+                )}
                 <button type="button" role="menuitem" onClick={() => void logout()}>
                   {t('nav.logout')}
                 </button>

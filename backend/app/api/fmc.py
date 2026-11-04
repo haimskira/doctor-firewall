@@ -26,7 +26,9 @@ from app.db.session import get_db
 from app.fmc.client import build_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import probe
+from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
+from app.models.inventory import Snapshot
 from app.runtime import get_audit, get_secretbox
 
 log = logging.getLogger(__name__)
@@ -88,6 +90,43 @@ def _audit(
     )
 
 
+def _in_use(db: Session, connection_id: int) -> bool:
+    """Work that still needs this connection: an open or running changeset, a running batch or
+    a failed one with undo steps left, or a collection under way."""
+    if db.scalar(
+        select(Changeset.id)
+        .where(
+            Changeset.connection_id == connection_id,
+            Changeset.status.in_(("open", "in_progress")),
+        )
+        .limit(1)
+    ):
+        return True
+    for batch_status, journal in db.execute(
+        select(Batch.status, Batch.journal)
+        .join(Changeset, Changeset.id == Batch.changeset_id)
+        .where(
+            Changeset.connection_id == connection_id,
+            Batch.status.in_(("running", "failed")),
+        )
+    ):
+        if batch_status == "running" or any(
+            step.get("state") != "undone" for step in journal or []
+        ):
+            return True
+    return (
+        db.scalar(
+            select(Snapshot.id)
+            .where(
+                Snapshot.connection_id == connection_id,
+                Snapshot.status.in_(("pending", "running")),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 @router.get("", response_model=list[FmcConnectionResponse])
 def list_connections(db: DbDep, _: AdminDep) -> list[FmcConnectionResponse]:
     return [_to_response(c) for c in db.scalars(select(FmcConnection).order_by(FmcConnection.id))]
@@ -142,6 +181,24 @@ def update_connection(
     admin: AdminDep,
 ) -> FmcConnectionResponse:
     conn = _get(db, connection_id)
+    if (
+        body.name is not None
+        and body.name != conn.name
+        and db.scalar(
+            select(FmcConnection.id).where(
+                FmcConnection.name == body.name, FmcConnection.id != conn.id
+            )
+        )
+        is not None
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "name_taken")
+    moved = any(
+        getattr(body, field) is not None and getattr(body, field) != getattr(conn, field)
+        for field in ("host", "port", "username")
+    )
+    if moved and body.password is None:
+        # The stored password belongs to this host and account: it is never sent elsewhere.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "password_required")
     changed: list[str] = []
     for field in ("name", "host", "port", "username"):
         value = getattr(body, field)
@@ -183,6 +240,8 @@ def delete_connection(
     connection_id: int, request: Request, db: DbDep, audit: AuditDep, admin: AdminDep
 ) -> None:
     conn = _get(db, connection_id)
+    if _in_use(db, conn.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "connection_in_use")
     name = conn.name
     db.delete(conn)
     _audit(audit, db, admin, request, "fmc.connection.delete", name)

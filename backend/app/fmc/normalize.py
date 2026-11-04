@@ -12,6 +12,56 @@ import ipaddress
 
 _PROTOCOL_NAMES = {"6": "TCP", "17": "UDP", "1": "ICMP", "58": "ICMPV6", "132": "SCTP"}
 _KNOWN_PROTOCOLS = {"TCP", "UDP", "ICMP", "ICMPV6", "SCTP", "GRE", "ESP", "AH", "ALL"}
+# Other IP protocols an FMC may name (IANA keywords and their usual spellings). They carry
+# no ports: the analysis keeps them as opaque protocols that only equal themselves, so an
+# unusual protocol never aborts a collection and never makes two services look equal.
+_OTHER_PROTOCOLS = {
+    "IGMP",
+    "GGP",
+    "IPIP",
+    "IPINIP",
+    "IP-IN-IP",
+    "IPV4",
+    "ST",
+    "EGP",
+    "IGP",
+    "PUP",
+    "IDP",
+    "TP",
+    "XTP",
+    "DDP",
+    "IL",
+    "SDRP",
+    "RSVP",
+    "IPV6",
+    "IPV6-ROUTE",
+    "IPV6-FRAG",
+    "IPV6-NONXT",
+    "IPV6-OPTS",
+    "IDRP",
+    "IGRP",
+    "EIGRP",
+    "OSPF",
+    "OSPFIGP",
+    "PIM",
+    "VRRP",
+    "CARP",
+    "L2TP",
+    "ISIS",
+    "MOBILE",
+    "NARP",
+    "PCP",
+    "SNP",
+    "IPCOMP",
+    "PGM",
+    "UDPLITE",
+    "UDP-LITE",
+    "MPLS-IN-IP",
+    "DCCP",
+    "ENCAP",
+    "ETHERIP",
+    "NOS",
+}
 MAX_TEXT = 1024
 
 
@@ -71,7 +121,7 @@ def protocol(value: str | None) -> str:
         return "ALL"
     text = value.strip().upper()
     text = _PROTOCOL_NAMES.get(text, text)
-    if text not in _KNOWN_PROTOCOLS and not text.isdigit():
+    if text not in _KNOWN_PROTOCOLS and text not in _OTHER_PROTOCOLS and not text.isdigit():
         raise ValueError("unknown protocol")
     return text
 

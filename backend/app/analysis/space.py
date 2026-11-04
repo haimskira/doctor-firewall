@@ -12,6 +12,12 @@ but never reports one that is not.
   token sets.
 
 An empty rule field means "any" and is represented with ``any=True``.
+
+Rule conditions the model does not represent as values (URL categories, time ranges, tunnel
+encapsulation, TLS conditions ...; see ``app.fmc.records.CONDITION_DIMENSIONS``) join the
+space as opaque tokens, and their names are kept in ``MatchSpace.unmodelled``: such a space
+never covers another one (it may match less than its tokens suggest), and one with a
+*widening* condition is never covered either.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+
+from app.fmc.records import CONDITION_DIMENSIONS, WIDENING_CONDITIONS
 
 Interval = tuple[int, int]
 
@@ -253,6 +261,7 @@ TOKEN_DIMENSIONS = (
     "dst_dyn",
     "user",
     "vlan",
+    *CONDITION_DIMENSIONS,
 )
 
 
@@ -263,11 +272,15 @@ class MatchSpace:
     src_port: PortSet = field(default_factory=lambda: PortSet(any=True))
     dst_port: PortSet = field(default_factory=lambda: PortSet(any=True))
     tokens: tuple[tuple[str, TokenSet], ...] = ()
+    # Names of the rule's conditions the model does not represent (empty: fully modelled).
+    unmodelled: frozenset[str] = frozenset()
 
     def token(self, dim: str) -> TokenSet:
         return dict(self.tokens).get(dim, TokenSet(any=True))
 
     def covers(self, other: MatchSpace) -> bool:
+        if self.unmodelled or other.unmodelled & WIDENING_CONDITIONS:
+            return False  # cannot be proven: never claim coverage
         return (
             self.dst_net.covers(other.dst_net)
             and self.src_net.covers(other.src_net)

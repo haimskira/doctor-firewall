@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Me } from '../api/types';
 import { AuthProvider } from '../auth/AuthProvider';
+import { JobsProvider } from '../components/jobs';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
 import { HistoryPage } from './HistoryPage';
@@ -95,6 +96,41 @@ describe('HistoryPage', () => {
       expect(calls.some((c) => c.method === 'POST' && c.url === '/api/changesets/5/batches/2/revert')).toBe(true);
     });
     expect(await screen.findByText(/Revert of 1 batch\(es\) queued/)).toBeInTheDocument();
+    // The revert is under way: a second click cannot queue another one.
+    expect(within(row).getByRole('button', { name: 'Revert' })).toBeDisabled();
+  });
+
+  it('waits while a revert job runs and translates the batch error', async () => {
+    const job = {
+      id: 9, kind: 'revert', title: 'Q4 clean-up', requested_by: 'appr', status: 'running', progress: 10, step: 'revert',
+      step_args: {}, error: null, snapshot_id: 17, batch_id: null, changeset_id: 5,
+      created_at: '2026-10-27T09:10:00Z', started_at: '2026-10-27T09:10:01Z', updated_at: null, finished_at: null,
+    };
+    mockFetch((req) => {
+      if (req.url === '/api/auth/me') return { status: 200, body: ME };
+      if (req.url.startsWith('/api/history?')) return { status: 200, body: [{ ...ENTRY, error: 'write_rejected: rule MIXED: 422' }] };
+      if (req.url.startsWith('/api/jobs')) return { status: 200, body: { active: 1, rows: [job] } };
+      return { status: 404, body: { detail: 'not_found' } };
+    });
+    render(
+      <I18nProvider>
+        <AuthProvider>
+          <MemoryRouter initialEntries={['/history']}>
+            <JobsProvider username="appr" enabled>
+              <Routes>
+                <Route path="/history" element={<HistoryPage />} />
+              </Routes>
+            </JobsProvider>
+          </MemoryRouter>
+        </AuthProvider>
+      </I18nProvider>,
+    );
+    const row = (await screen.findByRole('button', { name: /Q4 clean-up · Changeset 5.2/ })).closest('tr');
+    if (row === null) throw new Error('row');
+    expect(within(row).getByText('The FMC refused a change: rule MIXED: 422')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(row).getByRole('button', { name: 'Revert' })).toBeDisabled();
+    });
   });
 
   it('shows blocked traffic after a deployment and lets the approver dismiss it', async () => {

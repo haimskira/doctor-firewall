@@ -14,7 +14,7 @@ import { isAhead, isPhase } from '../components/roadmap';
 import type { Roadmap } from '../components/roadmap';
 import { SortTh, useServerSort } from '../components/sort';
 import type { SortState } from '../components/sort';
-import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
+import { useApi, useQueryParam, useSetQueryParams, useSnapshotSelection } from '../hooks';
 import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import type { MessageKey } from '../i18n/messages';
@@ -33,7 +33,7 @@ const STATES = ['open', 'accepted', 'dismissed'] as const;
 export function RecommendationsPage() {
   const { t, tError } = useI18n();
   const { can } = useAuth();
-  const { snapshots, snapshotId, setSnapshotId, error: snapError } = useSnapshotSelection();
+  const { snapshots, snapshotId, error: snapError } = useSnapshotSelection();
   const [kind, setKind] = useQueryParam('kind');
   const [state, setState] = useQueryParam('state');
   const [rule] = useQueryParam('rule');
@@ -42,6 +42,14 @@ export function RecommendationsPage() {
   const phase = isPhase(phaseParam) ? phaseParam : null;
   const [offset, setOffset] = useState(0);
   const scope = usePolicyScope(snapshotId);
+  const setParams = useSetQueryParams();
+  // Another snapshot or policy is another list: start at its first page.
+  const listScope = `${String(snapshotId)}|${scope.policy ?? ''}`;
+  const [offsetScope, setOffsetScope] = useState(listScope);
+  if (offsetScope !== listScope) {
+    setOffsetScope(listScope);
+    setOffset(0);
+  }
   const jobs = useJobs();
   const sort = useServerSort(SORTS);
   const onSort = (next: SortState) => {
@@ -95,7 +103,14 @@ export function RecommendationsPage() {
           <p className="muted small">{t('rec.help')}</p>
         </div>
         <div className="row">
-          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <SnapshotPicker
+            snapshots={snapshots}
+            value={snapshotId}
+            onChange={(id) => {
+              // A recommendation id belongs to one snapshot: drop it with the switch.
+              setParams({ snapshot: String(id), rec: null });
+            }}
+          />
           <PolicyPicker scope={scope} />
           {can('collect:run') && snapshotId !== null && (
             <button type="button" className="secondary" onClick={() => void reanalyze()}>
@@ -180,6 +195,7 @@ export function RecommendationsPage() {
             {can('changeset:write') && snapshotId !== null && page.data.stale == null && (
               <BulkDecision
                 snapshotId={snapshotId}
+                policy={scope.selected === null ? null : { id: scope.selected.id, name: scope.selected.name }}
                 filter={{ kind, rule, phase }}
                 acceptedView={state === 'accepted'}
                 onDone={(message) => {
@@ -536,11 +552,14 @@ interface BulkResult {
     accepted ones — after a preview of how many, how many FMC changes and deploy batches. */
 function BulkDecision({
   snapshotId,
+  policy,
   filter,
   acceptedView,
   onDone,
 }: {
   snapshotId: number;
+  /** The chosen access policy: the decision covers only its recommendations. */
+  policy: { id: string; name: string } | null;
   filter: { kind: string | null; rule: string | null; phase: string | null };
   acceptedView: boolean;
   onDone: (message: string) => void;
@@ -552,6 +571,7 @@ function BulkDecision({
   const [acknowledged, setAcknowledged] = useState(false);
   const url = `/api/snapshots/${String(snapshotId)}/recommendations/decisions`;
   const scope = {
+    ...(policy === null ? {} : { policy: policy.id }),
     ...(filter.kind === null ? {} : { kind: filter.kind }),
     ...(filter.rule === null ? {} : { rule: filter.rule }),
     ...(filter.phase === null ? {} : { phase: filter.phase }),
@@ -629,6 +649,7 @@ function BulkDecision({
           ) : (
             <p>{t('rec.bulk.previewReopen', { count: preview.result.count, what })}</p>
           )}
+          {policy !== null && <p className="small">{t('rec.bulk.inPolicy', { name: policy.name })}</p>}
           {skipped > 0 && (
             <p className="muted small">
               {t('rec.bulk.skipped', {

@@ -54,7 +54,11 @@ def run_due(redis: Redis, now: float, schedules: tuple[Schedule, ...] = SCHEDULE
             f"{_SLOT_PREFIX}{sched.name}:{slot}", "1", nx=True, ex=sched.every_seconds * 2
         )
         if claimed:
-            get_queue(sched.queue, redis).enqueue(sched.func, job_timeout=sched.every_seconds)
+            # ttl: a run still queued when its next slot comes is dropped, so a busy worker
+            # does not come back to a pile of identical periodic jobs.
+            get_queue(sched.queue, redis).enqueue(
+                sched.func, job_timeout=sched.every_seconds, ttl=sched.every_seconds
+            )
             enqueued.append(sched.name)
             log.info("scheduled job enqueued", extra={"schedule": sched.name, "slot": slot})
     return enqueued

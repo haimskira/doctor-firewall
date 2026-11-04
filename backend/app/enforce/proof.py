@@ -18,8 +18,10 @@ cell. The probe flows are one point per cell — when their number stays under t
 is **exhaustive** (a proof for the modelled dimensions); above it the grid is thinned evenly and
 the report says the check was sampled.
 
-Not modelled: application *detection* inside allowed services, URL categories by reputation,
-time ranges. Rules that use them are compared on their listed values.
+Not modelled: application *detection* inside allowed services. Conditions the analysis does not
+model as values (URL categories by reputation, time ranges, tunnel encapsulation, VLAN literals,
+inline application filters ...) take part as opaque tokens recorded with the rule
+(:func:`condition_refs`): a rule that loses or gains one differs, conservatively.
 """
 
 from __future__ import annotations
@@ -35,9 +37,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analysis.expand import Leaves, Resolver, build_space, literal_leaves
+from app.analysis.expand import Leaves, Resolver, build_space, literal_leaves, rule_conditions
 from app.analysis.space import ALL_PROTOCOLS, AddressSet, MatchSpace, PortSet, TokenSet
 from app.enforce.plan import is_temp
+from app.fmc.records import CONDITION_DIMENSIONS
 from app.models.inventory import FwObject, GroupMember, Policy, Rule, RuleRef
 
 SPACE_FIELDS = (
@@ -67,6 +70,7 @@ TOKEN_DIMS = (
     "dst_dyn",
     "user",
     "vlan",
+    *CONDITION_DIMENSIONS,
 )
 PROVABLE_KINDS = ("access", "prefilter")
 PASS_THROUGH = frozenset({"MONITOR"})
@@ -77,6 +81,16 @@ V4_TOP = 2**32 - 1
 V6_TOP = 2**128 - 1
 
 Member = tuple[str | None, str | None, str | None]  # (object id, literal, literal kind)
+CONDITION_KIND = "cond"  # literal kind of an unmodelled-condition token
+
+
+def condition_refs(attrs: dict[str, Any] | None) -> dict[str, list[Member]]:
+    """A rule's unmodelled conditions (``attrs`` as the adapter records them) as members of its
+    fields, so they take part in its match space the way the analysis builds it."""
+    return {
+        dim: [(None, token, CONDITION_KIND) for token in sorted(tokens)]
+        for dim, tokens in rule_conditions(attrs).items()
+    }
 
 
 @dataclass
@@ -147,6 +161,7 @@ def load_model(session: Session, snapshot_id: int) -> Model:
     ):
         policies[p.fmc_id] = PolicyModel(p.fmc_id, p.name, p.kind, p.default_action.upper(), [])
     by_rule: dict[int, RuleModel] = {}
+    conditions: dict[int, dict[str, list[Member]]] = {}
     for r in session.scalars(
         select(Rule)
         .where(Rule.snapshot_id == snapshot_id, Rule.policy_fmc_id.in_(list(policies)))
@@ -162,6 +177,9 @@ def load_model(session: Session, snapshot_id: int) -> Model:
         )
         by_rule[r.id] = model
         policies[r.policy_fmc_id].rules.append(model)
+        extra = condition_refs(r.attrs)
+        if extra:
+            conditions[r.id] = extra
     for rule_id, fld, oid, literal, literal_kind in session.execute(
         select(
             RuleRef.rule_id,
@@ -176,6 +194,9 @@ def load_model(session: Session, snapshot_id: int) -> Model:
         owner = by_rule.get(rule_id)
         if owner is not None:
             owner.refs.setdefault(fld, []).append((oid, literal, literal_kind))
+    for rule_id, extra in conditions.items():
+        for fld, values in extra.items():
+            by_rule[rule_id].refs.setdefault(fld, []).extend(values)
     return Model(objects, dict(members), policies)
 
 
