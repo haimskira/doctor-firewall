@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -224,7 +225,9 @@ def test_hit_count_fetch_time_is_kept_per_policy(client: TestClient, admin: dict
     fetched = _snapshot(sid).stats["hits_fetched_at"]
     assert fetched
     assert set(fetched) <= set(DATA.rules)
-    assert set(fetched.values()) == {"2026-10-28T14:55:01+00:00"}
+    # The mock's cache was refreshed when it started: a recent, valid time per policy.
+    for value in fetched.values():
+        assert datetime.now(UTC) - datetime.fromisoformat(value) < timedelta(days=1)
 
     def total() -> int:
         with get_sessionmaker()() as s:
