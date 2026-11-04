@@ -529,6 +529,33 @@ def build_write_router(
                     found += 1
         return Response(status_code=204 if found else 404)
 
+    @router.post("/mock/overrides")
+    async def set_overrides(request: Request) -> Response:
+        """Per-device values of an object: ``{"object": id, "targets": [{"id", "name", "value"}]}``
+        (the object becomes overridable; an empty list clears them)."""
+        if not token_ok(request):
+            return _error(401, "Access token invalid.")
+        body = await request.json()
+        parent = all_objects().get(str(body.get("object"))) if isinstance(body, dict) else None
+        targets = body.get("targets") if isinstance(body, dict) else None
+        if parent is None or not isinstance(targets, list):
+            return _error(400, "object and targets expected")
+        parent["overridable"] = True
+        ref = {"id": parent["id"], "name": parent["name"], "type": parent["type"]}
+        data.overrides[parent["id"]] = [
+            {
+                **{k: v for k, v in parent.items() if k not in ("id", "metadata", "links")},
+                "id": parent["id"],
+                "value": t["value"],
+                "overrides": {
+                    "parent": ref,
+                    "target": {"id": t["id"], "type": "Device", "name": t["name"]},
+                },
+            }
+            for t in targets
+        ]
+        return Response(status_code=204)
+
     @router.post("/mock/faults")
     async def faults(request: Request) -> Response:
         if not token_ok(request):

@@ -139,6 +139,17 @@ def build_router(data: FmcData, domain_uuid: str, token_ok: Callable[[Request], 
             return _error(404, "Dynamic object not found")
         return page(request, [{"mapping": m} for m in data.dynamic_mappings[object_id]])
 
+    @router.get(CONFIG + "/object/{resource}/{object_id}/overrides")
+    async def object_overrides(
+        request: Request, domain: str, resource: str, object_id: str
+    ) -> Response:
+        """Per-device overrides of an overridable object (an empty list for any other)."""
+        if (resp := guard(request, domain)) is not None:
+            return resp
+        if not any(o["id"] == object_id for o in data.objects.get(resource, [])):
+            return _error(404, "Object not found")
+        return page(request, data.overrides.get(object_id, []))
+
     collection("/object/variablesets", lambda: data.variable_sets)
     collection("/devices/devicerecords", lambda: data.devices)
     collection("/devicehapairs/ftddevicehapairs", lambda: data.ha_pairs)

@@ -4,6 +4,7 @@ left in each (see app.analysis.roadmap for the order and why)."""
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.roadmap import PHASES
+from app.analysis.semantic import stale_hit_policies
 from app.api.scope import PolicyQuery, ace_delta_in, ensure_scoped, in_policy
 from app.auth.deps import Principal, require
 from app.auth.rbac import Permission
@@ -89,6 +91,10 @@ def _checks(db: Session, snap: Snapshot) -> list[Check]:
         )
     ).one()
     stale = stale_since(db, snap)
+    settings = get_settings()
+    old_hits = stale_hit_policies(
+        snap.stats or {}, snap.created_at, timedelta(hours=settings.hit_counts_max_age_hours)
+    ) & set(db.scalars(enforced))
     return [
         Check(code="assets", ok=(assets or 0) > 0, args={"count": assets or 0}),
         Check(
@@ -100,6 +106,13 @@ def _checks(db: Session, snap: Snapshot) -> list[Check]:
             code="hits",
             ok=rules > 0 and with_hits == rules,
             args={"with_hits": with_hits, "rules": rules, "days": get_settings().dead_rule_days},
+        ),
+        Check(
+            # The FMC serves hit counts from a cache: refreshed long before the snapshot, they
+            # prove nothing (no dead-rule findings meanwhile).
+            code="hits_fresh",
+            ok=not old_hits,
+            args={"policies": len(old_hits), "hours": settings.hit_counts_max_age_hours},
         ),
         Check(
             code="fresh",

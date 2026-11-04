@@ -54,6 +54,8 @@ class FmcData:
     # Other policy types: resource -> policies, and (resource, policy id, sub) -> rules.
     policy_lists: dict[str, list[Json]] = field(default_factory=dict)
     policy_rules: dict[tuple[str, str, str], list[Json]] = field(default_factory=dict)
+    # Per-device values of overridable objects: object id -> override items (test data).
+    overrides: dict[str, list[Json]] = field(default_factory=dict)
 
     def add_policy(self, resource: str, policy: Json) -> Json:
         self.policy_lists.setdefault(resource, []).append(policy)
@@ -625,6 +627,7 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
                     "firstHitTimeStamp": " ",
                     "lastHitTimeStamp": "2026-10-01T10:00:00Z" if active else " ",
                     "lastDeployedTimeStamp": "2026-01-15T08:00:00Z",
+                    "lastFetchTimeStamp": "2026-10-28T14:55:01Z",
                     "rule": {"id": r["id"], "name": r["name"], "type": "AccessRule"},
                     "metadata": {"policy": _ref(policy), "device": _ref(d)},
                 }

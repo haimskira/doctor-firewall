@@ -505,12 +505,8 @@ def decide_many(
     ones (local only — nothing is staged or sent). ``dry_run`` reports what would change."""
     snap = _snapshot(db, snapshot_id)
     ensure_scoped(db, snapshot_id, body.policy)
-    stale = stale_since(db, snap)
-    if body.status != "open" and stale is not None:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": "snapshot_stale", "changeset": stale["changeset_id"]},
-        )
+    # No staleness refusal: a decision is local and keyed by fingerprint (like the single
+    # decision); staleness protects what is written to the FMC, checked when a change is staged.
     current_state = "accepted" if body.status == "open" else "open"
     matching = _filtered(snapshot_id, body.kind, body.policy, current_state, body.q, body.rule)
     if body.phase is not None:

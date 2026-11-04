@@ -212,6 +212,8 @@ class HitCountModel(_M):
     lastHitTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
     # When the rule reached the device; blank: never deployed. Absent on older FMCs.
     lastDeployedTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
+    # When the FMC cached this counter (the hit counts are not live); absent on older FMCs.
+    lastFetchTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
 
 
 class StaticIpv4(_M):
@@ -617,7 +619,50 @@ def map_hitcount(item: Any) -> HitCountRecord:
         last_hit=_timestamp(m.lastHitTimeStamp),
         deploy_known=m.lastDeployedTimeStamp is not None,
         deployed_at=_timestamp(m.lastDeployedTimeStamp),
+        fetched_at=_timestamp(m.lastFetchTimeStamp),
     )
+
+
+# Object types whose per-device overrides are read, with their collection resource.
+_OVERRIDE_RESOURCE: dict[str, str] = {
+    "host": "hosts",
+    "network": "networks",
+    "range": "ranges",
+    "fqdn": "fqdns",
+    "networkgroup": "networkgroups",
+    "protocolportobject": "protocolportobjects",
+    "portobjectgroup": "portobjectgroups",
+    "url": "urls",
+    "urlgroup": "urlgroups",
+}
+
+
+def override_resource(fmc_type: str) -> str | None:
+    """The object collection (``hosts``...) an object type is read from, None if unknown."""
+    return _OVERRIDE_RESOURCE.get(fmc_type.lower())
+
+
+def map_override(resource: str, item: Any) -> dict[str, Any] | None:
+    """One override of an overridable object: ``{"target_id", "target_name", "value"}`` (plus
+    ``members`` for a group). None when the item names no target device."""
+    if not isinstance(item, dict):
+        return None
+    meta = item.get("overrides")
+    target = meta.get("target") if isinstance(meta, dict) else None
+    parent = meta.get("parent") if isinstance(meta, dict) else None
+    if not isinstance(target, dict) or not isinstance(parent, dict):
+        return None
+    t = _validate(RefModel, target, f"{resource} override target")
+    base = {
+        "id": item.get("id") or parent.get("id"),
+        "name": item.get("name") or parent.get("name") or "",
+        "type": item.get("type") or parent.get("type") or "",
+    }
+    record = map_object(resource, {**item, **base, "overridable": False})
+    entry: dict[str, Any] = {"target_id": t.id, "target_name": t.name, "value": record.value}
+    if record.members:
+        entry["members"] = sorted(m.name or m.literal or "" for m in record.members)
+    return entry
 
 
 def map_dynamic_mapping(item: Any) -> str | None:
@@ -935,7 +980,8 @@ class AutoNatModel(_M):
 class ManualNatModel(_M):
     id: FmcId
     natType: NatType  # noqa: N815
-    section: Annotated[str, Field(pattern=r"^(BEFORE_AUTO|AFTER_AUTO)$")] = "BEFORE_AUTO"
+    section: Annotated[str, Field(pattern=r"^(BEFORE_AUTO|AFTER_AUTO)$")] | None = None
+    metadata: dict[str, Any] | None = None  # the real FMC carries the section here
     enabled: bool = True
     originalSource: RefModel | None = None  # noqa: N815
     translatedSource: RefModel | None = None  # noqa: N815
@@ -1006,10 +1052,13 @@ def map_nat_rule(item: Any, position: int, rule_type: str) -> RuleRecord:
         refs += _opt(RuleField.NAT_TRANS_DPORT, m.translatedDestinationPort)
         if m.interfaceInTranslatedSource:
             attrs["translate_to_interface"] = True
+        meta_section = (m.metadata or {}).get("section")
+        if meta_section is not None and meta_section not in ("BEFORE_AUTO", "AFTER_AUTO"):
+            raise AdapterError(f"manualnatrule {m.id}: invalid fields [metadata.section]")
         fmc_id, nat_type, section, enabled, desc = (
             m.id,
             m.natType,
-            m.section,
+            meta_section or m.section or "BEFORE_AUTO",
             m.enabled,
             m.description,
         )

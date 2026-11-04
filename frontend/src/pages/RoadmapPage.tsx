@@ -11,6 +11,7 @@ const PREPARE_LINK: Record<Roadmap['prepare'][number]['code'], string> = {
   assets: '/assets',
   limits: '/clusters',
   hits: '/rules',
+  hits_fresh: '/snapshots',
   fresh: '/snapshots',
 };
 

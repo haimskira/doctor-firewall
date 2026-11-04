@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -26,10 +27,16 @@ from app.auth.providers.external import (
 from app.auth.providers.ldap import LdapProvider
 from app.auth.providers.local import LocalProvider
 from app.auth.providers.tacacs import TacacsProvider
+from app.auth.throttle import remember_login
 from app.core.config import Settings
 from app.models.user import User
 
 log = logging.getLogger(__name__)
+
+# With an external provider enabled an unknown username costs a directory round trip, a known
+# local one does not; failed attempts are padded to this minimum so the two look alike.
+FAILED_LOGIN_MIN_SECONDS = 0.5
+_sleep = time.sleep
 
 
 @dataclass
@@ -66,8 +73,39 @@ def sign_in(
     *,
     remote: str = "",
     providers: dict[str, ExternalProvider] | None = None,
+    min_failure_seconds: float = FAILED_LOGIN_MIN_SECONDS,
 ) -> SignIn:
-    """Authenticate; on success the user row is up to date (roles, display name)."""
+    """Authenticate; on success the user row is up to date (roles, display name).
+
+    Failures are padded to ``min_failure_seconds`` when an external provider is enabled, so
+    response time does not reveal whether a username is a local account. Successes are not slowed.
+    """
+    started = time.monotonic()
+    result = _sign_in(db, settings, username, password, remote, providers)
+    if result.user is None:
+        if any(name != "local" for name in settings.providers):
+            remaining = min_failure_seconds - (time.monotonic() - started)
+            if remaining > 0:
+                _sleep(remaining)
+    elif remote:
+        _remember(username, remote)
+    return result
+
+
+def _remember(username: str, remote: str) -> None:
+    from app.runtime import get_redis  # local import: runtime imports the auth package
+
+    remember_login(get_redis(), username, remote)
+
+
+def _sign_in(
+    db: Session,
+    settings: Settings,
+    username: str,
+    password: str,
+    remote: str,
+    providers: dict[str, ExternalProvider] | None,
+) -> SignIn:
 
     def provider(name: str) -> ExternalProvider:
         if providers is not None and name in providers:

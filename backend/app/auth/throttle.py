@@ -6,13 +6,33 @@ import hashlib
 from datetime import timedelta
 
 from redis import Redis
+from redis.exceptions import RedisError
 
 _PREFIX = "df:loginfail:"
+_TRUST_PREFIX = "df:logintrust:"
+# A client address that signed in as a user within this window is not locked out of that
+# account by someone else's failures (otherwise anyone can keep "admin" locked forever).
+TRUST_TTL = timedelta(days=30)
 
 
 def _key(kind: str, value: str) -> str:
     # Hash the identifier so usernames/IPs are not stored in clear in Redis keys.
     return f"{_PREFIX}{kind}:{hashlib.sha256(value.encode()).hexdigest()}"
+
+
+def _trust_key(username: str, source_ip: str) -> str:
+    digest = hashlib.sha256(f"{username.lower()}|{source_ip}".encode()).hexdigest()
+    return f"{_TRUST_PREFIX}{digest}"
+
+
+def remember_login(redis: Redis, username: str, source_ip: str) -> None:
+    """Remember a successful (user, IP) pair; best effort, never blocks a sign-in."""
+    if not source_ip:
+        return
+    try:
+        redis.set(_trust_key(username, source_ip), "1", ex=TRUST_TTL)
+    except RedisError:  # the trust list is an optimisation, not a gate
+        return
 
 
 class LoginThrottle:
@@ -27,8 +47,13 @@ class LoginThrottle:
 
     def is_locked(self, username: str, source_ip: str) -> bool:
         user_key, ip_key = self._keys(username, source_ip)
-        user_fails, ip_fails = self._redis.mget(user_key, ip_key)
-        return int(user_fails or 0) >= self._max or int(ip_fails or 0) >= self._max * 4
+        user_fails, ip_fails, trusted = self._redis.mget(
+            user_key, ip_key, _trust_key(username, source_ip)
+        )
+        if int(ip_fails or 0) >= self._max * 4:
+            return True
+        # The per-user lock does not apply to an address that already signed in as this user.
+        return int(user_fails or 0) >= self._max and trusted is None
 
     @property
     def max_failures(self) -> int:
@@ -43,5 +68,7 @@ class LoginThrottle:
         results = pipe.execute()
         return int(results[0])
 
-    def reset(self, username: str) -> None:
+    def reset(self, username: str, source_ip: str | None = None) -> None:
         self._redis.delete(_key("user", username.lower()))
+        if source_ip:
+            remember_login(self._redis, username, source_ip)

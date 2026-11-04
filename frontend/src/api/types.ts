@@ -965,3 +965,26 @@ export interface JobsList {
   active: number;
   rows: JobRun[];
 }
+
+export type UserChangeKind = 'create' | 'roles' | 'password_reset';
+
+export interface UserChangeRequest {
+  id: number;
+  kind: UserChangeKind;
+  target_user_id: number | null;
+  target_username: string;
+  payload: Record<string, unknown>;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+export interface UserChangeApproval {
+  request_id: number;
+  status: 'approved' | 'rejected';
+  user: User | null;
+  temporary_password: string | null;
+}

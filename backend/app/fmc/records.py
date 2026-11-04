@@ -181,6 +181,7 @@ class HitCountRecord:
     last_hit: str | None
     deploy_known: bool = False  # the FMC reports deployment times (10.x)
     deployed_at: str | None = None  # None with deploy_known: never deployed
+    fetched_at: str | None = None  # when the FMC cached this counter (it is not live); ISO UTC
 
 
 @dataclass(frozen=True)

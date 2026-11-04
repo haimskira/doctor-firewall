@@ -92,7 +92,7 @@ export function HomePage() {
               items={[
                 { key: 'rules', label: t('dash.t.rules'), value: d.totals.rules, to: `/rules?${q}` },
                 { key: 'policies', label: t('dash.t.policies'), value: d.totals.policies, to: `/policies?${q}` },
-                { key: 'objects', label: t('dash.t.objects'), value: d.totals.objects, to: `/objects?${q}` },
+                { key: 'objects', label: t('dash.t.objects'), value: d.totals.objects, to: `/objects?${q}${scope.policy === null ? '' : `&policy=${encodeURIComponent(scope.policy)}`}` },
                 { key: 'clusters', label: t('dash.t.clusters'), value: d.totals.clusters, to: `/clusters?${q}` },
                 { key: 'shadowed', label: t('dash.t.shadowed'), value: d.totals.shadowed_rules, to: `/findings?${q}&kind=shadowed_rule` },
                 { key: 'dead', label: t('dash.t.dead'), value: d.totals.dead_rules, to: `/findings?${q}&kind=dead_rule` },

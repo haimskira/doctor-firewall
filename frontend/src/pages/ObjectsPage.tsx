@@ -5,6 +5,7 @@ import { api, errorCode } from '../api/client';
 import type { FwObject, ObjectsPage as Page } from '../api/types';
 import { Alert, Ltr } from '../components/common';
 import { SnapshotPicker } from '../components/inventory';
+import { PolicyPicker, ScopeNote, usePolicyScope } from '../components/policyScope';
 import { SortTh, useServerSort } from '../components/sort';
 import { useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
@@ -26,6 +27,7 @@ export function ObjectsPage() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const sort = useServerSort(SORTS);
+  const scope = usePolicyScope(snapshotId);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -41,6 +43,7 @@ export function ObjectsPage() {
     const params = new URLSearchParams({ offset: String(offset), limit: String(PAGE) });
     if (kind !== null) params.set('kind', kind);
     if (q !== null) params.set('q', q);
+    if (scope.policy !== null) params.set('policy', scope.policy);
     for (const [k, v] of Object.entries(sort.query)) params.set(k, v);
     return `/api/snapshots/${String(snapshotId)}/objects?${params.toString()}`;
   }
@@ -79,8 +82,12 @@ export function ObjectsPage() {
     <div className="stack">
       <div className="row spread">
         <h1>{t('objects.title')}</h1>
-        <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+        <div className="row page-filters">
+          <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
+          <PolicyPicker scope={scope} />
+        </div>
       </div>
+      <ScopeNote scope={scope} />
       {(snapError ?? error) !== null && <Alert kind="error">{tError(snapError ?? error ?? '')}</Alert>}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
       {snapshotId !== null && (

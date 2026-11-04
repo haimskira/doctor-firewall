@@ -49,6 +49,7 @@ from app.workers import progress
 log = logging.getLogger(__name__)
 
 MAX_DYNAMIC_OBJECTS = 1000  # dynamic objects whose mappings are read per collection
+MAX_OVERRIDABLE_OBJECTS = 2000  # overridable objects whose overrides are read per collection
 
 PageHandler = Callable[[Session, int, list[dict[str, Any]]], int]
 
@@ -89,6 +90,8 @@ class Stats:
     runtime_routes: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Resources the FMC refused because their feature is off (resource -> reason).
     unavailable: dict[str, str] = field(default_factory=dict)
+    # Access policy id -> oldest time (ISO) at which the FMC cached the hit counts we read.
+    hits_fetched_at: dict[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +107,7 @@ class Stats:
             "by_resource": self.by_resource,
             "runtime_routes": self.runtime_routes,
             "unavailable": self.unavailable,
+            "hits_fetched_at": self.hits_fetched_at,
         }
 
 
@@ -218,6 +222,7 @@ class Collector:
     async def run(self) -> dict[str, Any]:
         await self._objects()
         await self._dynamic_mappings()
+        await self._overrides()
         progress.phase("collect_topology", 30, 35)
         clusters, assignments = await self._topology()
         await self._policies(clusters, assignments)
@@ -232,6 +237,16 @@ class Collector:
             progress.advance(n + 1, len(clusters))
         progress.phase("saving", 99, 99)
         with self.sessions.begin() as session:
+            # What this snapshot holds, whichever attempt stored it (a resumed run skips the
+            # finished resources, so its own counters would be too low).
+            counts = store.collected_counts(session, self.snapshot_id)
+            self.stats.objects = counts["objects"]
+            self.stats.rules = counts["rules"]
+            self.stats.rules_by_kind = counts["rules_by_kind"]
+            self.stats.policies = counts["policies"]
+            self.stats.interfaces = counts["interfaces"]
+            self.stats.routes = counts["routes"]
+            self.stats.hits_fetched_at = counts["hits_fetched_at"]
             self.stats.stubs = store.add_stub_objects(
                 session, self.snapshot_id, self.adapter.kind_of
             )
@@ -242,6 +257,9 @@ class Collector:
     async def _objects(self) -> None:
         resources = list(self.adapter.OBJECT_RESOURCES)
         progress.phase("collect_objects", 2, 30)
+        with self.sessions.begin() as session:
+            if store.restart_partial_objects(session, self.snapshot_id):
+                log.info("object paging was interrupted: objects are read again from the start")
         for n, resource in enumerate(resources):
             progress.advance(n, len(resources), objects=self.stats.objects)
 
@@ -303,6 +321,46 @@ class Collector:
             )
             with self.sessions.begin() as session:
                 store.set_dynamic_mappings(session, self.snapshot_id, oid, mappings)
+
+    async def _overrides(self) -> None:
+        """The per-device values of overridable objects (``.../{id}/overrides``), kept in the
+        object's ``attrs["overrides"]``. Only objects marked overridable are asked; a FMC that
+        refuses (404 / 405 / 422) is treated as having none."""
+        with self.sessions() as session:
+            rows = list(
+                session.execute(
+                    select(FwObject.fmc_id, FwObject.fmc_type)
+                    .where(
+                        FwObject.snapshot_id == self.snapshot_id,
+                        FwObject.stub.is_(False),
+                        FwObject.attrs["overridable"].astext == "true",
+                    )
+                    .order_by(FwObject.fmc_id)
+                    .limit(MAX_OVERRIDABLE_OBJECTS)
+                ).tuples()
+            )
+        for oid, fmc_type in rows:
+            resource = self.adapter.override_resource(fmc_type)
+            if resource is None:
+                continue
+            self.heartbeat()
+            path = self._path(f"/object/{resource}/{oid}/overrides")
+            try:
+                items = await self._fetch_all(path, optional=True)
+            except FmcProtocolError as exc:
+                if exc.status not in (404, 405, 422):
+                    raise
+                items = []
+                reasons = {405: "not_supported", 422: "feature_disabled"}
+                self.stats.unavailable["object_overrides"] = reasons.get(
+                    exc.status or 0, "not_found"
+                )
+            overrides = [
+                o for o in (self.adapter.map_override(resource, i) for i in items) if o is not None
+            ]
+            overrides.sort(key=lambda o: str(o["target_id"]))
+            with self.sessions.begin() as session:
+                store.set_overrides(session, self.snapshot_id, oid, overrides)
 
     async def _topology(self) -> tuple[list[dict[str, Any]], list[AssignmentRecord]]:
         devices = [
@@ -370,6 +428,9 @@ class Collector:
                 for i in await self._fetch_all(self._path(f"{base}/categories"), optional=True)
             ]
         with self.sessions.begin() as session:
+            # Hit counts read by an earlier attempt are not read again: keep their fetch time.
+            fetched = store.hits_fetched_at(session, self.snapshot_id, policy.fmc_id)
+            attrs = {**policy.attrs, **({"hits_fetched_at": fetched} if fetched else {})}
             store.upsert_policy(
                 session,
                 self.snapshot_id,
@@ -388,7 +449,7 @@ class Collector:
                         }
                         for rel, ref in policy.links
                     ],
-                    "attrs": policy.attrs,
+                    "attrs": attrs,
                 },
             )
         self.stats.policies += 1
@@ -452,17 +513,22 @@ class Collector:
             store.delete_policy_rules(session, self.snapshot_id, policy_id)
             store.reset_checkpoints(session, self.snapshot_id, f"rules:{policy_id}:")
             store.reset_checkpoints(session, self.snapshot_id, f"hits:{policy_id}:")
+            store.clear_hits_fetched(session, self.snapshot_id, policy_id)
 
     async def _hitcounts(self, policy_id: str, path: str, devices: list[str]) -> None:
         for device in devices:
 
             def handle(session: Session, _offset: int, items: list[dict[str, Any]]) -> int:
                 hits = [self.adapter.map_hitcount(i) for i in items]
+                # Rule ids that are not rules of this snapshot match no row and are ignored.
                 store.apply_hitcounts(
                     session,
                     self.snapshot_id,
                     policy_id,
                     hits,
+                )
+                store.note_hits_fetched(
+                    session, self.snapshot_id, policy_id, (h.fetched_at for h in hits)
                 )
                 return len(hits)
 
@@ -525,12 +591,26 @@ class Collector:
             self.stats.runtime_routes[cluster_id] = {"status": "disabled", "routes": 0}
             return
         key = f"runtime-routes:{cluster_id}"
+        detail_key = f"runtime-detail:{cluster_id}"
         with self.sessions() as session:
-            if store.checkpoint(session, self.snapshot_id, key).done:
+            cp = store.checkpoint(session, self.snapshot_id, key)
+            if cp.done:
+                # Collected by an earlier attempt: its status is rebuilt from the checkpoint
+                # (answering unit, verified flag, skipped lines) and the stored routes.
+                detail = store.checkpoint(session, self.snapshot_id, detail_key)
+                members = cluster["members"]
+                self.stats.runtime_routes[cluster_id] = {
+                    "status": "ok",
+                    "verified": detail.done,
+                    "routes": store.count_dynamic_routes(session, self.snapshot_id, cluster_id),
+                    "skipped_lines": detail.next_offset,
+                    "device": members[min(cp.next_offset, len(members) - 1)]["name"],
+                }
+                session.commit()
                 return
             session.commit()
         outcome: dict[str, Any] = {"status": "unavailable", "routes": 0}
-        for member in cluster["members"]:
+        for position, member in enumerate(cluster["members"]):
             result = await self._show_route(member["id"])
             self.heartbeat()
             if isinstance(result, str):
@@ -546,7 +626,14 @@ class Collector:
                 count = store.replace_dynamic_routes(
                     session, self.snapshot_id, cluster_id, result.routes
                 )
-                store.advance(session, self.snapshot_id, key, 0, done=True)
+                store.advance(
+                    session,
+                    self.snapshot_id,
+                    detail_key,
+                    min(result.skipped, 2**31 - 1),
+                    done=check == "ok",
+                )
+                store.advance(session, self.snapshot_id, key, position, done=True)
             outcome = {
                 "status": "ok",
                 "verified": check == "ok",
@@ -554,7 +641,6 @@ class Collector:
                 "skipped_lines": result.skipped,
                 "device": member["name"],
             }
-            self.stats.routes += count
             break
         self.stats.runtime_routes[cluster_id] = outcome
 

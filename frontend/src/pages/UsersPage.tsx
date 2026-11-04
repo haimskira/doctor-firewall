@@ -4,11 +4,23 @@ import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import { ALL_ROLES, AUTH_PROVIDERS } from '../api/types';
-import type { AuthProviderName, Role, User } from '../api/types';
+import type {
+  AuthProviderName,
+  Role,
+  User,
+  UserChangeApproval,
+  UserChangeRequest,
+} from '../api/types';
+import { useAuth } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
 import { useI18n } from '../i18n/I18nProvider';
 
-type Message = { kind: 'error' | 'success'; text: string } | null;
+type Message = { kind: 'error' | 'success' | 'info'; text: string } | null;
+
+/** A 202 means the change waits for a second administrator (two-administrator rule). */
+function isQueued(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && 'request_id' in result;
+}
 
 function RolePicker({
   value,
@@ -43,6 +55,10 @@ function RolePicker({
 
 export function UsersPage() {
   const { t, tError } = useI18n();
+  const { state } = useAuth();
+  const me = state.status === 'authenticated' ? state.me : null;
+  const [requests, setRequests] = useState<UserChangeRequest[]>([]);
+  const [issued, setIssued] = useState<{ user: string; password: string } | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [message, setMessage] = useState<Message>(null);
   const [form, setForm] = useState({ username: '', display_name: '', password: '' });
@@ -61,14 +77,50 @@ export function UsersPage() {
 
   const reload = useCallback(() => {
     api<User[]>('/api/users').then(setUsers).catch(fail);
+    api<UserChangeRequest[]>('/api/users/requests')
+      .then(setRequests)
+      .catch(() => {
+        setRequests([]);
+      });
   }, [fail]);
+
+  function done(result: unknown) {
+    setMessage(
+      isQueued(result)
+        ? { kind: 'info', text: t('users.waitingSecond') }
+        : { kind: 'success', text: t('users.saved') },
+    );
+    reload();
+  }
+
+  async function decide(request: UserChangeRequest, verdict: 'approve' | 'reject') {
+    try {
+      const result = await api<UserChangeApproval>(
+        `/api/users/requests/${String(request.id)}/${verdict}`,
+        'POST',
+      );
+      setIssued(
+        result.temporary_password === null
+          ? null
+          : { user: request.target_username, password: result.temporary_password },
+      );
+      setMessage(
+        verdict === 'approve'
+          ? { kind: 'success', text: t('users.saved') }
+          : { kind: 'info', text: t('users.requestRejected') },
+      );
+      reload();
+    } catch (err: unknown) {
+      fail(err);
+    }
+  }
 
   useEffect(reload, [reload]);
 
   async function create(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await api<User>('/api/users', 'POST', {
+      const result = await api<User>('/api/users', 'POST', {
         username: form.username.trim(),
         display_name: form.display_name.trim(),
         roles,
@@ -78,8 +130,7 @@ export function UsersPage() {
       setForm({ username: '', display_name: '', password: '' });
       setRoles(['viewer']);
       setProvider('local');
-      setMessage({ kind: 'success', text: t('users.saved') });
-      reload();
+      done(result);
     } catch (err: unknown) {
       fail(err);
     }
@@ -87,9 +138,7 @@ export function UsersPage() {
 
   async function update(user: User, patch: { roles?: Role[]; is_active?: boolean }) {
     try {
-      await api<User>(`/api/users/${String(user.id)}`, 'PATCH', patch);
-      setMessage({ kind: 'success', text: t('users.saved') });
-      reload();
+      done(await api<User>(`/api/users/${String(user.id)}`, 'PATCH', patch));
     } catch (err: unknown) {
       fail(err);
     }
@@ -99,13 +148,14 @@ export function UsersPage() {
     event.preventDefault();
     if (resetFor === null) return;
     try {
-      await api<User>(`/api/users/${String(resetFor.id)}/reset-password`, 'POST', {
-        temporary_password: resetValue,
-      });
+      const result = await api<User>(
+        `/api/users/${String(resetFor.id)}/reset-password`,
+        'POST',
+        { temporary_password: resetValue },
+      );
       setResetFor(null);
       setResetValue('');
-      setMessage({ kind: 'success', text: t('users.saved') });
-      reload();
+      done(result);
     } catch (err: unknown) {
       fail(err);
     }
@@ -115,6 +165,69 @@ export function UsersPage() {
     <div className="stack">
       <h1>{t('users.title')}</h1>
       {message !== null && <Alert kind={message.kind}>{message.text}</Alert>}
+      {issued !== null && (
+        <Alert kind="warning">
+          {t('users.issuedPassword', { user: issued.user })} <Ltr>{issued.password}</Ltr>
+        </Alert>
+      )}
+
+      <section className="card">
+        <h2>{t('users.pendingRequests')}</h2>
+        {requests.length === 0 ? (
+          <p className="muted small">{t('users.noPending')}</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>{t('users.username')}</th>
+                <th>{t('users.roles')}</th>
+                <th>{t('users.requestedBy')}</th>
+                <th>{t('users.requestExpires')}</th>
+                <th>{t('common.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map((req) => {
+                const own = me !== null && (req.requested_by === me.username || req.target_user_id === me.id);
+                const payloadRoles = req.payload['roles'];
+                return (
+                  <tr key={req.id}>
+                    <td>
+                      <Ltr>{req.target_username}</Ltr>
+                      <div className="muted small">{t(`users.request.${req.kind}`)}</div>
+                    </td>
+                    <td>{Array.isArray(payloadRoles) ? payloadRoles.join(', ') : ''}</td>
+                    <td>
+                      <Ltr>{req.requested_by}</Ltr>
+                    </td>
+                    <td>
+                      <DateTime value={req.expires_at} />
+                    </td>
+                    <td className="actions">
+                      {own ? (
+                        <span className="muted small">{t('users.waitingSecond')}</span>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => void decide(req, 'approve')}>
+                            {t('users.approve')}
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => void decide(req, 'reject')}
+                          >
+                            {t('users.reject')}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className="card">
         <table>
@@ -284,6 +397,7 @@ export function UsersPage() {
           </button>
         </form>
         <p className="muted small">{local ? t('password.rules') : t('users.directoryHelp')}</p>
+        <p className="muted small">{t('users.twoAdminHelp')}</p>
       </section>
     </div>
   );

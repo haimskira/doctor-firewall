@@ -146,7 +146,11 @@ def test_recommendations_cover_the_doctrine(client: TestClient, admin: dict[str,
     sources = tighten["preview"]["after"][0]["fields"]["src_net"]
     assert "NET_USERS_GENERAL" in sources
     assert "10.100.1.0/24" in sources
-    assert set(tighten["warnings"]) == {"derived_from_routing", "literal_needs_object"}
+    assert set(tighten["warnings"]) == {
+        "derived_from_routing",
+        "literal_needs_object",
+        "ipv6_dropped",
+    }
 
     # Any port toward SQL-FIN -> its declared TCP 1433, via the existing object.
     ports = one("tighten_ports", "TEMP_DEV_TO_DB")

@@ -1280,6 +1280,9 @@ def _tighten_source(
     warnings = ["derived_from_routing"]
     if any(x.literal is not None for x in sources):
         warnings.append("literal_needs_object")
+    if not any(":" in n for n, _oid, _label in networks):
+        # Interfaces carry only IPv4 subnets: an "any" rule's IPv6 traffic would be dropped.
+        warnings.append("ipv6_dropped")
     return Draft(
         kind="tighten_source",
         principle="least_privilege",

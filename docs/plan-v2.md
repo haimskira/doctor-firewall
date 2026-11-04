@@ -196,6 +196,7 @@ Docker Hub (approved by the user; Trivy must pass on api / web / postgres / redi
 
 ## Running work outside the plan
 
+- [x] Bug hunt round 2 (2026-11-04): two-admin rule for granting elevated roles / creating such users / resetting their passwords (pending requests, migration 0025); no lockout of an admin from a trusted IP; constant-time failed logins with external providers; denied-access audit deduplicated; collector resume re-reads objects, no duplicate group members, stats rebuilt, object overrides collected, hit-count fetch time recorded and stale counters never prove a rule dead (DF_HIT_COUNTS_MAX_AGE_HOURS, roadmap check hits_fresh), manual NAT section from metadata; objects per policy; ipv6_dropped warning; consistent stale decisions; shadow overlap scan indexed. Lab FMC check: zero-hit rules are returned with the HA id; hit counts are cached (lastFetchTimeStamp).
 - [x] Full bug hunt 2026-11-03/04 (six code reviews + live penetration / fuzz / RBAC tests, all fixed with tests):
       unmodelled rule conditions (URL category, time range, VLAN, tunnel, decryption) are opaque and never shadow or merge;
       dynamic / FQDN / overridable objects never merged or reused; group cycles never empty a field; executor resolves

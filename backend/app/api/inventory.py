@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.analysis import routing
 from app.analysis.expand import ACE_FIELDS
-from app.api.scope import ensure_scoped, in_policy, rule_policies
+from app.analysis.policy_scope import PolicyIndex
+from app.api.scope import PolicyQuery, ensure_scoped, in_policy, rule_policies
 from app.api.sorting import SortColumns, SortOrder, order_by
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -904,9 +905,17 @@ def list_objects(
         Literal["name", "kind", "value", "rule_refs", "member_of"] | None, Query()
     ] = None,
     order: SortOrder = None,
+    policy: PolicyQuery = None,
 ) -> ObjectsPage:
     _snapshot(db, snapshot_id)
     query = _object_rows(snapshot_id)
+    if policy is not None:
+        # The policy's world: objects its rules use directly or through groups (the dashboard's
+        # ``objects_by_policy`` count).
+        ensure_scoped(db, snapshot_id, policy)
+        index = PolicyIndex(db, snapshot_id)
+        mine = [oid for oid, owners in index.by_object.items() if policy in owners]
+        query = query.where(FwObject.fmc_id.in_(mine))
     if kind:
         query = query.where(FwObject.kind == kind)
     if q:

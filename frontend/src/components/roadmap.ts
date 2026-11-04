@@ -55,7 +55,7 @@ export interface RoadmapCounts {
 
 export interface Roadmap {
   snapshot_id: number;
-  prepare: { code: 'assets' | 'limits' | 'hits' | 'fresh'; ok: boolean; args: Record<string, number> }[];
+  prepare: { code: 'assets' | 'limits' | 'hits' | 'hits_fresh' | 'fresh'; ok: boolean; args: Record<string, number> }[];
   phases: (RoadmapCounts & {
     name: Phase;
     status: 'done' | 'current' | 'next';

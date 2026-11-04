@@ -7,6 +7,7 @@ Every route must declare exactly one guard: ``require(<Permission>)``,
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from app.audit.chain import AuditEvent, AuditLog
@@ -22,10 +24,11 @@ from app.auth.rbac import Permission, Role, parse_roles, permissions_for
 from app.auth.sessions import SESSION_COOKIE, SessionStore
 from app.db.session import get_db, get_sessionmaker
 from app.models.user import User
-from app.runtime import get_audit, get_session_store
+from app.runtime import get_audit, get_redis, get_session_store
 
 log = logging.getLogger(__name__)
 
+DENIED_AUDIT_WINDOW_SECONDS = 60
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "X-CSRF-Token"
 GUARD_ATTR = "__df_guard__"
@@ -111,7 +114,19 @@ def _token_principal(request: Request, db: Session, token: str) -> Principal:
     )
 
 
+def _first_denial_in_window(principal: Principal, request: Request) -> bool:
+    """True for the first denial of (user, method, path) in a minute; repeats are not audited."""
+    raw = f"{principal.user_id}|{request.method}|{request.url.path}"
+    key = f"df:denied:{hashlib.sha256(raw.encode()).hexdigest()}"
+    try:
+        return bool(get_redis().set(key, "1", nx=True, ex=DENIED_AUDIT_WINDOW_SECONDS))
+    except RedisError:  # Redis trouble must not hide a denial: audit it
+        return True
+
+
 def _audit_denied(audit: AuditLog, principal: Principal, request: Request, needed: str) -> None:
+    if not _first_denial_in_window(principal, request):
+        return
     # Separate short transaction: the request itself is being rejected.
     with get_sessionmaker()() as session:
         audit.record(

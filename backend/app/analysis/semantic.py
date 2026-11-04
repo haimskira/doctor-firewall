@@ -52,11 +52,39 @@ def _is_dead(rule: Rule, now: datetime, window: timedelta) -> bool:
     return rule.last_hit is not None and rule.last_hit < now - window
 
 
+def stale_hit_policies(stats: dict[str, Any], taken: datetime, max_age: timedelta) -> set[str]:
+    """Access policies whose hit counters the FMC last refreshed more than ``max_age`` before
+    the snapshot (``stats["hits_fetched_at"]``, recorded by the collector): the FMC serves hit
+    counts from a cache, so old counters prove nothing about "no hits"."""
+    stale: set[str] = set()
+    for policy, value in (stats.get("hits_fetched_at") or {}).items():
+        try:
+            fetched = datetime.fromisoformat(str(value))
+        except ValueError:
+            stale.add(str(policy))
+            continue
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=UTC)
+        if taken - fetched > max_age:
+            stale.add(str(policy))
+    return stale
+
+
 def analyze_semantics(
     session: Session, snapshot_id: int, settings: Settings, now: datetime | None = None
 ) -> dict[str, int]:
     now = now or datetime.now(UTC)
     window = timedelta(days=settings.dead_rule_days)
+    taken = session.get(Snapshot, snapshot_id)
+    stale_hits = (
+        stale_hit_policies(
+            taken.stats or {},
+            taken.created_at,
+            timedelta(hours=settings.hit_counts_max_age_hours),
+        )
+        if taken is not None
+        else set()
+    )
     session.execute(delete(RuleScore).where(RuleScore.snapshot_id == snapshot_id))
     resolver = Resolver.load(session, snapshot_id)
     assets = load_assets(session)
@@ -130,7 +158,11 @@ def analyze_semantics(
         }
         for rs in spaces:
             rule = rules[rs.rule_id]
-            dead = policy.kind == "access" and _is_dead(rule, now, window)
+            dead = (
+                policy.kind == "access"
+                and policy.fmc_id not in stale_hits
+                and _is_dead(rule, now, window)
+            )
             if dead:
                 findings.append(
                     FindingRow(

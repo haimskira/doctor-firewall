@@ -22,7 +22,9 @@ full scan. ``analyse_order_naive`` is kept as the reference implementation for t
 from __future__ import annotations
 
 from bisect import bisect_left, insort
+from collections.abc import Iterable
 from dataclasses import dataclass
+from heapq import merge
 
 from app.analysis.expand import RuleSpace
 from app.analysis.space import AddressSet
@@ -33,6 +35,10 @@ DENY_ACTIONS = frozenset({"BLOCK", "BLOCK_RESET", "BLOCK_INTERACTIVE", "BLOCK_RE
 # ANALYZE hands it on to the access policy. They are neither "permit" nor each other.
 DISTINCT_VERDICTS = frozenset({"FASTPATH", "ANALYZE"})
 MAX_CONFLICTS_PER_RULE = 3
+# Earlier rules examined per rule for overlap conflicts (findings only; shadowing is exact).
+# Without it a policy of tens of thousands of "any" / IPv6 / token destinations is O(n^2).
+MAX_OVERLAP_SCAN = 4000
+MAX_ANY_DESTINATIONS = 64
 
 
 @dataclass(frozen=True)
@@ -106,14 +112,16 @@ class _DestinationIndex:
 
     def __init__(self) -> None:
         self.all: list[int] = []
+        self.by_verdict: dict[str, list[int]] = {}
         self.any: list[int] = []
         self.no_v4: list[int] = []  # concrete destinations without an IPv4 part
         self.mixed: list[int] = []  # IPv4 plus IPv6 / opaque tokens
         self.levels: list[dict[int, list[int]]] = [{} for _ in range(33)]
         self.keys: list[list[int]] = [[] for _ in range(33)]
 
-    def add(self, pos: int, dst: AddressSet) -> None:
+    def add(self, pos: int, dst: AddressSet, outcome: str) -> None:
         self.all.append(pos)
+        self.by_verdict.setdefault(outcome, []).append(pos)
         if dst.any:
             self.any.append(pos)
             return
@@ -154,14 +162,19 @@ class _DestinationIndex:
             return sorted(self.any)
         block = _block(dst)
         if block is None:
-            return list(self.all)
+            if dst.empty:
+                return self.all
+            # Without an IPv4 part the set has IPv6 / tokens: an earlier rule covering it must
+            # have such a part too, so a pure-IPv4 set never qualifies.
+            return sorted(self.any + self.no_v4 + self.mixed)
         # Disjoint lists (each position is indexed once): no set needed to deduplicate.
         return sorted(self.any + self.ancestors(*block))
 
-    def overlap_candidates(self, dst: AddressSet) -> list[int]:
+    def overlap_candidates(self, dst: AddressSet, outcome: str) -> Iterable[int]:
         block = _block(dst)
         if dst.any or block is None or not _pure_v4(dst):
-            return list(self.all)
+            # Lazy, evaluation order, only earlier rules with the opposite verdict.
+            return merge(*(v for k, v in self.by_verdict.items() if k != outcome))
         # A pure-IPv4 destination can only meet another rule's IPv4 part, whose block
         # then nests with ours; IPv6 / token parts of earlier rules cannot reach it.
         return sorted(self.any + self.ancestors(*block) + self.descendants(*block))
@@ -172,6 +185,11 @@ def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:
     shadows: list[Shadow] = []
     overlaps: list[Overlap] = []
     index = _DestinationIndex()
+    # Cover candidates: any-destination rules are looked up by source, the others by destination.
+    any_by_source = _DestinationIndex()
+    concrete = _DestinationIndex()
+    all_by_source = _DestinationIndex()
+    by_source: dict[str, _DestinationIndex] = {}  # earlier rules by verdict, indexed on source
     by_pos: list[RuleSpace] = []
     src_keys: list[tuple[int, int] | None] = []
     for rule in rules:
@@ -180,7 +198,19 @@ def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:
         b = rule.space
         b_src = _src_key(b.src_net)
         found: Shadow | None = None
-        for pos in index.cover_candidates(b.dst_net):
+        if b.src_net.any or (_block(b.src_net) is not None and _pure_v4(b.src_net)):
+            # Whoever covers the rule covers its source: a short list when sources are concrete.
+            cover = all_by_source.cover_candidates(b.src_net)
+        elif b.dst_net.any:
+            cover = any_by_source.cover_candidates(b.src_net)
+        else:
+            cover = list(
+                merge(
+                    concrete.cover_candidates(b.dst_net),
+                    any_by_source.cover_candidates(b.src_net),
+                )
+            )
+        for pos in cover:
             if not _encloses(src_keys[pos], b_src):
                 continue
             earlier = by_pos[pos]
@@ -195,19 +225,41 @@ def analyse_order(rules: list[RuleSpace]) -> tuple[list[Shadow], list[Overlap]]:
             shadows.append(found)  # a subset of an earlier rule adds no coverage: skip it
             continue
         conflicts = 0
-        for pos in index.overlap_candidates(b.dst_net):
-            if conflicts >= MAX_CONFLICTS_PER_RULE:
+        mine = verdict(rule.action)
+        if (
+            _block(b.dst_net) is not None
+            and _pure_v4(b.dst_net)
+            and len(index.any) <= MAX_ANY_DESTINATIONS  # else they would flood the list
+        ):
+            candidates: Iterable[int] = index.overlap_candidates(b.dst_net, mine)
+        else:
+            # No IPv4-only destination to anchor on: anchor on the source instead, per verdict.
+            candidates = merge(
+                *(
+                    idx.overlap_candidates(b.src_net, mine)
+                    for k, idx in by_source.items()
+                    if k != mine
+                )
+            )
+        for scanned, pos in enumerate(candidates):
+            if conflicts >= MAX_CONFLICTS_PER_RULE or scanned >= MAX_OVERLAP_SCAN:
                 break
             earlier = by_pos[pos]
             if (
-                verdict(earlier.action) != verdict(rule.action)
+                verdict(earlier.action) != mine
                 and _nests(src_keys[pos], b_src)
                 and earlier.space.intersects(b)
             ):
                 overlaps.append(Overlap(rule=rule, with_rule=earlier))
                 conflicts += 1
         if rule.action not in NON_TERMINATING:
-            index.add(len(by_pos), b.dst_net)
+            index.add(len(by_pos), b.dst_net, mine)
+            if b.dst_net.any:
+                any_by_source.add(len(by_pos), b.src_net, mine)
+            else:
+                concrete.add(len(by_pos), b.dst_net, mine)
+            all_by_source.add(len(by_pos), b.src_net, mine)
+            by_source.setdefault(mine, _DestinationIndex()).add(len(by_pos), b.src_net, mine)
             by_pos.append(rule)
             src_keys.append(b_src)
     return shadows, overlaps

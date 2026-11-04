@@ -109,13 +109,61 @@ def store_objects(session: Session, snapshot_id: int, records: Sequence[ObjectRe
         }
         for r in records
     ]
-    session.execute(
-        pg_insert(FwObject).on_conflict_do_nothing(constraint="uq_objects_snapshot_fmc"), rows
+    inserted = set(
+        session.scalars(
+            pg_insert(FwObject)
+            .on_conflict_do_nothing(constraint="uq_objects_snapshot_fmc")
+            .returning(FwObject.fmc_id),
+            rows,
+        )
     )
-    members = [_member_row(snapshot_id, r.fmc_id, m) for r in records for m in r.members]
+    # Members only for an object row that was really inserted (once): an object met again
+    # (a re-read or shifted page) keeps the members it already has.
+    members: list[dict[str, Any]] = []
+    counted = 0
+    for r in records:
+        if r.fmc_id in inserted:
+            inserted.discard(r.fmc_id)
+            members.extend(_member_row(snapshot_id, r.fmc_id, m) for m in r.members)
+            counted += 1
     if members:
         session.execute(insert(GroupMember), members)
-    return len(rows)
+    return counted
+
+
+def restart_partial_objects(session: Session, snapshot_id: int) -> bool:
+    """Forget every collected object when an object resource was interrupted mid-paging.
+
+    Paging resumes by offset; if objects were added or deleted on the FMC between the
+    attempts, the offset points elsewhere and objects would be skipped. The object stage is
+    then read again from the start. True when it was restarted."""
+    partial = session.scalar(
+        select(func.count())
+        .select_from(SnapshotCheckpoint)
+        .where(
+            SnapshotCheckpoint.snapshot_id == snapshot_id,
+            SnapshotCheckpoint.resource.startswith("objects:", autoescape=True),
+            SnapshotCheckpoint.done.is_(False),
+            SnapshotCheckpoint.next_offset > 0,
+        )
+    )
+    if not partial:
+        return False
+    session.execute(delete(GroupMember).where(GroupMember.snapshot_id == snapshot_id))
+    session.execute(delete(FwObject).where(FwObject.snapshot_id == snapshot_id))
+    reset_checkpoints(session, snapshot_id, "objects:")
+    return True
+
+
+def set_overrides(
+    session: Session, snapshot_id: int, object_id: str, overrides: Sequence[dict[str, Any]]
+) -> None:
+    """Keep the per-device overrides of an overridable object in its ``attrs``."""
+    obj = session.scalar(
+        select(FwObject).where(FwObject.snapshot_id == snapshot_id, FwObject.fmc_id == object_id)
+    )
+    if obj is not None:
+        obj.attrs = {**(obj.attrs or {}), "overrides": [dict(o) for o in overrides]}
 
 
 MAX_MAPPINGS = 2000  # addresses kept per dynamic object (the total is always kept)
@@ -305,6 +353,75 @@ def apply_hitcounts(
             )
             .values(**values)
         )
+
+
+def hits_fetched_at(session: Session, snapshot_id: int, policy_id: str) -> str | None:
+    """The oldest hit-count fetch time recorded so far for a policy (ISO), if any."""
+    attrs = session.scalar(
+        select(Policy.attrs).where(Policy.snapshot_id == snapshot_id, Policy.fmc_id == policy_id)
+    )
+    value = (attrs or {}).get("hits_fetched_at")
+    return value if isinstance(value, str) else None
+
+
+def note_hits_fetched(
+    session: Session, snapshot_id: int, policy_id: str, fetched: Iterable[str | None]
+) -> None:
+    """Remember the OLDEST time at which the FMC cached the hit counters of a policy."""
+    times = [f for f in fetched if f]
+    policy = session.scalar(
+        select(Policy).where(Policy.snapshot_id == snapshot_id, Policy.fmc_id == policy_id)
+    )
+    if policy is None or not times:
+        return
+    oldest = min(times, key=datetime.fromisoformat)
+    current = (policy.attrs or {}).get("hits_fetched_at")
+    if not isinstance(current, str) or datetime.fromisoformat(oldest) < datetime.fromisoformat(
+        current
+    ):
+        policy.attrs = {**(policy.attrs or {}), "hits_fetched_at": oldest}
+
+
+def clear_hits_fetched(session: Session, snapshot_id: int, policy_id: str) -> None:
+    policy = session.scalar(
+        select(Policy).where(Policy.snapshot_id == snapshot_id, Policy.fmc_id == policy_id)
+    )
+    if policy is not None and "hits_fetched_at" in (policy.attrs or {}):
+        policy.attrs = {k: v for k, v in policy.attrs.items() if k != "hits_fetched_at"}
+
+
+def collected_counts(session: Session, snapshot_id: int) -> dict[str, Any]:
+    """Counts of what the snapshot holds now (whatever attempt stored it), for its stats."""
+
+    def count(model: Any, *where: Any) -> int:
+        query = select(func.count()).select_from(model)
+        return session.scalar(query.where(model.snapshot_id == snapshot_id, *where)) or 0
+
+    by_kind = dict(
+        session.execute(
+            select(Rule.policy_kind, func.count(Rule.id))
+            .where(Rule.snapshot_id == snapshot_id)
+            .group_by(Rule.policy_kind)
+        ).tuples()
+    )
+    fetched = {
+        fmc_id: attrs["hits_fetched_at"]
+        for fmc_id, attrs in session.execute(
+            select(Policy.fmc_id, Policy.attrs).where(
+                Policy.snapshot_id == snapshot_id, Policy.kind == PolicyKind.ACCESS.value
+            )
+        ).tuples()
+        if isinstance(attrs, dict) and isinstance(attrs.get("hits_fetched_at"), str)
+    }
+    return {
+        "objects": count(FwObject, FwObject.stub.is_(False)),
+        "rules": sum(by_kind.values()),
+        "rules_by_kind": by_kind,
+        "policies": count(Policy),
+        "interfaces": count(Interface),
+        "routes": count(Route, Route.kind.in_(("static", "dynamic"))),
+        "hits_fetched_at": fetched,
+    }
 
 
 # ------------------------------------------------------------------ topology
@@ -499,6 +616,19 @@ def replace_dynamic_routes(
     if rows:
         session.execute(insert(Route), rows)
     return len(rows)
+
+
+def count_dynamic_routes(session: Session, snapshot_id: int, cluster_id: str) -> int:
+    return (
+        session.scalar(
+            select(func.count(Route.id)).where(
+                Route.snapshot_id == snapshot_id,
+                Route.cluster_fmc_id == cluster_id,
+                Route.kind == "dynamic",
+            )
+        )
+        or 0
+    )
 
 
 def replace_bgp(
