@@ -337,7 +337,7 @@ class Collector:
                     )
                     .order_by(FwObject.fmc_id)
                     .limit(MAX_OVERRIDABLE_OBJECTS)
-                ).tuples()
+                ).all()
             )
         for oid, fmc_type in rows:
             resource = self.adapter.override_resource(fmc_type)

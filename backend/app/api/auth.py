@@ -171,7 +171,7 @@ def change_password(
     ip = client_ip(request)
     # Guesses at the current password count as failed sign-ins of this user: a stolen session
     # must not become an unthrottled password oracle.
-    if throttle.is_locked(user.username, ip):
+    if throttle.is_locked(user.username, ip, honour_trust=False):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too_many_attempts")
     if not verify_password(user.password_hash, body.current_password):
         failures = throttle.register_failure(user.username, ip)

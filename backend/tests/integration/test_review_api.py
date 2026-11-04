@@ -263,9 +263,10 @@ def test_admin_cannot_change_own_roles(client: TestClient) -> None:
     assert (
         client.patch(f"/api/users/{me}", headers=h, json={"display_name": "Me"}).status_code == 200
     )
+    # Someone else's elevated role: with several admins it waits for a second admin.
     changed = client.patch(f"/api/users/{other}", headers=h, json={"roles": ["admin", "approver"]})
-    assert changed.status_code == 200
-    assert changed.json()["roles"] == ["admin", "approver"]
+    assert changed.status_code == 202
+    assert changed.json()["status"] == "pending"
 
 
 # ------------------------------------------------------------------ 5: change-password guesses
@@ -291,9 +292,10 @@ def test_change_password_guesses_are_throttled_and_end_the_session(client: TestC
     assert last.status_code == 429
     assert last.json()["detail"] == "too_many_attempts"
     assert client.get("/api/auth/me").status_code == 401  # the session was ended
-    # The account is locked for sign-in too, even with the right password.
+    # The owner, from the address he signed in from before, is not locked out by the
+    # guesses; anyone signing in from elsewhere is.
     relogin = client.post("/api/auth/login", json={"username": "guesser", "password": PASSWORD})
-    assert relogin.status_code == 429
+    assert relogin.status_code == 200
 
 
 # ------------------------------------------------------------------ 6: developer API

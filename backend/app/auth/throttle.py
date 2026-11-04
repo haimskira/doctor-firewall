@@ -45,7 +45,9 @@ class LoginThrottle:
         # The IP limit is looser: many users may share a NAT/jump host.
         return _key("user", username.lower()), _key("ip", source_ip)
 
-    def is_locked(self, username: str, source_ip: str) -> bool:
+    def is_locked(self, username: str, source_ip: str, *, honour_trust: bool = True) -> bool:
+        """``honour_trust``: sign-in only — guessing the current password of a signed-in
+        session (change-password) is never exempt."""
         user_key, ip_key = self._keys(username, source_ip)
         user_fails, ip_fails, trusted = self._redis.mget(
             user_key, ip_key, _trust_key(username, source_ip)
@@ -53,7 +55,7 @@ class LoginThrottle:
         if int(ip_fails or 0) >= self._max * 4:
             return True
         # The per-user lock does not apply to an address that already signed in as this user.
-        return int(user_fails or 0) >= self._max and trusted is None
+        return int(user_fails or 0) >= self._max and (trusted is None or not honour_trust)
 
     @property
     def max_failures(self) -> int:

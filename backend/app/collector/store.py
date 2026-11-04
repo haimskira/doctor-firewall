@@ -402,7 +402,7 @@ def collected_counts(session: Session, snapshot_id: int) -> dict[str, Any]:
             select(Rule.policy_kind, func.count(Rule.id))
             .where(Rule.snapshot_id == snapshot_id)
             .group_by(Rule.policy_kind)
-        ).tuples()
+        ).all()
     )
     fetched = {
         fmc_id: attrs["hits_fetched_at"]
@@ -410,7 +410,7 @@ def collected_counts(session: Session, snapshot_id: int) -> dict[str, Any]:
             select(Policy.fmc_id, Policy.attrs).where(
                 Policy.snapshot_id == snapshot_id, Policy.kind == PolicyKind.ACCESS.value
             )
-        ).tuples()
+        ).all()
         if isinstance(attrs, dict) and isinstance(attrs.get("hits_fetched_at"), str)
     }
     return {

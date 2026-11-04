@@ -37,6 +37,12 @@ def _user(username: str) -> User | None:
 # ---- 1. two-administrator rule ----
 
 
+def _last_audit_id() -> int:
+    """Audit rows of earlier tests stay in the database: count only this test's."""
+    with get_sessionmaker()() as s:
+        return s.scalar(select(func.max(AuditRecord.id))) or 0
+
+
 def test_single_admin_changes_apply_immediately(client: TestClient) -> None:
     make_user("solo", ["admin"])
     csrf = login(client, "solo")
@@ -61,7 +67,7 @@ def test_privileged_create_is_queued_and_approved_by_another_admin(client: TestC
     # The requester cannot approve his own request.
     own = client.post(f"/api/users/requests/{request_id}/approve", headers=_h(csrf1))
     assert own.status_code == 403
-    assert client.get("/api/users/requests").json()[0]["id"] == request_id
+    assert request_id in {r["id"] for r in client.get("/api/users/requests").json()}
 
     with TestClient(create_app(), base_url="https://testserver") as other:
         csrf2 = login(other, "adm2")
@@ -140,6 +146,7 @@ def test_privileged_password_reset_is_queued_and_returns_generated_password(
 
 
 def test_reject_and_expiry(client: TestClient) -> None:
+    first_record = _last_audit_id()
     make_user("adm1", ["admin"])
     make_user("adm2", ["admin"])
     csrf1 = login(client, "adm1")
@@ -163,7 +170,9 @@ def test_reject_and_expiry(client: TestClient) -> None:
     assert _user("a1") is None
     assert _user("a2") is None
     with get_sessionmaker()() as s:
-        query = select(AuditRecord.action).where(AuditRecord.action.like("user.request.%"))
+        query = select(AuditRecord.action).where(
+            AuditRecord.action.like("user.request.%"), AuditRecord.id > first_record
+        )
         actions = set(s.scalars(query))
     assert actions == {"user.request.create", "user.request.reject"}
 
@@ -194,6 +203,8 @@ def test_lockout_does_not_block_a_known_good_ip() -> None:
         throttle.register_failure("admin", "203.0.113.9")
     assert throttle.is_locked("admin", "203.0.113.9") is True
     assert throttle.is_locked("admin", "10.0.0.5") is False
+    # Guessing the current password of a signed-in session is never exempt.
+    assert throttle.is_locked("admin", "10.0.0.5", honour_trust=False) is True
     assert redis.ttl(next(iter(redis.scan_iter("df:logintrust:*")))) > 29 * 24 * 3600
 
 
@@ -248,6 +259,7 @@ def test_no_padding_with_local_only(client: TestClient, monkeypatch: pytest.Monk
 
 
 def test_repeated_denials_are_audited_once_per_minute(client: TestClient) -> None:
+    first_record = _last_audit_id()
     make_user("viewer1", ["viewer"])
     login(client, "viewer1")
     for _ in range(5):
@@ -255,6 +267,8 @@ def test_repeated_denials_are_audited_once_per_minute(client: TestClient) -> Non
     assert client.get("/api/audit").status_code == 403
     with get_sessionmaker()() as s:
         count = s.scalar(
-            select(func.count(AuditRecord.id)).where(AuditRecord.action == "access.denied")
+            select(func.count(AuditRecord.id)).where(
+                AuditRecord.action == "access.denied", AuditRecord.id > first_record
+            )
         )
     assert count == 2
