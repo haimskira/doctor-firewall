@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
@@ -207,6 +208,16 @@ class ObjectsPage(BaseModel):
     total: int
     offset: int
     rows: list[ObjectOut]
+
+
+class ObjectKindCount(BaseModel):
+    kind: str
+    total: int
+    unused: int  # referenced by no rule and no group
+
+
+class ObjectKinds(BaseModel):
+    kinds: list[ObjectKindCount]
 
 
 class EdgeOut(BaseModel):
@@ -892,21 +903,15 @@ def _object_out(o: FwObject, rule_refs: int, member_of: int) -> ObjectOut:
     )
 
 
-@router.get("/snapshots/{snapshot_id}/objects", response_model=ObjectsPage)
-def list_objects(
-    snapshot_id: int,
-    db: DbDep,
-    _: ReaderDep,
-    kind: Annotated[str | None, Query(pattern=r"^[a-z_]{1,32}$")] = None,
-    q: SearchQuery = None,
-    offset: Offset = 0,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
-    sort: Annotated[
-        Literal["name", "kind", "value", "rule_refs", "member_of"] | None, Query()
-    ] = None,
-    order: SortOrder = None,
-    policy: PolicyQuery = None,
-) -> ObjectsPage:
+ObjectKindsQuery = Annotated[list[str] | None, Query(max_length=16)]
+Usage = Literal["used", "unused"]
+_KIND_NAME = re.compile(r"^[a-z_]{1,32}$")
+
+
+def _scoped_objects(
+    db: Session, snapshot_id: int, policy: str | None, q: str | None
+) -> Select[Any]:
+    """The snapshot's objects with usage counts, narrowed to one policy's world and a search."""
     _snapshot(db, snapshot_id)
     query = _object_rows(snapshot_id)
     if policy is not None:
@@ -916,12 +921,38 @@ def list_objects(
         index = PolicyIndex(db, snapshot_id)
         mine = [oid for oid, owners in index.by_object.items() if policy in owners]
         query = query.where(FwObject.fmc_id.in_(mine))
-    if kind:
-        query = query.where(FwObject.kind == kind)
     if q:
         query = query.where(
             _search(FwObject.name, q) | _search(func.coalesce(FwObject.value, ""), q)
         )
+    return query
+
+
+@router.get("/snapshots/{snapshot_id}/objects", response_model=ObjectsPage)
+def list_objects(
+    snapshot_id: int,
+    db: DbDep,
+    _: ReaderDep,
+    kind: ObjectKindsQuery = None,
+    q: SearchQuery = None,
+    usage: Usage | None = None,
+    offset: Offset = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    sort: Annotated[
+        Literal["name", "kind", "value", "rule_refs", "member_of"] | None, Query()
+    ] = None,
+    order: SortOrder = None,
+    policy: PolicyQuery = None,
+) -> ObjectsPage:
+    kinds = [k for k in kind or [] if k]
+    if any(not _KIND_NAME.match(k) for k in kinds):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_kind")
+    query = _scoped_objects(db, snapshot_id, policy, q)
+    if kinds:
+        query = query.where(FwObject.kind.in_(kinds))
+    if usage is not None:
+        refs = query.selected_columns["rule_refs"] + query.selected_columns["member_of"]
+        query = query.where(refs == 0 if usage == "unused" else refs > 0)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     columns: SortColumns = {
         "name": FwObject.name,
@@ -935,6 +966,23 @@ def list_objects(
     return ObjectsPage(
         total=total, offset=offset, rows=[_object_out(o, rr, mo) for o, rr, mo in rows]
     )
+
+
+@router.get("/snapshots/{snapshot_id}/object-kinds", response_model=ObjectKinds)
+def object_kinds(
+    snapshot_id: int,
+    db: DbDep,
+    _: ReaderDep,
+    q: SearchQuery = None,
+    policy: PolicyQuery = None,
+) -> ObjectKinds:
+    """Per-kind totals (and unused counts) for the objects page tabs, in the same scope."""
+    rows = _scoped_objects(db, snapshot_id, policy, q).subquery()
+    unused = func.count().filter(rows.c.rule_refs + rows.c.member_of == 0)
+    counted = db.execute(
+        select(rows.c.kind, func.count(), unused).group_by(rows.c.kind).order_by(rows.c.kind)
+    )
+    return ObjectKinds(kinds=[ObjectKindCount(kind=k, total=t, unused=u) for k, t, u in counted])
 
 
 def _ancestors(db: Session, snapshot_id: int, object_id: str) -> list[tuple[str, str, int]]:

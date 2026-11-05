@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { api, errorCode } from '../api/client';
+import { ApiError, api, errorCode } from '../api/client';
 import { RECOMMENDATION_KINDS } from '../api/types';
 import type { Recommendation, RecommendationDetail, RecommendationsPage as Page } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
@@ -715,11 +715,13 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
   const [ticket, setTicket] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tooBig, setTooBig] = useState<{ id: number; ops: number; limit: number } | null>(null);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setTooBig(null);
     try {
       const page = await api<Page>(
         `/api/snapshots/${String(snapshotId)}/recommendations?state=accepted&unstaged=true&limit=${String(STAGE_MAX)}`,
@@ -737,7 +739,20 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
       const held = made.held.length > 0 ? `&held=${String(made.held.length)}` : '';
       void navigate(`/deploy?changeset=${String(made.id)}${held}`);
     } catch (err) {
-      setError(errorCode(err));
+      const body = err instanceof ApiError && isRecord(err.body) ? err.body : null;
+      const id = body?.['recommendation'];
+      const ops = body?.['operations'];
+      const limit = body?.['limit'];
+      if (
+        errorCode(err) === 'item_exceeds_limit' &&
+        typeof id === 'number' &&
+        typeof ops === 'number' &&
+        typeof limit === 'number'
+      ) {
+        setTooBig({ id, ops, limit });
+      } else {
+        setError(errorCode(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -799,6 +814,15 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
         {t('common.cancel')}
       </button>
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+      {tooBig !== null && (
+        <Alert kind="error">
+          {t('dep.itemTooBig', { id: tooBig.id, ops: tooBig.ops, limit: tooBig.limit })}
+        </Alert>
+      )}
     </form>
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,10 +1,10 @@
 import {
   BellIcon,
+  BookOpenTextIcon,
   CaretDownIcon,
   CaretRightIcon,
   ChartLineIcon,
   CubeIcon,
-  HardDrivesIcon,
   ListIcon,
   MagnifyingGlassIcon,
   MoonIcon,
@@ -105,19 +105,23 @@ const NAV: NavGroup[] = [
         ],
       },
       {
-        id: 'devices',
-        label: 'shell.devices',
-        icon: HardDrivesIcon,
-        children: [{ to: '/clusters', label: 'nav.clusters', permission: 'policy:read' }],
-      },
-      {
         id: 'integrations',
         label: 'shell.integrations',
         icon: PlugsIcon,
         children: [
           { to: '/fmc', label: 'nav.fmc', permission: 'fmc:manage' },
+          { to: '/clusters', label: 'shell.devices', permission: 'policy:read' },
           { to: '/snapshots', label: 'nav.snapshots', permission: 'policy:read' },
           { to: '/api-docs', label: 'nav.apiDocs', permission: 'policy:read' },
+        ],
+      },
+      {
+        id: 'documents',
+        label: 'shell.documents',
+        icon: BookOpenTextIcon,
+        children: [
+          { to: '/docs/doctrine', label: 'nav.docDoctrine', permission: 'policy:read' },
+          { to: '/docs/logic', label: 'nav.docLogic', permission: 'policy:read' },
         ],
       },
     ],

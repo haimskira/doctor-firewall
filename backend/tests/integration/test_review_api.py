@@ -173,7 +173,7 @@ def test_stored_password_is_never_sent_to_a_new_host(
     for change in ({"host": "fmc-elsewhere"}, {"port": 8443}, {"username": "other_user"}):
         resp = client.patch(f"/api/fmc/connections/{conn}", headers=admin, json=change)
         assert resp.status_code == 422, change
-        assert resp.json()["detail"] == "password_required"
+        assert resp.json()["detail"] == "fmc_password_required"
     stored = client.get("/api/fmc/connections").json()[0]
     assert (stored["host"], stored["port"], stored["username"]) == ("fmc-mock", 443, "api_user")
     # Unchanged values need no password; a new host with its password is fine.

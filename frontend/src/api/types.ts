@@ -343,6 +343,10 @@ export interface FwObject {
   member_of: number;
 }
 
+export interface ObjectKinds {
+  kinds: { kind: string; total: number; unused: number }[];
+}
+
 export interface ObjectsPage {
   total: number;
   offset: number;

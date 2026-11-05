@@ -13,6 +13,7 @@ import { RoadmapPage } from './pages/RoadmapPage';
 import { ApiDocsPage } from './pages/ApiDocsPage';
 import { AuditPage } from './pages/AuditPage';
 import { DeployPage } from './pages/DeployPage';
+import { DocsPage } from './pages/DocsPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClustersPage } from './pages/ClustersPage';
 import { FindingsPage } from './pages/FindingsPage';
@@ -82,6 +83,7 @@ export function App() {
             ['deploy', <DeployPage key="y" />],
             ['naming', <NamingPage key="n" />],
             ['inspection', <InspectionPage key="i" />],
+            ['docs/:doc', <DocsPage key="doc" />],
           ] as const
         ).map(([path, element]) => (
           <Route key={path} path={path} element={<RequirePermission permission="policy:read">{element}</RequirePermission>} />

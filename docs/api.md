@@ -36,7 +36,7 @@ HTTP status with `{"detail": "<code>"}`.
 
 | What | Endpoints |
 |---|---|
-| Inventory | `/api/snapshots`, `/api/snapshots/{id}/policies`, `/api/snapshots/{id}/policies/{policy}/rules`, `/api/snapshots/{id}/objects[/{object}[/relations\|/tree]]` |
+| Inventory | `/api/snapshots`, `/api/snapshots/{id}/policies`, `/api/snapshots/{id}/policies/{policy}/rules`, `/api/snapshots/{id}/objects[/{object}[/relations\|/tree]]` (`kind` repeatable, `usage=used\|unused`), `/api/snapshots/{id}/object-kinds` (per-kind totals and unused counts for the objects tabs) |
 | Findings | `/api/snapshots/{id}/findings` (each with the recommendations that fix it) |
 | Scores, dashboard | `/api/snapshots/{id}/scores`, `/api/snapshots/{id}/dashboard` |
 | Recommendations | `/api/snapshots/{id}/recommendations` (`kind`, `phase`, `state`, `rule`, `policy`), `/api/snapshots/{id}/recommendations/{rec}` |

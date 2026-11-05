@@ -198,7 +198,7 @@ def update_connection(
     )
     if moved and body.password is None:
         # The stored password belongs to this host and account: it is never sent elsewhere.
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "password_required")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "fmc_password_required")
     changed: list[str] = []
     for field in ("name", "host", "port", "username"):
         value = getattr(body, field)

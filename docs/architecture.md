@@ -1,7 +1,9 @@
 # Architecture
 
-Source of truth for requirements: the system specification and the firewall doctrine
-(kept outside the public repository). This document describes how the code realises them.
+Source of truth for requirements: the system specification (kept outside the public repository)
+and the firewall doctrine (`docs/app/doctrine.html`, shown in the UI under Documents). This
+document describes how the code realises them. In-app documents live in `docs/app/*.html` and are
+compiled to React components with `scripts/doc-to-tsx.py` (raw HTML is never injected at runtime).
 
 ## Runtime topology (single host, docker compose)
 
