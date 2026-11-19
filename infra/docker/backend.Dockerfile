@@ -5,7 +5,7 @@
 # No network access is needed beyond having the pinned base image loaded locally.
 # (No "# syntax=" directive on purpose: it would pull a BuildKit frontend image.)
 
-ARG PYTHON_IMAGE=python:3.12.16-slim-bookworm@sha256:6dd8b6dab6b3adc7812bab69eca5dbdc1a5cc690ad28306d234ffb4ef8ac9753
+ARG PYTHON_IMAGE=python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 FROM ${PYTHON_IMAGE} AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \

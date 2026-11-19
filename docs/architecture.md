@@ -31,7 +31,7 @@ compiled to React components with `scripts/doc-to-tsx.py` (raw HTML is never inj
 
 | Service | Image | Role |
 |---|---|---|
-| `web` | `doctor-firewall/web` (nginx-unprivileged) | TLS termination, static UI, `/api` proxy, login rate limit |
+| `web` | `doctor-firewall/web` (official nginx, run as uid 101) | TLS termination, static UI, `/api` proxy, login rate limit |
 | `api` | `doctor-firewall/api` | REST API, RBAC, sessions, audit, FMC connection test |
 | `worker` | same image, `python -m app.workers.worker` | RQ jobs (JSON serializer, allow-listed functions) |
 | `scheduler` | same image, `python -m app.workers.scheduler` | periodic jobs (interval slots claimed in Redis) |
