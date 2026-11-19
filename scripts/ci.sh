@@ -13,7 +13,7 @@ OFFLINE=""
 
 require_vendor
 rm -f "$CI_STAMP"
-FINGERPRINT="$(tree_fingerprint)"
+FINGERPRINT="$( [[ -n "$CI_GIT_DIR" ]] && tree_fingerprint || true )"  # empty outside a Git checkout
 CI_DIR="$INFRA/.ci"
 COMPOSE=(docker compose -f "$INFRA_HOST/docker-compose.ci.yml")
 
@@ -90,10 +90,9 @@ else
 fi
 ok "no known vulnerable dependencies"
 
-if [[ "$(tree_fingerprint)" == "$FINGERPRINT" ]]; then
+if [[ -n "$FINGERPRINT" && "$(tree_fingerprint)" == "$FINGERPRINT" ]]; then
     # Push and publish of a commit with exactly this content skip the gate (scripts/lib.sh).
-    printf '%s
-' "$FINGERPRINT" > "$CI_STAMP"
+    printf '%s\n' "$FINGERPRINT" > "$CI_STAMP"
 else
     log "files changed while CI ran: the result is not recorded for push/publish"
 fi

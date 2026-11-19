@@ -185,10 +185,13 @@ seal_bundle() {
 # The fingerprint is the Git tree id of the working tree as it would be committed (tracked and
 # untracked, .gitignore honoured): the same id a commit of that content has as HEAD^{tree}.
 # ci.sh records it only when the tree was identical at the start and at the end of a passing run.
-CI_GIT_DIR="$(git -C "$ROOT_HOST" rev-parse --absolute-git-dir)"
-CI_STAMP="$CI_GIT_DIR/df-ci-passed"
+# Empty on a server installed from a bundle (no Git checkout, maybe no git at all): sourcing
+# lib.sh must never fail there, and nothing then counts as "CI passed".
+CI_GIT_DIR="$(git -C "$ROOT_HOST" rev-parse --absolute-git-dir 2>/dev/null || true)"
+CI_STAMP="${CI_GIT_DIR:-/nonexistent}/df-ci-passed"
 
 tree_fingerprint() {
+    [[ -n "$CI_GIT_DIR" ]] || die "not a Git checkout"
     local index="$CI_GIT_DIR/df-fingerprint-index"
     cp "$CI_GIT_DIR/index" "$index"
     GIT_INDEX_FILE="$index" git -C "$ROOT_HOST" add -A >/dev/null 2>&1
@@ -198,6 +201,6 @@ tree_fingerprint() {
 
 # True when CI passed on exactly the content of <commit-ish>.
 ci_passed_for() {
-    [[ -f "$CI_STAMP" ]] || return 1
+    [[ -n "$CI_GIT_DIR" && -f "$CI_STAMP" ]] || return 1
     [[ "$(tr -d '[:space:]' < "$CI_STAMP")" == "$(git -C "$ROOT_HOST" rev-parse "$1^{tree}" 2>/dev/null)" ]]
 }
