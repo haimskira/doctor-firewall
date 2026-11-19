@@ -53,7 +53,7 @@ from app.analysis.connectivity import (
 from app.analysis.expand import Resolver, rule_spaces
 from app.analysis.recommend import load_zone_networks
 from app.analysis.score import AssetIndex
-from app.analysis.space import AddressSet, MatchSpace, TokenSet
+from app.analysis.space import AddressSet, MatchSpace, PortSet, TokenSet
 from app.models.assets import RuleScore
 from app.models.inventory import ClusterPolicy, Finding, FwObject, Policy, Rule, RuleRef
 
@@ -93,6 +93,8 @@ class Hop:
     # Identity conditions the addresses alone do not show (SGT, dynamic object, user): the
     # hop exists only for endpoints that also match them. ((field, name), ...)
     conditions: tuple[tuple[str, str], ...] = ()
+    # The rule's destination ports as modelled (None for a default action): the dossier labels.
+    ports: PortSet | None = None
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -229,6 +231,7 @@ def load_hops(
                     risk=rule_risk(reasons),
                     hits=rs.hit_count,
                     conditions=conditions,
+                    ports=rs.space.dst_port,
                 )
             )
         if policy.kind == "access" and policy.default_action.upper() in PERMIT_DEFAULTS:

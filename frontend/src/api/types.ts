@@ -992,3 +992,62 @@ export interface UserChangeApproval {
   user: User | null;
   temporary_password: string | null;
 }
+
+/** System dossier: one asset-table system, who reaches it and what it reaches. */
+export interface DossierRule {
+  policy_id: string;
+  policy: string;
+  id: string;
+  name: string;
+  index: number;
+  action: string;
+  inspected: boolean;
+  partial: boolean;
+  default: boolean;
+  hits: number | null;
+  conditions: { field: string; name: string }[];
+  risk: 'green' | 'yellow' | 'red';
+  broad: boolean;
+  services: string[];
+}
+
+export interface DossierPeer {
+  key: string;
+  kind: 'system' | 'object' | 'network' | 'any' | 'default';
+  label: string;
+  tier: string | null;
+  values: string[];
+  services: string[];
+  apps: string[];
+  conditions: { field: string; name: string }[];
+  rule_count: number;
+  rules: DossierRule[];
+  hits: number | null;
+  risk: 'green' | 'yellow' | 'red';
+  broad: number;
+  specific: number;
+  inspected: number;
+  targets: string[];
+}
+
+export interface Dossier {
+  system: {
+    id: string;
+    name: string;
+    tier: string;
+    kind: string;
+    owner: string;
+    description: string;
+    components: { name: string; network: string; role: string; ports: string }[];
+  };
+  inbound: DossierPeer[];
+  outbound: DossierPeer[];
+  summary: {
+    inbound_peers: number;
+    outbound_peers: number;
+    inbound_rules: number;
+    outbound_rules: number;
+    internal_rules: number;
+    truncated: boolean;
+  };
+}

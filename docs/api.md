@@ -43,6 +43,7 @@ HTTP status with `{"detail": "<code>"}`.
 | Clean-up roadmap | `/api/snapshots/{id}/roadmap` |
 | Connectivity map | `/api/snapshots/{id}/map` |
 | Attack surface | `/api/snapshots/{id}/attack-surface`, `.../attack-surface/targets` |
+| System dossier | `/api/snapshots/{id}/dossier?system=TIER\|name` — who reaches one system and what it reaches, per peer with `TCP-443`-style services and the rules (docs/dossier.md) |
 | Clusters, routing | `/api/snapshots/{id}/clusters`, `/api/snapshots/{id}/clusters/{cluster}/network` |
 | Changesets | `/api/changesets`, `/api/changesets/{id}` |
 | History | `/api/history`, `/api/changesets/{id}/batches/{seq}/changes` |

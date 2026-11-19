@@ -14,6 +14,7 @@ import { ApiDocsPage } from './pages/ApiDocsPage';
 import { AuditPage } from './pages/AuditPage';
 import { DeployPage } from './pages/DeployPage';
 import { DocsPage } from './pages/DocsPage';
+import { DossierPage } from './pages/DossierPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClustersPage } from './pages/ClustersPage';
 import { FindingsPage } from './pages/FindingsPage';
@@ -78,6 +79,7 @@ export function App() {
             ['api-docs', <ApiDocsPage key="ad" />],
             ['map', <MapPage key="g" />],
             ['attack', <AttackSurfacePage key="t" />],
+            ['dossier', <DossierPage key="ds" />],
             ['jobs', <JobsPage key="j" />],
             ['history', <HistoryPage key="h" />],
             ['deploy', <DeployPage key="y" />],

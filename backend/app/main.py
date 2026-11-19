@@ -13,6 +13,7 @@ from app.api import (
     connectivity,
     dashboard,
     developer,
+    dossier,
     fmc,
     health,
     history,
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     for module in (
         health,
         attack,
+        dossier,
         auth,
         users,
         fmc,

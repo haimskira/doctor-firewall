@@ -61,6 +61,7 @@ const NAV: NavGroup[] = [
           { to: '/', label: 'nav.dashboard', permission: null, end: true },
           { to: '/map', label: 'nav.map', permission: 'policy:read' },
           { to: '/attack', label: 'nav.attack', permission: 'policy:read' },
+          { to: '/dossier', label: 'nav.dossier', permission: 'policy:read' },
           { to: '/scores', label: 'nav.scores', permission: 'policy:read' },
         ],
       },

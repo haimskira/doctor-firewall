@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
 # Every push must pass the full local CI gate (tests, lint, types, SAST, SCA).
+# The gate is not repeated when it already passed on exactly the content being pushed
+# (same Git tree as recorded by scripts/ci.sh); any other content runs it.
 set -euo pipefail
-exec "$(git rev-parse --show-toplevel)/scripts/ci.sh"
+ROOT="$(git rev-parse --show-toplevel)"
+source "$ROOT/scripts/lib.sh"
+covered=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    [[ "$local_sha" =~ ^0+$ ]] && continue  # branch deletion
+    ci_passed_for "$local_sha" || covered=""
+done
+if [[ -n "$covered" ]] && ci_passed_for HEAD; then
+    ok "CI already passed on exactly this content — not running it again"
+    exit 0
+fi
+exec "$ROOT/scripts/ci.sh"

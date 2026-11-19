@@ -26,6 +26,10 @@ if [[ -z "$ALLOW_DIRTY" ]] && ! git -C "$ROOT_HOST" diff --quiet HEAD --; then
 fi
 SHA="$(git -C "$ROOT_HOST" rev-parse --short=12 HEAD)"
 
+if [[ -z "$SKIP_CI" && -z "$ALLOW_DIRTY" ]] && ci_passed_for HEAD; then
+    ok "CI already passed on exactly this commit's content — not running it again"
+    SKIP_CI=1
+fi
 if [[ -z "$SKIP_CI" ]]; then
     log "Running the CI gate first"
     "$ROOT/scripts/ci.sh"

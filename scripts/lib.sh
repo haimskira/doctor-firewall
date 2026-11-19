@@ -180,3 +180,24 @@ seal_bundle() {
     ok "dist/$name.tar.sha256"
     log "Carry both files to the offline server — see docs/operations.md (offline server)"
 }
+
+# ---- "CI already passed on this exact content" (avoids re-running the 30-minute gate) ----
+# The fingerprint is the Git tree id of the working tree as it would be committed (tracked and
+# untracked, .gitignore honoured): the same id a commit of that content has as HEAD^{tree}.
+# ci.sh records it only when the tree was identical at the start and at the end of a passing run.
+CI_GIT_DIR="$(git -C "$ROOT_HOST" rev-parse --absolute-git-dir)"
+CI_STAMP="$CI_GIT_DIR/df-ci-passed"
+
+tree_fingerprint() {
+    local index="$CI_GIT_DIR/df-fingerprint-index"
+    cp "$CI_GIT_DIR/index" "$index"
+    GIT_INDEX_FILE="$index" git -C "$ROOT_HOST" add -A >/dev/null 2>&1
+    GIT_INDEX_FILE="$index" git -C "$ROOT_HOST" write-tree
+    rm -f "$index"
+}
+
+# True when CI passed on exactly the content of <commit-ish>.
+ci_passed_for() {
+    [[ -f "$CI_STAMP" ]] || return 1
+    [[ "$(tr -d '[:space:]' < "$CI_STAMP")" == "$(git -C "$ROOT_HOST" rev-parse "$1^{tree}" 2>/dev/null)" ]]
+}

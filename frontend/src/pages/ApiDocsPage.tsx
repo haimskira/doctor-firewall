@@ -141,6 +141,7 @@ const CAPABILITIES = [
   { key: 'roadmap', paths: ['/api/snapshots/{id}/roadmap'] },
   { key: 'map', paths: ['/api/snapshots/{id}/map'] },
   { key: 'attack', paths: ['/api/snapshots/{id}/attack-surface', '/api/snapshots/{id}/attack-surface/targets'] },
+  { key: 'dossier', paths: ['/api/snapshots/{id}/dossier'] },
   { key: 'network', paths: ['/api/snapshots/{id}/clusters', '/api/snapshots/{id}/clusters/{cluster}/network'] },
   { key: 'changesets', paths: ['/api/changesets', '/api/changesets/{id}'] },
   { key: 'history', paths: ['/api/history', '/api/changesets/{id}/batches/{seq}/changes'] },
