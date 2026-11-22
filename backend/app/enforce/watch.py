@@ -36,6 +36,7 @@ from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
 from app.enforce.batch_proof import batch_plans
 from app.enforce.plan import touched
+from app.fmc import trace
 from app.fmc.adapters import select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import FmcError
@@ -307,6 +308,7 @@ async def check(
         if conn is None:
             w.status, w.next_check_at, w.error = "ended", None, "connection_deleted"
             return w.status
+        trace.bind(connection_id=conn.id, connection_name=conn.name, batch_id=b.id)
         host, port, username = conn.host, conn.port, conn.username
         token, context = conn.password_enc, FmcConnection.password_context(conn.id)
         baseline_at, baseline = w.baseline_at, dict(w.baseline)

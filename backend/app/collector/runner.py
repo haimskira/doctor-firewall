@@ -20,6 +20,7 @@ from app.collector.service import Collector, SupersededError, mark
 from app.core.config import Settings
 from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
+from app.fmc import trace
 from app.fmc.adapters import select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import FmcError
@@ -116,6 +117,7 @@ async def run_collection(
         host, port, username, token = conn.host, conn.port, conn.username, conn.password_enc
         context = FmcConnection.password_context(conn.id)
         connection_id = conn.id
+        trace.bind(connection_id=conn.id, connection_name=conn.name)
 
     def password_provider() -> bytearray:
         return box.decrypt(token, context)
@@ -154,6 +156,7 @@ async def run_collection(
         log.warning(
             "collection failed", extra={"snapshot": snapshot_id, "code": exc.code, "detail": detail}
         )
+        trace.fail(exc.code, detail)
         if not _finish(
             sessions,
             snapshot_id,

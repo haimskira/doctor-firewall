@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { JobProgress, useJobText, useJobs } from '../components/jobs';
 import { SortedTable } from '../components/sort';
 
@@ -111,7 +112,19 @@ export function SnapshotsPage() {
                         {s.analyzed_at === null && <span className="muted"> · {t('snap.analyzing')}</span>}
                       </div>
                     )}
-                    {s.error !== null && <div className="bad small">{tError(s.error)}</div>}
+                    {s.error !== null && (
+                      <div className="bad small">
+                        {tError(s.error)}
+                        {s.error_detail !== null && s.error_detail !== '' && (
+                          <div className="snap-error-detail" dir="ltr">
+                            {s.error_detail}
+                          </div>
+                        )}
+                        {can('audit:read') && (
+                          <Link to={`/fmc-log?snapshot_id=${String(s.id)}`}>{t('fmclog.openForSnapshot')}</Link>
+                        )}
+                      </div>
+                    )}
                     {jobs.jobs
                       .filter((j) => j.snapshot_id === s.id && (j.status === 'queued' || j.status === 'running'))
                       .slice(0, 1)

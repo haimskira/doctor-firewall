@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import ssl
 import time
@@ -47,6 +48,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.crypto import zeroize
+from app.fmc import trace
 from app.fmc.errors import (
     FmcAuthError,
     FmcProtocolError,
@@ -244,9 +246,11 @@ class FmcSession:
             await self._bucket.acquire()
             response: httpx.Response | None = None
             async with self._concurrency:
+                started = time.monotonic()
                 try:
                     response = await self._client.request(method, path, **kwargs)
                 except httpx.TransportError as exc:
+                    trace.record_request(method, path, kwargs.get("params"), started, error=exc)
                     if _is_tls_failure(exc):
                         raise FmcTlsError("TLS verification of the FMC failed") from exc
                     # A connection that never opened is safe to repeat (writes too); a read
@@ -255,6 +259,16 @@ class FmcSession:
                         type(exc) is not httpx.ConnectError and method not in SAFE_METHODS
                     ) or connect_attempt >= self._throttle.connect_retries:
                         raise FmcUnavailableError(f"FMC unreachable: {type(exc).__name__}") from exc
+            if response is not None:
+                failed = response.status_code >= 400
+                trace.record_request(
+                    method,
+                    path,
+                    kwargs.get("params"),
+                    started,
+                    status=response.status_code,
+                    body=response.text if failed else "",
+                )
             if response is None:
                 delay = min(
                     self._throttle.backoff_base * float(2**connect_attempt),
@@ -392,6 +406,7 @@ class FmcSession:
             try:
                 return response.json()
             except ValueError as exc:
+                trace.note_bad_response(path, response.text, "invalid JSON in a 200 answer")
                 raise FmcProtocolError(f"GET {path} returned invalid JSON") from exc
         raise FmcProtocolError("unreachable")  # pragma: no cover
 
@@ -435,6 +450,7 @@ class FmcSession:
             try:
                 return response.json()
             except ValueError as exc:
+                trace.note_bad_response(path, response.text, "invalid JSON in a 2xx answer")
                 raise FmcProtocolError(f"{method} {path} returned invalid JSON") from exc
         raise FmcProtocolError("unreachable")  # pragma: no cover
 
@@ -468,6 +484,9 @@ class FmcSession:
             try:
                 page = _Page.model_validate(raw)
             except ValidationError as exc:
+                trace.note_bad_response(
+                    path, json.dumps(raw, default=str)[:2000], f"malformed page: {exc}"
+                )
                 raise FmcProtocolError(f"GET {path}: malformed page") from exc
             if not page.items:
                 return
@@ -476,4 +495,5 @@ class FmcSession:
             total = page.paging.count if page.paging is not None else offset
             if offset >= total:
                 return
+        trace.note_bad_response(path, "", f"paging did not end after {MAX_PAGES} pages")
         raise FmcProtocolError(f"GET {path}: paging did not terminate")

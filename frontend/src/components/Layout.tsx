@@ -73,6 +73,7 @@ const NAV: NavGroup[] = [
           { to: '/findings', label: 'nav.findings', permission: 'policy:read' },
           { to: '/jobs', label: 'nav.jobs', permission: 'policy:read' },
           { to: '/audit', label: 'nav.audit', permission: 'audit:read' },
+          { to: '/fmc-log', label: 'nav.fmcLog', permission: 'audit:read' },
         ],
       },
     ],

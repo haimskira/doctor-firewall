@@ -4,6 +4,8 @@
   the answer is lost (HTTP 504 from the gateway): the client cannot know whether it landed.
 * ``outage_on: <text>`` — the same, and from then on every configuration write fails with
   HTTP 503 (the FMC went away mid-batch) until the faults are cleared.
+* ``fail_read_on: <text>`` — a read (GET) whose path contains the text is answered with
+  HTTP 500 and an FMC-style error body (an FMC that cannot serve one resource).
 """
 
 from __future__ import annotations
@@ -25,6 +27,21 @@ class NetworkFaultsMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         faults = self.state.faults
         path: str = scope.get("path", "")
+        needle_read = faults.get("fail_read_on")
+        if (
+            scope["type"] == "http"
+            and scope["method"] == "GET"
+            and isinstance(needle_read, str)
+            and needle_read
+            and needle_read in path
+        ):
+            await _respond(
+                send,
+                500,
+                b'{"error":{"category":"FRAMEWORK","messages":[{"description":'
+                b'"Unexpected internal error while reading the resource."}],"severity":"ERROR"}}',
+            )
+            return
         if (
             scope["type"] != "http"
             or scope["method"] not in WRITE_METHODS

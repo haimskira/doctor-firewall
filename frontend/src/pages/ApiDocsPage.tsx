@@ -147,6 +147,7 @@ const CAPABILITIES = [
   { key: 'history', paths: ['/api/history', '/api/changesets/{id}/batches/{seq}/changes'] },
   { key: 'jobs', paths: ['/api/jobs'] },
   { key: 'audit', paths: ['/api/audit'] },
+  { key: 'fmclog', paths: ['/api/fmc/events', '/api/fmc/events/export'] },
 ] as const;
 
 function Tokens() {

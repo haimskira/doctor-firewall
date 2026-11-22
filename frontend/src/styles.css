@@ -1293,3 +1293,22 @@ a.button-link:hover { background: var(--primary-soft); }
   .dsr-peers th:nth-child(2), .dsr-peers td:nth-child(2) { display: none; }
   .dsr-peers table { font-size: 0.85rem; }
 }
+
+/* ---- FMC integration log ---- */
+.fmclog-filters { flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.fmclog-row-error td { background: color-mix(in srgb, var(--block) 7%, transparent); }
+.fmclog-row-error td:first-child { box-shadow: inset 3px 0 0 var(--block); }
+.fmclog-expandable { cursor: pointer; }
+.fmclog-expandable:hover td { background: var(--band); }
+.fmclog-more td { background: var(--band); }
+.fmclog-pre {
+  margin: 0.3rem 0; padding: 0.6rem 0.75rem; max-height: 22rem; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start;
+}
+.fmclog-summary { display: flex; flex-direction: column; gap: 0.4rem; }
+.badge.fmclog-ok { border-color: var(--allow); color: var(--allow); }
+.badge.fmclog-error { border-color: var(--block); color: var(--block); }
+.fmclog-events td { vertical-align: top; }
+.nowrap { white-space: nowrap; }
+.snap-error-detail { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; margin-block: 0.2rem; overflow-wrap: anywhere; text-align: start; }

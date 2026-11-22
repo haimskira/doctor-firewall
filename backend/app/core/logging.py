@@ -29,6 +29,14 @@ _TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Credentials after an auth scheme. Must run before the header rule, which would
     # otherwise consume only the scheme word of "Authorization: Basic <creds>".
     (re.compile(r"(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._-]{6,}"), rf"\1 {REDACTED}"),
+    # JSON members with a sensitive key: "password": "x", "refreshToken": "y" (FMC bodies).
+    (
+        re.compile(
+            r'(?i)("[^"]*(?:pass(?:word)?|passwd|secret|token|authorization|cookie|'
+            r'api[_-]?key|private|credential)[^"]*"\s*:\s*)("(?:[^"\\]|\\.)*"|[^,}\s]+)'
+        ),
+        r'\1"***"',
+    ),
     # Header-style "Name: value" / "Name=value" for sensitive names.
     (
         re.compile(

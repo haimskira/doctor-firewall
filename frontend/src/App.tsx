@@ -18,6 +18,7 @@ import { DossierPage } from './pages/DossierPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClustersPage } from './pages/ClustersPage';
 import { FindingsPage } from './pages/FindingsPage';
+import { FmcLogPage } from './pages/FmcLogPage';
 import { FmcPage } from './pages/FmcPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
@@ -103,6 +104,14 @@ export function App() {
           element={
             <RequirePermission permission="fmc:manage">
               <FmcPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="fmc-log"
+          element={
+            <RequirePermission permission="audit:read">
+              <FmcLogPage />
             </RequirePermission>
           }
         />

@@ -7,6 +7,7 @@ in :data:`ALLOWED_JOBS` may be executed by a worker (see :mod:`app.workers.worke
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,6 +25,7 @@ from app.enforce import watch
 from app.enforce.batch_proof import prove_changeset, record_proof_error
 from app.enforce.executor import execute_batch, job_timeout_seconds, redis_lock, resume_rollback
 from app.enforce.revert import revert_batch
+from app.fmc import trace
 from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
 from app.models.inventory import Snapshot
@@ -128,7 +130,10 @@ def collect_snapshot(snapshot_id: int, run_id: int | None = None) -> dict[str, A
     """Collect one snapshot (read-only), then queue its analysis."""
     sessions = get_sessionmaker()
     run_id = run_id if run_id is not None else _own_run("collect", snapshot_id=snapshot_id)
-    with progress.tracked(sessions, run_id):
+    with (
+        progress.tracked(sessions, run_id),
+        trace.tracing("collect", sessions, snapshot_id=snapshot_id, run_id=run_id),
+    ):
         result = asyncio.run(
             run_collection(
                 snapshot_id,
@@ -138,7 +143,7 @@ def collect_snapshot(snapshot_id: int, run_id: int | None = None) -> dict[str, A
                 settings=get_settings(),
             )
         )
-        if not result.get("ok"):
+        if not result.get("ok"):  # the collector logged the failure with its detail
             progress.fail(str(result.get("error") or "failed"))
     if result.get("ok"):
         with sessions() as session:
@@ -228,8 +233,16 @@ def enqueue_batch(batch_id: int, requested_by: str) -> int:
     )
 
 
+def _trace_failure(result: dict[str, Any]) -> None:
+    """An operation that reported its own failure (instead of raising) in the FMC log."""
+    code = str(result.get("error") or result.get("status") or "failed")
+    detail = result.get("detail")
+    trace.fail(code, detail if isinstance(detail, str) else json.dumps(detail, default=str)[:2000])
+
+
 def _enforce_outcome(result: dict[str, Any]) -> None:
     if not result.get("ok"):
+        _trace_failure(result)
         progress.fail(str(result.get("detail") or result.get("error") or result.get("status")))
 
 
@@ -237,7 +250,10 @@ def execute_batch_job(batch_id: int, run_id: int | None = None) -> dict[str, Any
     """Apply one approved batch to the FMC (writes, verification, deploy or rollback)."""
     sessions = get_sessionmaker()
     run_id = run_id if run_id is not None else _own_run("batch", batch_id=batch_id)
-    with progress.tracked(sessions, run_id):
+    with (
+        progress.tracked(sessions, run_id),
+        trace.tracing("batch", sessions, batch_id=batch_id, run_id=run_id),
+    ):
         result = asyncio.run(
             execute_batch(
                 batch_id,
@@ -258,16 +274,17 @@ def check_deploy_watches() -> dict[str, Any]:
     now = datetime.now(UTC)
     outcome: dict[str, int] = {}
     for watch_id in watch.due(sessions, now):
-        status = asyncio.run(
-            watch.check(
-                watch_id,
-                sessions=sessions,
-                box=get_secretbox(),
-                audit=get_audit(),
-                settings=get_settings(),
-                now=now,
+        with trace.tracing("watch", sessions):
+            status = asyncio.run(
+                watch.check(
+                    watch_id,
+                    sessions=sessions,
+                    box=get_secretbox(),
+                    audit=get_audit(),
+                    settings=get_settings(),
+                    now=now,
+                )
             )
-        )
         outcome[status] = outcome.get(status, 0) + 1
     return outcome
 
@@ -337,17 +354,20 @@ def revert_batches_job(
     done: list[int] = []
     with progress.tracked(sessions, run_id):
         for batch_id in batch_ids:
-            result = asyncio.run(
-                revert_batch(
-                    batch_id,
-                    sessions=sessions,
-                    box=get_secretbox(),
-                    audit=get_audit(),
-                    settings=get_settings(),
-                    lock=redis_lock(get_redis()),
-                    requested_by=requested_by,
+            with trace.tracing("revert", sessions, batch_id=batch_id, run_id=run_id):
+                result = asyncio.run(
+                    revert_batch(
+                        batch_id,
+                        sessions=sessions,
+                        box=get_secretbox(),
+                        audit=get_audit(),
+                        settings=get_settings(),
+                        lock=redis_lock(get_redis()),
+                        requested_by=requested_by,
+                    )
                 )
-            )
+                if not result.get("ok"):
+                    _trace_failure(result)
             if not result.get("ok"):
                 progress.fail(str(result.get("error") or "revert_failed"))
                 return {"ok": False, "reverted": done, "failed": batch_id, "detail": result}
@@ -374,7 +394,10 @@ def resume_rollback_job(batch_id: int, run_id: int | None = None) -> dict[str, A
     """Finish an interrupted rollback from the batch's journal, then re-deploy."""
     sessions = get_sessionmaker()
     run_id = run_id if run_id is not None else _own_run("rollback", batch_id=batch_id)
-    with progress.tracked(sessions, run_id):
+    with (
+        progress.tracked(sessions, run_id),
+        trace.tracing("rollback", sessions, batch_id=batch_id, run_id=run_id),
+    ):
         result = asyncio.run(
             resume_rollback(
                 batch_id,

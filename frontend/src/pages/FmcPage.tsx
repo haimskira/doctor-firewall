@@ -108,7 +108,7 @@ export function FmcPage() {
             }
           : {
               kind: 'error',
-              text: t('fmc.testFailed', { error: tError(result.error ?? 'unknown') }),
+              text: `${t('fmc.testFailed', { error: tError(result.error ?? 'unknown') })} ${t('fmclog.seeLog')}`,
             },
       );
       reload();

@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.collector import store
 from app.core.config import get_settings
-from app.fmc import showroute
+from app.fmc import showroute, trace
 from app.fmc.adapters import FmcAdapter
 from app.fmc.client import FmcSession
 from app.fmc.errors import FmcError, FmcProtocolError
@@ -221,21 +221,27 @@ class Collector:
 
     async def run(self) -> dict[str, Any]:
         await self._objects()
+        trace.set_step("dynamic object mappings")
         await self._dynamic_mappings()
+        trace.set_step("object overrides")
         await self._overrides()
         progress.phase("collect_topology", 30, 35)
+        trace.set_step("devices, clusters and policy assignments")
         clusters, assignments = await self._topology()
         await self._policies(clusters, assignments)
         progress.phase("collect_network", 85, 93)
         for n, cluster in enumerate(clusters):
+            trace.set_step(f"interfaces and routes: {cluster.get('name', cluster['fmc_id'])}")
             await self._cluster_network(cluster)
             progress.advance(n + 1, len(clusters))
         # One device at a time (never concurrent): the FMC may mix up concurrent CLI answers.
         progress.phase("collect_routes", 93, 99)
         for n, cluster in enumerate(clusters):
+            trace.set_step(f"runtime routes: {cluster.get('name', cluster['fmc_id'])}")
             await self._runtime_routes(cluster)
             progress.advance(n + 1, len(clusters))
         progress.phase("saving", 99, 99)
+        trace.set_step("saving")
         with self.sessions.begin() as session:
             # What this snapshot holds, whichever attempt stored it (a resumed run skips the
             # finished resources, so its own counters would be too low).
@@ -262,6 +268,7 @@ class Collector:
                 log.info("object paging was interrupted: objects are read again from the start")
         for n, resource in enumerate(resources):
             progress.advance(n, len(resources), objects=self.stats.objects)
+            trace.set_step(f"objects: {resource}")
 
             def handle(
                 session: Session,
@@ -421,6 +428,8 @@ class Collector:
         self, kind: PolicyKind, policy: PolicyRecord, clusters: list[dict[str, Any]]
     ) -> None:
         base = f"/policy/{self.adapter.POLICY_RESOURCES[kind]}/{policy.fmc_id}"
+        label = f"{kind.value} policy {policy.name}"
+        trace.set_step(label)
         categories: list[str] = []
         if kind is PolicyKind.ACCESS:
             categories = [
@@ -457,6 +466,7 @@ class Collector:
         if not subresources:
             return
         for sub, rule_type in subresources:
+            trace.set_step(f"{label}: {sub}")
             await self._rules(kind, policy.fmc_id, sub, rule_type, self._path(f"{base}/{sub}"))
         with self.sessions.begin() as session:
             total = store.count_rules(session, self.snapshot_id, policy.fmc_id)
@@ -472,6 +482,7 @@ class Collector:
                 if c["policy_fmc_id"] == policy.fmc_id
                 for m in c["members"]
             ]
+            trace.set_step(f"{label}: hit counts")
             await self._hitcounts(
                 policy.fmc_id, self._path(f"{base}/operational/hitcounts"), devices
             )

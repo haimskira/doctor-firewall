@@ -580,6 +580,7 @@ def build_write_router(
                     "cli_mixup",
                     "lost_answer_on",
                     "outage_on",
+                    "fail_read_on",
                 )
             }
         )

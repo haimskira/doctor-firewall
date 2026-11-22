@@ -22,7 +22,8 @@ from app.auth.deps import Principal, client_ip, require
 from app.auth.rbac import Permission
 from app.core.config import get_settings
 from app.core.crypto import SecretBox
-from app.db.session import get_db
+from app.db.session import get_db, get_sessionmaker
+from app.fmc import trace
 from app.fmc.client import build_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import probe
@@ -268,18 +269,22 @@ def test_connection(
 
     result = FmcTestResponse(ok=False)
     try:
-        ssl_context = build_ssl_context(settings.fmc_ca_bundle)
-        # Sync endpoint runs in a worker thread, so a private event loop is safe here.
-        probed = asyncio.run(
-            probe(
-                host=conn.host,
-                port=conn.port,
-                username=conn.username,
-                password_provider=password_provider,
-                ssl_context=ssl_context,
-                timeout=settings.fmc_timeout_seconds,
+        with trace.tracing(
+            "test", get_sessionmaker(), connection_id=conn.id, connection_name=conn.name
+        ):
+            trace.set_step("token, server version")
+            ssl_context = build_ssl_context(settings.fmc_ca_bundle)
+            # Sync endpoint runs in a worker thread, so a private event loop is safe here.
+            probed = asyncio.run(
+                probe(
+                    host=conn.host,
+                    port=conn.port,
+                    username=conn.username,
+                    password_provider=password_provider,
+                    ssl_context=ssl_context,
+                    timeout=settings.fmc_timeout_seconds,
+                )
             )
-        )
         result = FmcTestResponse(
             ok=True, server_version=probed.server_version, domain_uuid=probed.domain_uuid
         )

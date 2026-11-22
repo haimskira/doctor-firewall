@@ -53,6 +53,7 @@ from app.enforce.proof import (
 )
 from app.enforce.staleness import stale_since
 from app.enforce.watch import open_watch
+from app.fmc import trace
 from app.fmc.adapters import FmcAdapter, select_adapter
 from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
 from app.fmc.errors import (
@@ -1108,6 +1109,7 @@ def _connection_and_targets(
     conn = db.get(FmcConnection, cs.connection_id) if cs.connection_id else None
     if conn is None:
         raise BatchError("connection_deleted")
+    trace.bind(connection_id=conn.id, connection_name=conn.name, snapshot_id=cs.snapshot_id)
     targets = set(b.clusters)
     if cs.snapshot_id is not None:
         for c in db.scalars(

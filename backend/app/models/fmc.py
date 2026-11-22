@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -47,3 +47,41 @@ class FmcConnection(Base):
     @staticmethod
     def password_context(connection_id: int) -> str:
         return f"fmc_connection:{connection_id}:password"
+
+
+class FmcEvent(Base):
+    """The FMC integration log (app.fmc.trace): one row per request or operation event.
+
+    Never holds credentials, tokens or request bodies; ``response`` is the scrubbed, truncated
+    body of a failed request only. Pruned after 30 days.
+    """
+
+    __tablename__ = "fmc_events"
+    __table_args__ = (
+        CheckConstraint(
+            "operation IN ('test','collect','batch','revert','rollback','watch')",
+            name="operation_known",
+        ),
+        CheckConstraint("kind IN ('started','request','failed','finished')", name="kind_known"),
+        CheckConstraint("outcome IN ('ok','error')", name="outcome_known"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    op_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # one operation
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    connection_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    connection_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    snapshot_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    batch_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    run_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    step: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(8), nullable=False)
+    method: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    status: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    response: Mapped[str] = mapped_column(Text, nullable=False, default="")
