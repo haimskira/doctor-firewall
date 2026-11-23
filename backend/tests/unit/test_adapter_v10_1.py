@@ -270,9 +270,22 @@ def test_generic_rules_validate_action_token() -> None:
         v10_1.map_identity_rule({"id": "i1", "name": "x", "action": "NO_AUTH"}, 1).action
         == "NO_AUTH"
     )
-    for bad in ("decrypt; drop", "", "lowercase"):
-        with pytest.raises(AdapterError):
-            v10_1.map_decryption_rule({"id": "d1", "action": bad}, 1)
+    # FMC 10.1.1 shapes: display names, objects, null action / category -- never a failure.
+    for raw, token in (
+        ("Decrypt - Resign", "DECRYPT_RESIGN"),
+        ("do_not_decrypt", "DO_NOT_DECRYPT"),
+        ({"name": "DECRYPT_KNOWN_KEY"}, "DECRYPT_KNOWN_KEY"),
+        ("decrypt; drop", "DECRYPT_DROP"),
+        ("", "UNKNOWN"),
+        (None, "UNKNOWN"),
+        (7, "UNKNOWN"),
+    ):
+        item = {"id": "d1", "action": raw, "metadata": {"category": None}}
+        rule = v10_1.map_decryption_rule(item, 1)
+        assert (rule.action, rule.category) == (token, "--Undefined--")
+    assert v10_1.map_decryption_rule({"id": "d1"}, 1).action == "UNKNOWN"
+    named = {"id": "d1", "action": "MONITOR", "metadata": {"category": {"name": "Admin"}}}
+    assert v10_1.map_decryption_rule(named, 1).category == "Admin"
 
 
 def test_nat_rules() -> None:

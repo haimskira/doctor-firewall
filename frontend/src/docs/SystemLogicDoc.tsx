@@ -1523,10 +1523,26 @@ export function SystemLogicDoc() {
 {"חוק מתיר ליעד שדורש IPS או קבצים"}
 </td>
 <td>
-{"GOLD 70, SILVER 55, BRONZE 40, + בונוס"}
+{"GOLD ו-CORE זהות 70, CORE 60, SILVER 55, BRONZE 40, + בונוס"}
 </td>
 <td>
 {"כן"}
+</td>
+</tr>
+<tr>
+<td>
+<code>
+{"fastpath_candidate"}
+</code>
+</td>
+<td>
+{"חוק מתיר שכל התעבורה שלו כבדה או רגישה ובין מערכות ידועות (storage, רפליקציה, routing, BFD, ניהול FMC↔FTD), או NTP ל-CORE"}
+</td>
+<td>
+{"35 עם IPS, 25 בלי, + בונוס"}
+</td>
+<td>
+{"הצעה בלבד (חסומה להרצה)"}
 </td>
 </tr>
 <tr>
@@ -1536,7 +1552,7 @@ export function SystemLogicDoc() {
 </code>
 </td>
 <td>
-{"חוק decrypt תופס יעדי CORE"}
+{"חוק decrypt תופס יעדי CORE או שירותי זהות וניהול לפי פורט"}
 </td>
 <td>
 {"80"}
@@ -1587,6 +1603,10 @@ export function SystemLogicDoc() {
 {", "}
 <code>
 {"ssl_decrypt_inbound"}
+</code>
+{", "}
+<code>
+{"fastpath_candidate"}
 </code>
 {". כל השאר \"משמרות\": ההוכחה דורשת שאף flow לא ישנה פסק."}
 </p>
@@ -2241,6 +2261,20 @@ export function SystemLogicDoc() {
 </strong>
 {" (כולל east-west: אפליקציית SILVER שקוראת למסד GOLD מקבלת פיקוח GOLD)."}
 </p>
+<p>
+<strong>
+{"IPS בכל מקום שאפשר:"}
+</strong>
+{" כל רמת שרתים, כולל CORE, מקבלת IPS. החריגה היחידה היא תעבורה ש-Snort ישבור או יטבע בה "}
+<strong>
+{"וגם"}
+</strong>
+{" נשארת בין מערכות ידועות ("}
+<code>
+{"fastpath_candidate"}
+</code>
+{", למטה). תעבורה מה-WAN, ממשתמשים או מ-any לעולם לא נחרגת."}
+</p>
 <table>
 <thead>
 <tr>
@@ -2261,13 +2295,44 @@ export function SystemLogicDoc() {
 <tbody>
 <tr>
 <td>
-{"CORE"}
+{"CORE · זהות (AD/DC, PKI)"}
 </td>
 <td>
 {"לעולם לא (do-not-decrypt)"}
 </td>
 <td>
-{"קל או ללא"}
+{"ה-intrusion policy של GOLD (ברירת מחדל Maximum Detection, רמה 4)"}
+</td>
+<td>
+{"לא"}
+</td>
+</tr>
+<tr>
+<td>
+{"CORE · DNS ו-patching"}
+</td>
+<td>
+{"לעולם לא"}
+</td>
+<td>
+{"לפחות Balanced (רמה 2), פרופיל CORE"}
+</td>
+<td>
+{"לא"}
+</td>
+</tr>
+<tr>
+<td>
+{"CORE · NTP"}
+</td>
+<td>
+{"לעולם לא"}
+</td>
+<td>
+{"ללא: "}
+<code>
+{"fastpath_candidate"}
+</code>
 </td>
 <td>
 {"לא"}
@@ -2327,7 +2392,15 @@ export function SystemLogicDoc() {
 <strong>
 {"מופעל ומתיר, לא מוצל, לא מת"}
 </strong>
-{" (למוצלים ולמתים מוצעת מחיקה), עם ציון, שרמת היעד שלו היא GOLD, SILVER או BRONZE (הראשונה מהן שנוגעת ביעד). הוא נוצר כשאחד מאלה מתקיים:"}
+{" (למוצלים ולמתים מוצעת מחיקה), עם ציון, שאינו מועמד ל-fastpath, ושרמת היעד שלו היא GOLD, SILVER, CORE או BRONZE (הראשונה לפי הסדר הזה שנוגעת ביעד). ביעד CORE השירות קובע: אם "}
+<strong>
+{"כל"}
+</strong>
+{" הפורטים הם DNS (53) או WSUS (8530-8531) — פרופיל CORE; כל דבר אחר (Kerberos, LDAP, Global Catalog, SMB, RPC, פורט לא מוכר או any) נחשב "}
+<strong>
+{"זהות"}
+</strong>
+{" ומקבל את ה-intrusion policy של פרופיל GOLD, בלי מדיניות קבצים (\"CORE בגישה, GOLD ב-inspection\"). הוא נוצר כשאחד מאלה מתקיים:"}
 </p>
 <ul>
 <li>
@@ -2345,7 +2418,7 @@ export function SystemLogicDoc() {
 </li>
 </ul>
 <p>
-{"הפרופיל לכל רמה מוגדר במסך Inspection profiles (ברירות מחדל: GOLD Maximum Detection, SILVER Security Over Connectivity, BRONZE Balanced Security and Connectivity, ללא מדיניות קבצים). אם מדיניות היעד אינה קיימת ב-snapshot, התכנית "}
+{"הפרופיל לכל רמה מוגדר במסך Inspection profiles (ברירות מחדל: CORE Balanced Security and Connectivity, GOLD Maximum Detection, SILVER Security Over Connectivity, BRONZE Balanced Security and Connectivity, ללא מדיניות קבצים). אם מדיניות היעד אינה קיימת ב-snapshot, התכנית "}
 <strong>
 {"חסומה"}
 </strong>
@@ -2384,6 +2457,125 @@ export function SystemLogicDoc() {
 {" מה-FMC), עם בדיקת drift של הפעולה והמדיניות הנוכחיות."}
 </p>
 <h3>
+<code>
+{"fastpath_candidate"}
+</code>
+{" (הצעה בלבד)"}
+</h3>
+<p>
+{"חוק access מופעל ומתיר, לא מוצל, לא מת, ללא תנאים לא מומדלים, שאינו TRUST, ש"}
+<strong>
+{"כל"}
+</strong>
+{" השירותים שלו (פורטי יעד, לא any) בקטלוג "}
+<code>
+{"IPS_EXEMPT"}
+</code>
+{":"}
+</p>
+<table>
+<thead>
+<tr>
+<th>
+{"מחלקה"}
+</th>
+<th>
+{"שירותים"}
+</th>
+<th>
+{"שני הצדדים חייבים להיות"}
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+{"storage"}
+</td>
+<td>
+{"iSCSI TCP 3260, NFS TCP/UDP 2049"}
+</td>
+<td>
+{"מערכות DC מטבלת הנכסים (CORE עד BRONZE, בלי USERS, בלי כתובת לא מסווגת)"}
+</td>
+</tr>
+<tr>
+<td>
+{"replication"}
+</td>
+<td>
+{"vMotion TCP 8000, VMware NFC TCP 902, SnapMirror TCP 11104-11105, SQL AlwaysOn TCP 5022"}
+</td>
+<td>
+{"מערכות DC מטבלת הנכסים"}
+</td>
+</tr>
+<tr>
+<td>
+{"routing"}
+</td>
+<td>
+{"BGP TCP 179, OSPF, EIGRP"}
+</td>
+<td>
+{"קבוצה מפורשת של עד 256 כתובות (ציודים, לרוב לא בטבלת הנכסים)"}
+</td>
+</tr>
+<tr>
+<td>
+{"bfd"}
+</td>
+<td>
+{"UDP 3784-3785, 4784"}
+</td>
+<td>
+{"עד 256 כתובות"}
+</td>
+</tr>
+<tr>
+<td>
+{"management"}
+</td>
+<td>
+{"FMC↔FTD sftunnel TCP 8305"}
+</td>
+<td>
+{"עד 256 כתובות"}
+</td>
+</tr>
+<tr>
+<td>
+{"ntp"}
+</td>
+<td>
+{"NTP UDP 123"}
+</td>
+<td>
+{"יעד: מערכות CORE בלבד; מקור: כתובות מפורשות מטבלת הנכסים (כולל USERS), לא any ולא מבחוץ"}
+</td>
+</tr>
+</tbody>
+</table>
+<p>
+{"חוק כזה "}
+<strong>
+{"לא"}
+</strong>
+{" מקבל "}
+<code>
+{"add_inspection"}
+</code>
+{". במקומו מוצע לשקול העברה ל-prefilter (FASTPATH) או ל-Trust עם לוג. אזהרה "}
+<code>
+{"fastpath_no_inspection"}
+</code>
+{": אין IPS בכלל על התעבורה, ולכן החוק חייב להישאר צר. התכנית חסומה ("}
+<code>
+{"fastpath_manual"}
+</code>
+{"): העברה ל-prefilter היא תכנון שמנהל עושה ב-FMC. SMB אינו בקטלוג בכוונה: הוא וקטור תקיפה מרכזי, ורק SMB לשרתי גיבוי ראוי לחריגה, החלטה שנעשית ידנית."}
+</p>
+<h3>
 {"SSL (הצעות בלבד)"}
 </h3>
 <ul>
@@ -2394,7 +2586,15 @@ export function SystemLogicDoc() {
 </code>
 {":"}
 </strong>
-{" בחוקת decryption, חוק פענוח (resign או known-key) שתופס מערכות CORE שלא הוחרגו על ידי חוק do-not-decrypt מוקדם (שאינו בעל תנאי לא מומדל). AD, Kerberos, LDAPS ועדכונים מצמדי תעודה נשברים תחת פענוח. מוצע חוק do-not-decrypt בראש החוקה."}
+{" בחוקת decryption, חוק פענוח (resign או known-key) שתופס מערכות CORE, או שירותי זהות וניהול לפי פורט (LDAPS 636, Global Catalog 3269, RADIUS over TLS 2083, sftunnel 8305, ISE pxGrid 8910), שלא הוחרגו על ידי חוק do-not-decrypt מוקדם (שאינו בעל תנאי לא מומדל; למערכות: על כל הפורטים, לשירותים: לכל כתובת). AD, Kerberos, LDAPS, RADIUS, ניהול ISE/FMC ועדכונים מצמדי תעודה נשברים תחת פענוח. מוצעים חוקי do-not-decrypt בראש החוקה ("}
+<code>
+{"DND_CORE_SERVICES"}
+</code>
+{", "}
+<code>
+{"DND_IDENTITY_MGMT_SERVICES"}
+</code>
+{"). mTLS, pinning ומכשירים לא מנוהלים אינם ניתנים לזיהוי לפי כתובת ופורט, ונשארים רשימה ידנית."}
 </li>
 <li>
 <strong>
@@ -2403,7 +2603,7 @@ export function SystemLogicDoc() {
 </code>
 {":"}
 </strong>
-{" מערכות GOLD או SILVER שחוקי permit (פעילים, לא מוצלים) חושפים מעל TLS (TCP 443, 8443, 9443, 636, 993, 995, 465, או application מרשימת ה-TLS, או any על כל שירות) ללא חוק known-key שמכסה אותן. חוק do-not-decrypt שמכסה את המערכת מבטל כיסוי. כל חוקת access נבדקת מול חוקת ה-decryption המקושרת אליה בלבד. אם אין חוקת decryption כלל, ההצעה נוצרת \"ללא חוקת decryption\"."}
+{" מערכות GOLD או SILVER שחוקי permit (פעילים, לא מוצלים) חושפים מעל TLS (TCP 443, 8443, 9443, 993, 995, 465, או application מרשימת ה-TLS, או any על כל שירות; LDAPS לא נחשב, כי לעולם לא מפענחים אותו) ללא חוק known-key שמכסה אותן. חוק do-not-decrypt שמכסה את המערכת מבטל כיסוי. כל חוקת access נבדקת מול חוקת ה-decryption המקושרת אליה בלבד. אם אין חוקת decryption כלל, ההצעה נוצרת \"ללא חוקת decryption\"."}
 </li>
 </ul>
 <p>
@@ -2546,6 +2746,10 @@ export function SystemLogicDoc() {
 {", "}
 <code>
 {"add_inspection"}
+</code>
+{", "}
+<code>
+{"fastpath_candidate"}
 </code>
 {", "}
 <code>

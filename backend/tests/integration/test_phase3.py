@@ -81,6 +81,16 @@ def test_recommendations_cover_the_doctrine(client: TestClient, admin: dict[str,
         any(x["kind"] == "remove_disabled_rule" for x in f["fixes"]) for f in disabled["rows"]
     )
     assert {r["behavior"] for r in recs if r["kind"] == "remove_disabled_rule"} == {"preserves"}
+    # Only what fixes the finding is offered, one entry per kind: an ACE-heavy rule is never
+    # "fixed" by merging duplicate hosts nested deep in its groups (it saves no ACE).
+    heavy = client.get(f"/api/snapshots/{sid}/findings?kind=ace_heavy_rule&limit=500").json()
+    for f in heavy["rows"]:
+        kinds_offered = [x["kind"] for x in f["fixes"]]
+        assert len(kinds_offered) == len(set(kinds_offered)), kinds_offered
+        assert not {"merge_duplicate_objects", "remove_unused_object", "rename_convention"} & set(
+            kinds_offered
+        )
+        assert all(x["count"] >= 1 for x in f["fixes"])
 
     # A rule that never matches (shadowed) is only ever proposed for removal.
     shadowed = {t["id"] for r in recs if r["kind"] == "remove_shadowed_rule" for t in r["targets"]}

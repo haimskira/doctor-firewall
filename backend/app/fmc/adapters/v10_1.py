@@ -19,7 +19,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
 
 from app.fmc import normalize
 from app.fmc.errors import FmcProtocolError
@@ -100,10 +100,19 @@ class VlanList(_M):
     literals: list[dict[str, Any]] = Field(default_factory=list, max_length=10_000)
 
 
+def _category(value: Any) -> str:
+    """Rule category: FMC 10.1.1 sends null (or an object) for rules outside a category."""
+    if isinstance(value, dict):
+        value = value.get("name")
+    if not isinstance(value, str) or not value.strip():
+        return "--Undefined--"
+    return value[:256]
+
+
 class RuleMetadata(_M):
     ruleIndex: int | None = Field(default=None, ge=1)  # noqa: N815
     section: Annotated[str, Field(max_length=32)] = "Default"
-    category: Name = "--Undefined--"
+    category: Annotated[str, BeforeValidator(_category)] = "--Undefined--"
     timestamp: int | None = Field(default=None, ge=0)  # last change, epoch milliseconds
 
 
@@ -742,17 +751,37 @@ def map_bgp(general: list[Any], bgp: list[Any]) -> BgpRecord | None:
 
 # --------------------------------------------------------------------------- other rule types
 
-UpperToken = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]{0,39}$")]
+_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
+
+
+def _action_token(value: Any) -> str:
+    """Decryption / identity action as an FMC enum token.
+
+    Versions differ in the shape (``"DECRYPT_RESIGN"``, ``"Decrypt - Resign"``, an object with
+    a name, or nothing at all). Anything that does not reduce to a token is kept as
+    ``UNKNOWN`` instead of failing the whole collection: such a rule then matches no action
+    the analysis acts on.
+    """
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("type") or value.get("value")
+    if isinstance(value, str):
+        token = re.sub(r"[^A-Z0-9]+", "_", value.strip().upper()).strip("_")
+        if _TOKEN.match(token):
+            return token
+    return "UNKNOWN"
+
+
+ActionToken = Annotated[str, BeforeValidator(_action_token)]
 
 
 class GenericRuleModel(_M):
     """Decryption / identity rules. Field names follow the access-rule conventions; the
-    action is validated as an FMC enum token (the full value list is version-specific)."""
+    action is reduced to an FMC enum token (the full value list is version-specific)."""
 
     id: FmcId
     name: Name = ""
     enabled: bool = True
-    action: UpperToken
+    action: ActionToken = "UNKNOWN"
     metadata: RuleMetadata = Field(default_factory=RuleMetadata)
     sourceZones: ObjList | None = None  # noqa: N815
     destinationZones: ObjList | None = None  # noqa: N815

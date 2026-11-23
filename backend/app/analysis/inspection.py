@@ -5,18 +5,30 @@ allowed, the inspection profile what is done to an allowed flow, and the two are
 the tier of the **destination** — east-west included (a SILVER app calling a GOLD database
 gets GOLD inspection):
 
-========  ======================  ==================  ==============
-tier      decryption              IPS                 file / malware
-========  ======================  ==================  ==============
-CORE      no (do-not-decrypt)     light / none        no
-GOLD      yes, inbound known-key  full, aggressive    yes
-SILVER    selective               full / balanced     yes
-BRONZE    by exposure             balanced            optional
-========  ======================  ==================  ==============
+========  ======================  ==========================  ==============
+tier      decryption              IPS                         file / malware
+========  ======================  ==========================  ==============
+CORE      no (do-not-decrypt)     identity: GOLD's full IPS   no
+                                  DNS / patching: balanced
+                                  NTP: fastpath
+GOLD      yes, inbound known-key  full, aggressive            yes
+SILVER    selective               full / balanced             yes
+BRONZE    by exposure             balanced                    optional
+========  ======================  ==========================  ==============
+
+IPS is the rule, everywhere it can run. The only exemptions are traffic Snort would break or
+drown in **and** that stays between known systems (``IPS_EXEMPT``): storage, replication,
+routing protocols, BFD, FMC-FTD management inside the data centre, and NTP to CORE. Those rules
+are proposed for fastpath (``fastpath_candidate``) instead of getting an intrusion policy.
+Traffic from the WAN is never exempt — an exemption needs both ends inside.
+
+Decryption is the opposite: never on CORE systems, nor on identity / management services by
+port (``NEVER_DECRYPT``) wherever they are.
 
 The system proposes *where*. Attaching an intrusion / file policy to an access rule is an
-ordinary executable plan (approved and deployed like any other change); decryption rules are
-proposals only — they depend on certificates and keys the system does not hold.
+ordinary executable plan (approved and deployed like any other change); decryption and fastpath
+rules are proposals only — they depend on certificates, keys and a prefilter design the system
+does not own.
 """
 
 from __future__ import annotations
@@ -58,11 +70,70 @@ IPS_LEVELS = (
     ("maximum detection", 4),
 )
 DECRYPT_ACTIONS = frozenset({"DECRYPT_RESIGN", "DECRYPT_KNOWN_KEY"})
-TLS_PORTS = PortSet.build(
-    ["TCP/443", "TCP/8443", "TCP/9443", "TCP/636", "TCP/993", "TCP/995", "TCP/465"]
-)
-TLS_APPS = frozenset({"HTTPS", "SSL", "TLS", "LDAPS", "IMAPS", "POP3S", "SMTPS"})
+# TLS a known-key rule could open for the IPS. LDAPS is TLS but never decrypted (NEVER_DECRYPT).
+TLS_PORTS = PortSet.build(["TCP/443", "TCP/8443", "TCP/9443", "TCP/993", "TCP/995", "TCP/465"])
+TLS_APPS = frozenset({"HTTPS", "SSL", "TLS", "IMAPS", "POP3S", "SMTPS"})
 SAMPLE = 20
+
+# Services never decrypted, wherever they run: identity (LDAPS, global catalog over TLS,
+# RADIUS over TLS) and security-infrastructure management (FMC-FTD sftunnel, ISE pxGrid).
+# A failed decryption here takes down authentication or device control for everyone.
+NEVER_DECRYPT_SERVICES = (
+    ("LDAPS TCP-636", "TCP/636"),
+    ("Global Catalog TLS TCP-3269", "TCP/3269"),
+    ("RADIUS over TLS TCP-2083", "TCP/2083"),
+    ("FMC-FTD sftunnel TCP-8305", "TCP/8305"),
+    ("ISE pxGrid TCP-8910", "TCP/8910"),
+)
+NEVER_DECRYPT = PortSet.build([spec for _, spec in NEVER_DECRYPT_SERVICES])
+SERVER_TIERS = frozenset({"CORE", "GOLD", "SILVER", "BRONZE"})
+SMALL_END = 256  # "between known devices": each end at most a /24 worth of addresses
+
+
+@dataclass(frozen=True)
+class Exempt:
+    """A traffic class the doctrine keeps out of Snort (see the module docstring)."""
+
+    key: str
+    label: str
+    ports: PortSet
+    # "dc": both ends are data-centre systems of the asset table (CORE..BRONZE).
+    # "devices": infrastructure devices, often not in the asset table: both ends small and
+    # explicit (no any, at most SMALL_END addresses each).
+    # "core": a simple CORE service — the destination is CORE only, the source any classified
+    # address (users included, nothing from outside).
+    scope: str
+
+
+IPS_EXEMPT = (
+    Exempt(
+        "storage", "storage (iSCSI, NFS)", PortSet.build(["TCP/3260", "TCP/2049", "UDP/2049"]), "dc"
+    ),
+    Exempt(
+        "replication",
+        "virtualisation and replication (vMotion, VMware NFC, NetApp SnapMirror, SQL AlwaysOn)",
+        PortSet.build(["TCP/8000", "TCP/902", "TCP/11104-11105", "TCP/5022"]),
+        "dc",
+    ),
+    Exempt(
+        "routing",
+        "routing protocols (BGP, OSPF, EIGRP)",
+        PortSet.build(["TCP/179", "OSPF/any", "OSPFIGP/any", "89/any", "EIGRP/any", "88/any"]),
+        "devices",
+    ),
+    Exempt("bfd", "BFD", PortSet.build(["UDP/3784-3785", "UDP/4784"]), "devices"),
+    Exempt("management", "FMC-FTD management (sftunnel)", PortSet.build(["TCP/8305"]), "devices"),
+    # Doctrine: a simple protocol of low value to an attacker; saves CPU for GOLD and the DCs.
+    Exempt("ntp", "NTP", PortSet.build(["UDP/123"]), "core"),
+)
+_EXEMPT_ALL = PortSet.build(
+    [
+        f"{proto}/{lo}-{hi}"
+        for e in IPS_EXEMPT
+        for proto, intervals in e.ports.by_protocol
+        for lo, hi in intervals
+    ]
+)
 
 
 @dataclass(frozen=True)
@@ -74,10 +145,31 @@ class Need:
 
 
 DOCTRINE = {
+    # CORE is a tier for access, not for inspection. Its profile is the one for DNS and
+    # patching (balanced); identity services (AD / DC, PKI) get GOLD's full IPS (CORE_IDENTITY)
+    # and NTP is proposed for fastpath. No file policy, and never decrypted.
+    "CORE": Need(2, False, "Balanced Security and Connectivity", 60),
     "GOLD": Need(4, True, "Maximum Detection", 70),
     "SILVER": Need(2, True, "Security Over Connectivity", 55),
     "BRONZE": Need(2, False, "Balanced Security and Connectivity", 40),
 }
+# A rule reaching several tiers gets the most demanding one (SILVER before CORE: the same
+# default IPS strength plus a file policy).
+DEMAND_ORDER = ("GOLD", "SILVER", "CORE", "BRONZE")
+
+# "AD is CORE for access and GOLD for inspection": a rule to CORE gets GOLD's intrusion policy
+# (no file policy) unless every service it allows is DNS or patching. Any port, an unknown
+# port, or an identity port (Kerberos, LDAP, Global Catalog, SMB, RPC) means identity.
+CORE_IDENTITY = Need(4, False, "Maximum Detection", 70)
+CORE_BALANCED = PortSet.build(["TCP/53", "UDP/53", "TCP/8530-8531"])  # DNS, WSUS
+
+
+def core_service(info: RuleInfo) -> str:
+    """``identity`` or ``dns_patching`` for a rule whose destination is CORE."""
+    ports = build_space(info.leaves).dst_port
+    if ports.any or ports.tokens or not ports.by_protocol or not CORE_BALANCED.covers(ports):
+        return "identity"
+    return "dns_patching"
 
 
 @dataclass(frozen=True)
@@ -125,7 +217,62 @@ def _by_name(estate: Estate, kind: str) -> dict[str, Policy]:
 
 def _destination_tier(info: RuleInfo) -> str | None:
     tiers = set(info.score.dst_tiers) if info.score else set()
-    return next((t for t in INSPECTION_TIERS if t in tiers), None)
+    return next((t for t in DEMAND_ORDER if t in tiers), None)
+
+
+def _dc_end(estate: Estate, addresses: AddressSet) -> bool:
+    """Every address is a data-centre system of the asset table (no users, no outside)."""
+    if addresses.any or addresses.tokens or addresses.empty or not len(estate.assets):
+        return False
+    if estate.assets.unclassified(addresses):
+        return False
+    return {e.tier for e in estate.assets.touching(addresses)} <= SERVER_TIERS
+
+
+def _core_end(estate: Estate, addresses: AddressSet) -> bool:
+    if addresses.any or addresses.tokens or addresses.empty or not len(estate.assets):
+        return False
+    if estate.assets.unclassified(addresses):
+        return False
+    return {e.tier for e in estate.assets.touching(addresses)} == {"CORE"}
+
+
+def _known_end(estate: Estate, addresses: AddressSet) -> bool:
+    """Explicit and fully in the asset table (users included): nothing from outside."""
+    if addresses.any or addresses.tokens or addresses.empty or not len(estate.assets):
+        return False
+    return not estate.assets.unclassified(addresses)
+
+
+def _small_end(addresses: AddressSet) -> bool:
+    size = addresses.size()
+    return not addresses.any and not addresses.tokens and size is not None and 0 < size <= SMALL_END
+
+
+def ips_exemption(estate: Estate, info: RuleInfo) -> list[Exempt]:
+    """The exempt classes a rule's traffic belongs to — empty unless *all* of it is exempt.
+
+    Every service the rule allows must be in ``IPS_EXEMPT``, and both ends must be inside: DC
+    systems for storage / replication, small explicit device sets for routing / BFD /
+    management, CORE destinations from known addresses for NTP. Anything from the outside or
+    "any" keeps the IPS."""
+    if info.unmodelled:
+        return []
+    space = build_space(info.leaves)
+    ports = space.dst_port
+    if ports.any or ports.tokens or not ports.by_protocol or not _EXEMPT_ALL.covers(ports):
+        return []
+    used = [e for e in IPS_EXEMPT if e.ports.intersects(ports)]
+    if not used:
+        return []
+    scopes = {e.scope for e in used}
+    if scopes == {"core"}:
+        inside = _known_end(estate, space.src_net) and _core_end(estate, space.dst_net)
+    elif "dc" in scopes or "core" in scopes:
+        inside = _dc_end(estate, space.src_net) and _dc_end(estate, space.dst_net)
+    else:
+        inside = _small_end(space.src_net) and _small_end(space.dst_net)
+    return used if inside else []
 
 
 def _view(
@@ -158,10 +305,21 @@ def recommend_inspection(
             continue
         if info.score.shadowed_by is not None or info.score.dead:
             continue  # removal is proposed for these
+        exempt = ips_exemption(estate, info)
+        if exempt:
+            # Heavy / fragile traffic between known DC systems: fastpath, not more IPS.
+            if r.action != "TRUST":
+                drafts.append(_fastpath_draft(policy, info, exempt))
+            continue
         tier = _destination_tier(info)
         if tier is None:
             continue
         need, profile = DOCTRINE[tier], profiles[tier]
+        service = core_service(info) if tier == "CORE" else None
+        if service == "identity":
+            # CORE for access, GOLD for inspection: GOLD's intrusion policy, no file policy.
+            gold = profiles["GOLD"]
+            need, profile = CORE_IDENTITY, Profile("CORE", gold.ips_policy, None, gold.configured)
         target = intrusion.get(profile.ips_policy) if profile.ips_policy else None
         target_level = _policy_level(target, profile.ips_policy)
         required = target_level if target_level is not None else need.min_level
@@ -189,6 +347,8 @@ def recommend_inspection(
                 policy,
                 info,
                 tier=tier,
+                service=service,
+                need=need,
                 profile=profile,
                 ips_target=None if ips_ok else target,
                 ips_needed=not ips_ok,
@@ -207,6 +367,8 @@ def _inspection_draft(
     info: RuleInfo,
     *,
     tier: str,
+    service: str | None,
+    need: Need,
     profile: Profile,
     ips_target: Policy | None,
     ips_needed: bool,
@@ -271,12 +433,22 @@ def _inspection_draft(
     return Draft(
         kind="add_inspection",
         principle="inspection_by_destination_tier",
-        title=f"Inspect #{r.rule_index} {r.name} ({tier} destination): " + " + ".join(parts),
-        priority=_rule_priority(DOCTRINE[tier].priority, info),
+        title=(
+            f"Inspect #{r.rule_index} {r.name} "
+            f"({tier}{' ' + service.replace('_', ' / ') if service else ''} destination): "
+            + " + ".join(parts)
+        ),
+        priority=_rule_priority(need.priority, info),
         display="inline",
         deploy_cost=1,
         targets=[_rule_target(info)],
-        preview={"policy": _policy_ref(policy), "before": [before], "after": [after], "tier": tier},
+        preview={
+            "policy": _policy_ref(policy),
+            "before": [before],
+            "after": [after],
+            "tier": tier,
+            **({"core_service": service} if service else {}),
+        },
         policy_fmc_id=policy.fmc_id,
         score_delta=(score - old) if score is not None and old is not None else None,
         warnings=warnings,
@@ -284,7 +456,57 @@ def _inspection_draft(
     )
 
 
+def _fastpath_draft(policy: Policy, info: RuleInfo, exempt: list[Exempt]) -> Draft:
+    r = info.rule
+    before = rule_view(info)
+    after_view = rule_view(info)
+    fields = {
+        k: v for k, v in after_view["fields"].items() if k not in ("ips_policy", "file_policy")
+    }
+    after_view["fields"] = fields
+    after_view["action"] = "TRUST"
+    after = with_status(after_view, "modified", before)
+    after["changes"]["action"] = {"added": ["TRUST"], "removed": [r.action]}
+    classes = [e.key for e in exempt]
+    return Draft(
+        kind="fastpath_candidate",
+        principle="heavy_trusted_traffic_skips_snort",
+        title=(
+            f"Consider fastpath for #{r.rule_index} {r.name}: "
+            + ", ".join(e.label for e in exempt)
+            + " between known systems"
+        ),
+        priority=_rule_priority(35 if r.ips_policy else 25, info),
+        display="inline",
+        deploy_cost=1,
+        targets=[_rule_target(info)],
+        preview={
+            "policy": _policy_ref(policy),
+            "before": [before],
+            "after": [after],
+            "classes": classes,
+        },
+        policy_fmc_id=policy.fmc_id,
+        warnings=["fastpath_no_inspection"],
+        plan=_plan(lambda pb: pb.block("fastpath_manual")),
+    )
+
+
 # ------------------------------------------------------------------ SSL decryption
+
+
+def _dnd_rule(name: str, fields: dict[str, list[str]]) -> dict[str, Any]:
+    return {
+        "id": None,
+        "index": None,
+        "name": name,
+        "action": "DO_NOT_DECRYPT",
+        "enabled": True,
+        "section": "",
+        "category": "",
+        "fields": fields,
+        "status": "added",
+    }
 
 
 @dataclass
@@ -363,57 +585,71 @@ class SslAdvisor:
     # ---- CORE must never be decrypted
 
     def _exempt_core(self, policy: Policy, rules: list[RuleInfo]) -> Draft | None:
+        """Decrypt rules reaching CORE systems, or identity / management services by port,
+        before a do-not-decrypt rule exempts them."""
         core = [n for n in self.nodes.values() if n.tier == "CORE"]
-        if not core:
-            return None
+        services = [(label, PortSet.build([spec])) for label, spec in NEVER_DECRYPT_SERVICES]
         exempt: set[str] = set()
+        exempt_services: set[str] = set()
         caught: dict[str, _Node] = {}
+        caught_services: set[str] = set()
         offenders: list[RuleInfo] = []
         for info in rules:
             r = info.rule
             if not r.enabled:
                 continue
-            dst = build_space(info.leaves).dst_net
+            space = build_space(info.leaves)
+            dst, ports = space.dst_net, space.dst_port
             if r.action == "DO_NOT_DECRYPT":
                 if info.unmodelled:
                     continue  # its other conditions may leave part of the traffic decrypted
-                exempt |= {n.system for n in core if dst.covers(n.addresses)}
+                if ports.any:
+                    exempt |= {n.system for n in core if dst.covers(n.addresses)}
+                if dst.any:
+                    exempt_services |= {label for label, p in services if ports.covers(p)}
             elif r.action in DECRYPT_ACTIONS:
                 hit = [n for n in core if n.system not in exempt and dst.intersects(n.addresses)]
-                if hit:
+                svc = {
+                    label
+                    for label, p in services
+                    if label not in exempt_services and ports.intersects(p)
+                }
+                if hit or svc:
                     offenders.append(info)
                     caught.update({n.system: n for n in hit})
-        if not caught:
+                    caught_services |= svc
+        if not caught and not caught_services:
             return None
         systems = sorted(caught)
-        new_rule = {
-            "id": None,
-            "index": None,
-            "name": "DND_CORE_SERVICES",
-            "action": "DO_NOT_DECRYPT",
-            "enabled": True,
-            "section": "",
-            "category": "",
-            "fields": {"dst_net": systems},
-            "status": "added",
-        }
+        named = [label for label, _ in NEVER_DECRYPT_SERVICES if label in caught_services]
+        new_rules: list[dict[str, Any]] = []
+        if systems:
+            new_rules.append(_dnd_rule("DND_CORE_SERVICES", {"dst_net": systems}))
+        if named:
+            new_rules.append(_dnd_rule("DND_IDENTITY_MGMT_SERVICES", {"dst_port": named}))
+        parts = []
+        if systems:
+            parts.append(f"{len(systems)} CORE system(s)")
+        if named:
+            parts.append(f"{len(named)} identity / management service(s)")
         return Draft(
             kind="ssl_exempt_core",
             principle="core_not_decrypted",
             title=(
-                f"{policy.name}: exempt {len(systems)} CORE system(s) from decryption — "
-                f"add a do-not-decrypt rule at the top"
+                f"{policy.name}: exempt {' and '.join(parts)} from decryption — "
+                f"add do-not-decrypt at the top"
             ),
             priority=80,
             display="inline",
-            deploy_cost=1,
+            deploy_cost=len(new_rules),
             targets=[{"type": "policy", "id": policy.fmc_id, "name": policy.name}]
             + [_rule_target(i) for i in offenders[:SAMPLE]],
             preview={
                 "policy": _policy_ref(policy),
                 "before": [rule_view(i) for i in offenders[:SAMPLE]],
-                "after": [new_rule, *(rule_view(i) for i in offenders[:SAMPLE])],
+                "after": [*new_rules, *(rule_view(i) for i in offenders[:SAMPLE])],
                 "systems": systems,
+                "services": named,
             },
             policy_fmc_id=policy.fmc_id,
             warnings=["core_breaks_under_decryption"],

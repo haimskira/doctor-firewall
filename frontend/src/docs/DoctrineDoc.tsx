@@ -45,13 +45,9 @@ export function DoctrineDoc() {
 </li>
 <li>
 <strong>
-{"קריטיות ≠ tier."}
+{"ה-tier קובע גישה, לא inspection."}
 </strong>
-{" נכס קריטי-אבל-נגיש-לכולם (DNS, AD) לא שייך ל-tier הרגיש — הוא shared core, קטגוריה בפני עצמה. מדרגים tiers לפי "}
-<strong>
-{"רגישות נתונים + מי אמור לגשת"}
-</strong>
-{", לא לפי קריטיות."}
+{" נכס קריטי שכולם צריכים להגיע אליו (DNS, AD) לא נכנס ל-tier הרגיש מבחינת גישה, כי חסימה שלו מפילה את כל הסביבה. לכן הוא CORE, קטגוריה בפני עצמה. אבל עומק ה-inspection נקבע לפי כמה תוקף ירצה את הנכס, ולא לפי מי משתמש בו. AD הוא CORE מבחינת גישה ו-GOLD מבחינת inspection."}
 </li>
 </ol>
 <h2>
@@ -59,6 +55,9 @@ export function DoctrineDoc() {
 </h2>
 <p>
 {"כל שרת מקבל תווית אחת לפני שנוגעים בחוק. CORE מוחרג מה-tiers בכוונה: אם היינו מדרגים לפי קריטיות, DNS/AD היו הופכים ל\"זהב\", וה-tier הכי-מוגן היה גם הכי-נגיש — סתירה פנימית ששוחקת את ההגנה על שאר הזהב."}
+</p>
+<p>
+{"ההחרגה של CORE מה-tiers היא החרגה מכללי הגישה בלבד. בצד ה-inspection, שירותי הזהות שבו (AD/DC ו-PKI) מקבלים את הבדיקה הכי עמוקה ברשת, כי הם היעד שכל תוקף מחפש. הפירוט בפרק \"שירותי הזהות\"."}
 </p>
 <table>
 <thead>
@@ -265,7 +264,7 @@ export function DoctrineDoc() {
 </p>
 </div>
 <p>
-{"ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption; לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר."}
+{"ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption, אבל שירותי הזהות שבו נבדקים ב-IPS מלא. לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר."}
 </p>
 <h2>
 {"blast radius — טווח הנזק"}
@@ -716,22 +715,70 @@ export function DoctrineDoc() {
 <tr>
 <td>
 <strong>
-{"CORE"}
+{"CORE · זהות"}
+</strong>
+<br />
+{"AD/DC, PKI"}
+</td>
+<td>
+<strong>
+{"לא"}
 </strong>
 </td>
 <td>
 <strong>
-{"לא (bypass)"}
+{"מלא, עם חתימות ל-Kerberos, LDAP, SMB ו-RPC"}
 </strong>
-</td>
-<td>
-{"קל / לא"}
 </td>
 <td>
 {"לא"}
 </td>
 <td>
-{"פרוטוקולים מוגדרים; decryption שובר אותם, inspection מיותר"}
+{"היעד המרכזי של תוקף. decryption שובר את הפרוטוקולים, אבל ה-IPS רואה אותם גם בלי"}
+</td>
+</tr>
+<tr>
+<td>
+<strong>
+{"CORE · DNS ו-patching"}
+</strong>
+</td>
+<td>
+<strong>
+{"לא"}
+</strong>
+</td>
+<td>
+{"מאוזן"}
+</td>
+<td>
+{"לא"}
+</td>
+<td>
+{"DNS tunneling וניצול חולשות בשרת ה-DNS נראים ב-IPS"}
+</td>
+</tr>
+<tr>
+<td>
+<strong>
+{"CORE · שירותים פשוטים"}
+</strong>
+<br />
+{"NTP"}
+</td>
+<td>
+<strong>
+{"לא"}
+</strong>
+</td>
+<td>
+{"לא, מתאים ל-prefilter ו-fastpath"}
+</td>
+<td>
+{"לא"}
+</td>
+<td>
+{"פרוטוקול פשוט, ערך נמוך לתוקף. חוסך מעבד ל-gold ול-DC"}
 </td>
 </tr>
 <tr>
@@ -801,20 +848,360 @@ export function DoctrineDoc() {
 </table>
 <p>
 <strong>
-{"ציר ה-inspection מתהפך מול ציר המקורות."}
+{"ציר ה-inspection מתהפך מול ציר המקורות, חוץ משירותי הזהות."}
 </strong>
-{" בזהב — מעט מקורות אבל הכי הרבה inspection. ב-core — הרבה מקורות אבל כמעט כלום (ולעתים bypass מוחלט). שני הצירים נעים בכיוונים הפוכים, וזה תקין."}
+{" בזהב יש מעט מקורות והכי הרבה inspection. בשירותי ה-CORE הפשוטים יש הרבה מקורות ומעט inspection. שירותי הזהות הם החריג: הרבה מקורות וגם inspection מלא, כי הם הנכס שתוקף הכי רוצה."}
 </p>
 <p>
 {"CORE "}
 <strong>
 {"חייב"}
 </strong>
-{" החרגה מ-decryption: AD/Kerberos, LDAPS ו-certificate pinning של עדכונים כולם נשברים כש-MITM נכנס באמצע. זו עוד סיבה ש-core הוא קטגוריה נפרדת — הוא קריטי אבל דורש "}
-<em>
-{"פחות"}
-</em>
-{" נגיעה, לא יותר. core ל-prefilter/fastpath לא רק נכון אבטחתית, הוא משחרר מעבד ל-inspection של gold."}
+{" החרגה מ-decryption. AD, Kerberos, LDAPS ו-certificate pinning של עדכונים נשברים כשמפענחים באמצע. אבל "}
+<strong>
+{"החרגה מ-decryption היא לא החרגה מ-IPS."}
+</strong>
+{" Kerberos, LDAP, SMB ו-RPC לשרתי ה-DC לא עוברים ב-TLS, ולכן ה-IPS רואה את מבנה הפרוטוקול גם כשחלק מהתוכן מוצפן ברמת האפליקציה. מתוך ה-CORE רק שירותים פשוטים כמו NTP מתאימים ל-prefilter ו-fastpath, וזה משחרר מעבד ל-inspection של gold ושל ה-DC (על תעבורת התשתית הכבדה בתוך ה-DC — בפרק \"חריגות\")."}
+</p>
+<h2>
+{"שירותי הזהות: CORE בגישה, GOLD ב-inspection"}
+</h2>
+<p>
+{"כמעט כל תקיפה מתקדמת ברשת ארגונית עוברת דרך AD. השליטה ב-Domain Admin היא המטרה, והדרך אליה נראית ברמת IP ופורט כמו תעבורה רגילה לגמרי. רק IPS שמכיר את הפרוטוקול יכול לזהות אותה."}
+</p>
+<table>
+<thead>
+<tr>
+<th>
+{"טכניקה"}
+</th>
+<th>
+{"איך היא נראית ברשת"}
+</th>
+<th>
+{"מה ה-IPS יכול לזהות"}
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+{"Kerberoasting"}
+</td>
+<td>
+{"בקשות TGS לשירותים עם SPN"}
+</td>
+<td>
+{"מחשב אחד שמבקש הרבה TGS בזמן קצר"}
+</td>
+</tr>
+<tr>
+<td>
+{"DCSync"}
+</td>
+<td>
+{"בקשת רפליקציה (MS-DRSR) לשרת DC"}
+</td>
+<td>
+{"רפליקציה שמגיעה ממקור שהוא לא DC"}
+</td>
+</tr>
+<tr>
+<td>
+{"מיפוי LDAP (BloodHound, SharpHound)"}
+</td>
+<td>
+{"שאילתות LDAP חוקיות"}
+</td>
+<td>
+{"דפוס שאילתות של מיפוי הדומיין"}
+</td>
+</tr>
+<tr>
+<td>
+{"ניצול חולשות ב-DC"}
+</td>
+<td>
+{"SMB ו-RPC"}
+</td>
+<td>
+{"חתימות של exploits מוכרים"}
+</td>
+</tr>
+</tbody>
+</table>
+<p>
+{"מה זה אומר בפועל:"}
+</p>
+<ul>
+<li>
+<strong>
+{"IPS מלא"}
+</strong>
+{" על כל התעבורה לשרתי ה-DC, עם חתימות ל-Kerberos, LDAP, SMB, RPC ו-MS-DRSR. לא Trust ולא fastpath."}
+</li>
+<li>
+<strong>
+{"צמצום גישה גם בתוך CORE."}
+</strong>
+{" כולם מגיעים לפורטים של אימות ושל שאילתות. רפליקציה רק בין שרתי DC. RDP, WinRM וניהול רק מתחנות ניהול מוגדרות."}
+</li>
+<li>
+<strong>
+{"logging לכל connection"}
+</strong>
+{" לשרתי ה-DC, וחיבור של התראות IPS על ה-DC ל-SIEM בעדיפות גבוהה."}
+</li>
+<li>
+<strong>
+{"בלי decryption."}
+</strong>
+{" הפרוטוקולים נשברים, והחתימות עובדות גם בלי זה."}
+</li>
+</ul>
+<h2>
+{"חריגות: על מה לא מפעילים IPS או decryption"}
+</h2>
+<p>
+<strong>
+{"העיקרון: IPS בכל מקום שאפשר — מקסימום הגנה."}
+</strong>
+{" IPS הוא ברירת המחדל לכל תעבורה מותרת, בכל tier. תעבורה מה-WAN, ממשתמשים או מ-any מקבלת IPS תמיד, אלא אם הוא הורס אותה. החריגות הן רק שתיים: NTP מתוך ה-CORE (למעלה), ותעבורת תשתית כבדה או רגישה בתוך ה-DC (למטה)."}
+</p>
+<h3>
+{"על מה לא מפעילים IPS"}
+</h3>
+<p>
+{"מספיק שאחד מהתנאים מתקיים:"}
+</p>
+<ol>
+<li>
+{"הנפח כל כך גדול שהוא יעמיס על Snort."}
+</li>
+<li>
+{"החביון שה-IPS מוסיף ישבור את הפרוטוקול."}
+</li>
+<li>
+{"תעבורה בין ציודי תשתית שלא מקבלת traffic מחוץ לסביבה."}
+</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>
+{"תעבורה"}
+</th>
+<th>
+{"למה"}
+</th>
+<th>
+{"מה עושים"}
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+{"חוקי Block ב-ACP"}
+</td>
+<td>
+{"IPS רץ רק על חוקים מתירים"}
+</td>
+<td>
+{"אין מה לעשות — רק לדעת"}
+</td>
+</tr>
+<tr>
+<td>
+{"Failover link ו-State link"}
+</td>
+<td>
+{"מחוץ ל-ACP לחלוטין"}
+</td>
+<td>
+{"לוודא שאין חוק כללי שתופס אותם"}
+</td>
+</tr>
+<tr>
+<td>
+{"ניהול FMC ↔ FTD (sftunnel, TCP 8305)"}
+</td>
+<td>
+{"עיכוב או נפילה = ה-FMC מאבד שליטה על המכשיר"}
+</td>
+<td>
+{"fastpath, חוק צר"}
+</td>
+</tr>
+<tr>
+<td>
+{"גיבוי, רפליקציה ו-storage: iSCSI (3260), NFS (2049), vMotion (8000), VMware NFC (902), SnapMirror (11104-11105), SQL AlwaysOn (5022), SMB לשרתי גיבוי"}
+</td>
+<td>
+{"נפח עצום, חביון ששובר את הפרוטוקול, תעבורה פנימית בין שרתים ידועים"}
+</td>
+<td>
+{"Trust ב-ACP עם logging, או fastpath ב-prefilter"}
+</td>
+</tr>
+<tr>
+<td>
+{"פרוטוקולי routing: BGP (TCP 179), OSPF, EIGRP"}
+</td>
+<td>
+{"חתימות של חריגות TCP עלולות לפגוע ב-keepalives ולהפיל adjacency"}
+</td>
+<td>
+{"fastpath בין ציודים מנוהלים"}
+</td>
+</tr>
+<tr>
+<td>
+{"NTP (UDP 123) לשרתי CORE"}
+</td>
+<td>
+{"פרוטוקול פשוט, ערך נמוך לתוקף; חוסך מעבד ל-gold ול-DC"}
+</td>
+<td>
+{"prefilter / fastpath"}
+</td>
+</tr>
+<tr>
+<td>
+{"BFD (UDP 3784-3785, 4784)"}
+</td>
+<td>
+{"רגיש מאוד לחביון; כל עיכוב מ-Snort מפיל את הסשן"}
+</td>
+<td>
+{"fastpath"}
+</td>
+</tr>
+</tbody>
+</table>
+<p>
+<strong>
+{"\"בלי IPS\" לא אומר \"פתוח\"."}
+</strong>
+{" כל חריגה כזו היא נקודה עיוורת, ולכן החוק שלה חייב להיות צר: כתובות מדויקות, פורטים מדויקים, בלי any, ועם לוג. תעבורה מה-WAN, ממשתמשים או מ-any לעולם לא נכנסת לחריגה."}
+</p>
+<p>
+<strong>
+{"מה המערכת עושה:"}
+</strong>
+{" חוק מתיר שכל השירותים שלו ברשימה למעלה, ושני הצדדים שלו \"בפנים\" (ל-storage ולרפליקציה: מערכות DC מטבלת הנכסים, CORE עד BRONZE; ל-routing, BFD וניהול: קבוצות קטנות ומפורשות של עד 256 כתובות; ל-NTP: יעד CORE מכל מקור מפורש) — מקבל המלצת "}
+<code>
+{"fastpath_candidate"}
+</code>
+{" ולא המלצת IPS. חוק ל-CORE מקבל IPS לפי השירות שבו: "}
+<strong>
+{"זהות"}
+</strong>
+{" (Kerberos 88/464, LDAP 389/636, Global Catalog 3268-3269, SMB 445, RPC 135, או any) — פרופיל GOLD המלא; "}
+<strong>
+{"DNS ו-patching"}
+</strong>
+{" (53, WSUS 8530-8531) — לפחות Balanced. כל השאר מקבל IPS לפי ה-tier."}
+</p>
+<h3>
+{"על מה לא מפעילים SSL decryption"}
+</h3>
+<p>
+{"כלל אצבע: לא מפענחים כששלושת התנאים מתקיימים יחד — תשתית קריטית שהרשת לא עובדת בלעדיה, תעבורה בין ציודים מנוהלים ומוכרים, ותקלה בפענוח תשבור יותר ממה שהיא תגן."}
+</p>
+<table>
+<thead>
+<tr>
+<th>
+{"תעבורה"}
+</th>
+<th>
+{"למה"}
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+{"Mutual TLS עם client certificate (כולל EAP-TLS ו-802.1X over TLS)"}
+</td>
+<td>
+{"הפיירוול לא יכול להציג את תעודת הלקוח לשרת; הפענוח שובר את האימות"}
+</td>
+</tr>
+<tr>
+<td>
+{"Certificate pinning (מובייל, לקוחות של ספקי ענן, חלק מהאפליקציות העסקיות)"}
+</td>
+<td>
+{"האפליקציה מצפה לתעודה המדויקת שלה; resign שובר אותה מיד"}
+</td>
+</tr>
+<tr>
+<td>
+{"AD, LDAPS (636), Global Catalog (3269), Kerberos, RADIUS (כולל RADIUS over TLS, 2083)"}
+</td>
+<td>
+{"תשתית הזהות; תקלה כאן מורידה אימות לכל הסביבה. Do-Not-Decrypt מפורש עם שם ברור"}
+</td>
+</tr>
+<tr>
+<td>
+{"ISE (כולל pxGrid, 8910), FMC (כולל sftunnel, 8305), ממשקי ניהול של ציוד"}
+</td>
+<td>
+{"תשתית קריטית שאסור לה להיות תלויה בפענוח תקין"}
+</td>
+</tr>
+<tr>
+<td>
+{"מכשירים לא מנוהלים: מדפסות, IoT, OT, מצלמות, BYOD, אורחים"}
+</td>
+<td>
+{"אין להם את ה-root CA; resign יוצר שגיאת תעודה והחיבור נופל"}
+</td>
+</tr>
+<tr>
+<td>
+{"עדכוני אנטי-וירוס ו-EDR"}
+</td>
+<td>
+{"חלק מהספקים עושים pinning; עדכון חתימות חייב להגיע בלי הפרעה"}
+</td>
+</tr>
+<tr>
+<td>
+{"גיבוי ורפליקציה מוצפנים"}
+</td>
+<td>
+{"גם אם זה TLS — הנפח לא מצדיק את העומס והסיכון"}
+</td>
+</tr>
+<tr>
+<td>
+{"VPN clients (IPsec, DTLS של AnyConnect / Secure Client)"}
+</td>
+<td>
+{"לא TLS רגיל ולא עוברים ב-decryption policy בכלל; חשוב לדעת שהמנהרה עצמה לא נפתחת"}
+</td>
+</tr>
+</tbody>
+</table>
+<p>
+<strong>
+{"גם וגם — לא IPS ולא decryption:"}
+</strong>
+{" ניהול FMC ↔ FTD, וגיבוי / רפליקציה / storage בתוך ה-DC."}
+</p>
+<p>
+<strong>
+{"מה המערכת עושה:"}
+</strong>
+{" בחוקת ה-decryption, חוק decrypt שתופס מערכת CORE, או אחד משירותי הזהות והניהול לפי פורט (636, 3269, 2083, 8305, 8910), לפני שחוק Do-Not-Decrypt החריג אותם — מקבל המלצת "}
+<code>
+{"ssl_exempt_core"}
+</code>
+{". LDAPS לא נחשב \"TLS שצריך לפענח\" בהמלצת ה-known-key. mTLS, pinning ומכשירים לא מנוהלים לא ניתנים לזיהוי לפי כתובת ופורט — את ההחרגות שלהם מנהלים ידנית, וכדאי לתכנן שהרשימה תגדל."}
 </p>
 <h2>
 {"SSL decryption דו-כיווני"}
@@ -933,7 +1320,7 @@ export function DoctrineDoc() {
 </p>
 <pre>
 <code>
-{"1.  DO-NOT-DECRYPT   CORE services              (AD/LDAPS/pinned — שובר אם תיגע)\n2.  DO-NOT-DECRYPT   regulatory bypass          (banking/health/gov — outbound)\n3.  DECRYPT-KNOWN-KEY  -> GRP_SRV_GOLD          (inbound, ה-cert שלך)\n4.  DECRYPT-KNOWN-KEY  -> GRP_SRV_SILVER        (inbound)\n5.  DECRYPT-RESIGN   GRP_USERS -> outside       (outbound, ה-CA שלך)\n6.  default          do-not-decrypt + log"}
+{"1.  DO-NOT-DECRYPT   CORE + identity/mgmt      (AD/LDAPS/RADIUS/ISE/FMC — שובר אם תיגע)\n2.  DO-NOT-DECRYPT   mTLS / pinned / unmanaged (רשימה מתוחזקת)\n3.  DO-NOT-DECRYPT   regulatory bypass         (banking/health/gov — outbound)\n4.  DECRYPT-KNOWN-KEY  -> GRP_SRV_GOLD         (inbound, ה-cert שלך)\n5.  DECRYPT-KNOWN-KEY  -> GRP_SRV_SILVER       (inbound)\n6.  DECRYPT-RESIGN   GRP_USERS -> outside      (outbound, ה-CA שלך)\n7.  default          do-not-decrypt + log"}
 </code>
 </pre>
 <p>
@@ -979,7 +1366,7 @@ export function DoctrineDoc() {
 <strong>
 {"FTD"}
 </strong>
-{" — core ל-prefilter/fastpath (לא צריך Snort על DNS/NTP), סדר בבלוק = shadowing (בדוק עם packet-tracer), ו-FMC משטח הכול ל-Lina ACL + Snort, אז ה-scale מתרחב גם כשהחוק נראה נקי. זו הסיבה שה-expansion שדיברנו עליו נבדק לפני כל הרחבה — חוק אחד נקי יכול להפוך לעשרות ACEs בפועל."}
+{" — prefilter ו-fastpath רק לשני סוגי תעבורה: מתוך ה-CORE, שירותים פשוטים כמו NTP; ובנוסף, תעבורת תשתית כבדה או רגישה בתוך ה-DC (storage, רפליקציה, routing, BFD, ניהול FMC↔FTD). AD, DNS ו-PKI, וכל השאר, עוברים דרך Snort עם IPS. סדר בבלוק = shadowing (בדוק עם packet-tracer), ו-FMC משטח הכול ל-Lina ACL + Snort, אז ה-scale מתרחב גם כשהחוק נראה נקי. זו הסיבה שה-expansion שדיברנו עליו נבדק לפני כל הרחבה — חוק אחד נקי יכול להפוך לעשרות ACEs בפועל."}
 </p>
 </div>
     </>

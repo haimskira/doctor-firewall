@@ -391,7 +391,8 @@ export interface FindingRow {
   title: string;
   details: Record<string, unknown>;
   /** Recommendations acting on what the finding is about (same snapshot). */
-  fixes?: { id: number; kind: string; title: string }[];
+  /** One entry per recommendation kind that fixes the finding: the best one, and how many. */
+  fixes?: { id: number; kind: string; title: string; count?: number }[];
 }
 
 export interface FindingsPage {
@@ -473,7 +474,8 @@ export type RecommendationKind =
   | 'remove_redundant_reference'
   | 'remove_redundant_member'
   | 'remove_disabled_rule'
-  | 'compact_group';
+  | 'compact_group'
+  | 'fastpath_candidate';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -496,6 +498,7 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_redundant_member',
   'remove_disabled_rule',
   'compact_group',
+  'fastpath_candidate',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';

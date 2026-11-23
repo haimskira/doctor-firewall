@@ -325,9 +325,37 @@ def _rule_objects(db: Session, snapshot_id: int, rule_ids: set[str]) -> dict[str
     return out
 
 
+# Which recommendation kinds actually fix a finding kind. Sharing a target is not enough: an
+# ACE-heavy rule reaches every object nested in its groups, and merging two duplicate hosts
+# deep inside them saves no ACE at all. Kinds not listed accept any recommendation on their
+# targets (their targets are exactly what the finding is about).
+FIX_KINDS: dict[str, frozenset[str]] = {
+    "ace_heavy_rule": frozenset(
+        {
+            "compact_group",
+            "remove_redundant_reference",
+            "remove_redundant_member",
+            "split_rule",
+            "tighten_source",
+            "tighten_ports",
+            "remove_shadowed_rule",
+            "remove_dead_rule",
+            "remove_disabled_rule",
+        }
+    ),
+    "deep_nesting": frozenset(
+        {"remove_unused_object", "remove_redundant_member", "compact_group", "merge_groups"}
+    ),
+}
+FIXES_PER_FINDING = 5
+CANDIDATES_PER_TARGET = 50
+
+
 def _fixes(
     db: Session, snapshot_id: int, findings: list[Finding]
 ) -> dict[int, list[dict[str, Any]]]:
+    """Per finding, one entry per recommendation kind that fixes it (the best one, with the
+    number of such recommendations), at most FIXES_PER_FINDING kinds."""
     targets = {f.id: _finding_targets(f.details) for f in findings}
     # An ACE-heavy rule is fixed through the groups it uses (compacting them).
     heavy = {f.id: t[0] for f in findings if f.kind == "ace_heavy_rule" and (t := targets[f.id])}
@@ -345,22 +373,27 @@ def _fixes(
     for rec_id, kind, title, rec_targets in db.execute(query) if wanted else ():
         for t in rec_targets:
             tid = t.get("id") if isinstance(t, dict) else None
-            if tid in wanted and len(by_target[tid]) < 5:
+            if tid in wanted and len(by_target[tid]) < CANDIDATES_PER_TARGET:
                 by_target[tid].append({"id": rec_id, "kind": kind, "title": title[:160]})
     out: dict[int, list[dict[str, Any]]] = {}
     for f in findings:
+        allowed = FIX_KINDS.get(f.kind)
         seen: set[int] = set()
-        fixes: list[dict[str, Any]] = []
+        per_kind: dict[str, dict[str, Any]] = {}
         for tid in targets[f.id]:
             for fix in by_target.get(tid, []):
-                if fix["id"] not in seen:
-                    seen.add(fix["id"])
-                    fixes.append(fix)
-        out[f.id] = fixes[:5]
+                if fix["id"] in seen or (allowed is not None and fix["kind"] not in allowed):
+                    continue
+                seen.add(fix["id"])
+                if fix["kind"] in per_kind:
+                    per_kind[fix["kind"]]["count"] += 1
+                else:
+                    per_kind[fix["kind"]] = {**fix, "count": 1}
+        out[f.id] = list(per_kind.values())[:FIXES_PER_FINDING]
     if any(f.kind == "ace_cluster_limit" for f in findings):
         # The cluster's ACE budget is fixed by whatever saves the most ACEs.
         saving = [
-            {"id": rec_id, "kind": kind, "title": title[:160]}
+            {"id": rec_id, "kind": kind, "title": title[:160], "count": 1}
             for rec_id, kind, title in db.execute(
                 select(Recommendation.id, Recommendation.kind, Recommendation.title)
                 .where(Recommendation.snapshot_id == snapshot_id, Recommendation.ace_delta < 0)

@@ -24,6 +24,7 @@ export const PHASE_OF: Record<RecommendationKind, Phase> = {
   add_inspection: 'access',
   ssl_exempt_core: 'access',
   ssl_decrypt_inbound: 'access',
+  fastpath_candidate: 'access',
   remove_unused_object: 'closing',
 };
 

@@ -72,6 +72,8 @@ def test_inspection_follows_the_destination_tier(client: TestClient, admin: dict
     assert core["executable"] is False
     assert core["blocked"] == ["decryption_rule_manual"]
     assert core["preview"]["after"][0]["action"] == "DO_NOT_DECRYPT"
+    assert core["preview"]["after"][0]["name"] == "DND_CORE_SERVICES"
+    assert "FMC-FTD sftunnel TCP-8305" in core["preview"]["services"]
     # SQL-FIN (GOLD) has its known-key rule; no inbound proposal for GOLD.
     inbound = _all(client, flow.sid, kind="ssl_decrypt_inbound")
     assert not any("GOLD system" in r["title"] for r in inbound)
@@ -167,9 +169,16 @@ def test_inspection_drift_and_profile_rbac(client: TestClient, admin: dict[str, 
         )
     assert (
         client.put(
-            "/api/inspection-profiles/CORE", headers=admin, json={"ips_policy": "X"}
+            "/api/inspection-profiles/USERS", headers=admin, json={"ips_policy": "X"}
         ).status_code
         == 422
+    )
+    # CORE has a profile of its own now: IPS wherever it can run.
+    assert (
+        client.put(
+            "/api/inspection-profiles/CORE", headers=admin, json={"ips_policy": "X"}
+        ).status_code
+        == 204
     )
     assert client.delete("/api/inspection-profiles/SILVER", headers=admin).status_code == 404
     client.put("/api/inspection-profiles/SILVER", headers=admin, json={"ips_policy": "X"})
@@ -182,4 +191,47 @@ def test_no_asset_table_no_inspection_proposals(client: TestClient, admin: dict[
     sid = _snapshot(client, admin)
     jobs.analyze_snapshot(sid)
     assert _all(client, sid, kind="add_inspection") == []
-    assert _all(client, sid, kind="ssl_exempt_core") == []
+    assert _all(client, sid, kind="fastpath_candidate") == []  # DC ends need assets
+    # Identity / management services are recognised by port, with or without assets.
+    (row,) = _all(client, sid, kind="ssl_exempt_core")
+    detail = client.get(f"/api/snapshots/{sid}/recommendations/{row['id']}").json()
+    assert detail["preview"]["systems"] == []
+    assert "LDAPS TCP-636" in detail["preview"]["services"]
+    assert detail["preview"]["after"][0]["name"] == "DND_IDENTITY_MGMT_SERVICES"
+
+
+def test_storage_between_dc_systems_is_a_fastpath_candidate_not_an_ips_one(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    policy = mock("GET", CONFIG + "/policy/accesspolicies")["items"][0]
+    rules = CONFIG + f"/policy/accesspolicies/{policy['id']}/accessrules"
+    mock(
+        "POST",
+        rules + "?insertBefore=1",
+        {
+            "type": "AccessRule",
+            "name": "APPS_TO_SQL_ISCSI",
+            "enabled": True,
+            "action": "ALLOW",
+            "sourceNetworks": {"literals": [{"type": "Network", "value": "10.30.1.0/24"}]},
+            "destinationNetworks": {"literals": [{"type": "Host", "value": "10.20.5.10"}]},
+            "destinationPorts": {
+                "literals": [{"type": "PortLiteral", "protocol": "6", "port": "3260"}]
+            },
+        },
+    )
+    flow = Flow(client, admin)
+    rec = flow.find("fastpath_candidate", "APPS_TO_SQL_ISCSI")
+    detail = _detail(rec, client, flow.sid)
+    assert detail["executable"] is False
+    assert detail["blocked"] == ["fastpath_manual"]
+    assert detail["warnings"] == ["fastpath_no_inspection"]
+    assert detail["preview"]["classes"] == ["storage"]
+    assert detail["preview"]["after"][0]["action"] == "TRUST"
+    # GOLD destination, no IPS — and still no add_inspection: the exemption wins.
+    assert not any(
+        t["name"] == "APPS_TO_SQL_ISCSI"
+        for r in _all(client, flow.sid, kind="add_inspection")
+        for t in r["targets"]
+    )
+    flow.close()

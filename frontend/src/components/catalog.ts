@@ -24,4 +24,5 @@ export const CHANGING_KINDS: ReadonlySet<RecommendationKind> = new Set<Recommend
   'tighten_ports',
   'add_inspection',
   'ssl_decrypt_inbound',
+  'fastpath_candidate',
 ]);

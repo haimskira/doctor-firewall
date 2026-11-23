@@ -42,6 +42,7 @@ RECOMMENDATIONS: dict[str, str] = {
     "add_inspection": "Attach the IPS / file policy the destination tier requires.",
     "ssl_exempt_core": "Exempt CORE services from decryption.",
     "ssl_decrypt_inbound": "Decrypt inbound traffic to servers with known keys.",
+    "fastpath_candidate": "Consider fastpath for heavy traffic between known data-centre systems.",
     "remove_unused_object": "Delete an object nothing uses.",
 }
 

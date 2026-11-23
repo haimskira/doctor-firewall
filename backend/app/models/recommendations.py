@@ -53,6 +53,8 @@ RECOMMENDATION_KINDS = (
     "remove_disabled_rule",
     # The same addresses with fewer group members: fewer ACEs, no flow changes.
     "compact_group",
+    # Heavy / fragile traffic between known DC systems: consider fastpath instead of IPS.
+    "fastpath_candidate",
 )
 # What a recommendation does to traffic. Behaviour-preserving changes leave every flow's verdict
 # (and inspection) as it was — the batch verifier proves it before and after deployment.
@@ -65,6 +67,7 @@ BEHAVIOR_CHANGING = frozenset(
         "tighten_ports",
         "add_inspection",
         "ssl_decrypt_inbound",
+        "fastpath_candidate",
     }
 )
 
@@ -165,7 +168,7 @@ class NamingConvention(Base):
     )
 
 
-INSPECTION_TIERS = ("GOLD", "SILVER", "BRONZE")
+INSPECTION_TIERS = ("CORE", "GOLD", "SILVER", "BRONZE")
 
 
 class InspectionProfile(Base):

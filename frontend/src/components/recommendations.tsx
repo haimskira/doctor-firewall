@@ -33,6 +33,7 @@ const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['add_inspection', 'inspect'],
   ['ssl_exempt_core', 'inspect'],
   ['ssl_decrypt_inbound', 'inspect'],
+  ['fastpath_candidate', 'inspect'],
   ['remove_redundant_reference', 'remove'],
   ['remove_redundant_member', 'remove'],
   ['remove_disabled_rule', 'remove'],

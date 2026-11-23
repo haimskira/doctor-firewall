@@ -493,9 +493,13 @@ export function FindingDetails({ finding, snapshotId }: { finding: FindingRow; s
                 title={f.title}
               >
                 {isMessageKey(key) ? t(key) : f.kind}
+                {(f.count ?? 1) > 1 ? ` (${String(f.count)})` : ''}
               </Link>
             );
           })}
+          {finding.kind === 'deep_nesting' && fixes.some((f) => f.kind === 'remove_unused_object') && (
+            <p className="muted small">{t('finding.deep_nesting.unused')}</p>
+          )}
           {finding.kind === 'ace_cluster_limit' && (
             <Link to={`/recommendations?snapshot=${String(snapshotId)}&sort=ace_delta&order=asc`}>{t('finding.byAceSaving')}</Link>
           )}
