@@ -30,7 +30,7 @@ from app.models.enforce import Batch, Changeset
 from app.models.fmc import FmcConnection
 from app.models.inventory import Snapshot
 from app.runtime import get_audit, get_redis, get_secretbox
-from app.workers import progress
+from app.workers import cancel, progress
 from app.workers.queues import QueueName, get_queue
 
 log = logging.getLogger(__name__)
@@ -246,6 +246,14 @@ def _enforce_outcome(result: dict[str, Any]) -> None:
         progress.fail(str(result.get("detail") or result.get("error") or result.get("status")))
 
 
+def _end_cancelled(result: dict[str, Any]) -> bool:
+    """A batch stopped by an operator is a cancelled run (its rollback outcome is in the batch)."""
+    if result.get("error") == "cancelled" and not result.get("undo_failed"):
+        progress.cancelled()
+        return True
+    return False
+
+
 def execute_batch_job(batch_id: int, run_id: int | None = None) -> dict[str, Any]:
     """Apply one approved batch to the FMC (writes, verification, deploy or rollback)."""
     sessions = get_sessionmaker()
@@ -262,9 +270,12 @@ def execute_batch_job(batch_id: int, run_id: int | None = None) -> dict[str, Any
                 audit=get_audit(),
                 settings=get_settings(),
                 lock=redis_lock(get_redis()),
+                cancel=cancel.checker(get_redis(), run_id),
             )
         )
-        _enforce_outcome(result)
+        if not _end_cancelled(result):  # a cancel whose rollback is incomplete is a failure
+            _enforce_outcome(result)
+    cancel.clear(get_redis(), run_id)
     return result
 
 
@@ -352,8 +363,16 @@ def revert_batches_job(
     if run_id is None:
         run_id = progress.create_run(sessions, "revert", "revert", requested_by)
     done: list[int] = []
+    redis = get_redis()
     with progress.tracked(sessions, run_id):
         for batch_id in batch_ids:
+            # Between batches only: one batch's undo is never interrupted.
+            who = cancel.requested(redis, run_id)
+            if who is not None:
+                progress.cancelled()
+                cancel.clear(redis, run_id)
+                left = [b for b in batch_ids if b not in done]
+                return {"ok": False, "cancelled": True, "reverted": done, "remaining": left}
             with trace.tracing("revert", sessions, batch_id=batch_id, run_id=run_id):
                 result = asyncio.run(
                     revert_batch(
@@ -394,6 +413,12 @@ def resume_rollback_job(batch_id: int, run_id: int | None = None) -> dict[str, A
     """Finish an interrupted rollback from the batch's journal, then re-deploy."""
     sessions = get_sessionmaker()
     run_id = run_id if run_id is not None else _own_run("rollback", batch_id=batch_id)
+    who = cancel.requested(get_redis(), run_id)
+    if who is not None:  # cancelled while queued: nothing was started, the batch stays as it was
+        with progress.tracked(sessions, run_id):
+            progress.cancelled()
+        cancel.clear(get_redis(), run_id)
+        return {"ok": False, "cancelled": True, "status": "failed"}
     with (
         progress.tracked(sessions, run_id),
         trace.tracing("rollback", sessions, batch_id=batch_id, run_id=run_id),

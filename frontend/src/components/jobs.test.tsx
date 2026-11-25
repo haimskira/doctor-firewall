@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobRun, JobsList } from '../api/types';
 import { I18nProvider } from '../i18n/I18nProvider';
 import { mockFetch } from '../test/fetchMock';
-import { JobsIndicator, JobsProvider, WatchAlert, jobLink } from './jobs';
+import { CancelJobButton, JobsIndicator, JobsProvider, WatchAlert, jobLink } from './jobs';
 
 const RUNNING: JobRun = {
   id: 7,
@@ -151,5 +151,48 @@ describe('JobsProvider / JobsIndicator', () => {
   it('links a revert job to the history', () => {
     expect(jobLink({ ...RUNNING, kind: 'revert', changeset_id: 3 })).toBe('/history');
     expect(jobLink({ ...RUNNING, kind: 'batch', changeset_id: 3 })).toBe('/deploy?changeset=3');
+  });
+});
+
+describe('CancelJobButton', () => {
+  const BATCH: JobRun = { ...RUNNING, id: 9, kind: 'batch', title: 'cs · 1', step: 'batch_write', step_args: {}, can_cancel: true };
+
+  function mount(job: JobRun, answer: { status: number; body?: unknown }) {
+    const calls = mockFetch((req) => (req.url.startsWith('/api/jobs/') ? answer : req.url.startsWith('/api/jobs') ? { status: 200, body: { active: 0, rows: [] } } : { status: 404 }));
+    render(
+      <I18nProvider initial="en">
+        <MemoryRouter>
+          <JobsProvider username="opt" enabled>
+            <CancelJobButton job={job} />
+          </JobsProvider>
+        </MemoryRouter>
+      </I18nProvider>,
+    );
+    return calls;
+  }
+
+  it('is hidden for users who may not cancel and for finished runs', () => {
+    mount({ ...BATCH, can_cancel: false }, { status: 200 });
+    expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument();
+  });
+
+  it('asks first, and says a deployment already in progress cannot be stopped', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const calls = mount(BATCH, { status: 200, body: { run_id: 9, result: 'requested', deploy_started: false } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel run' }));
+    expect(confirm.mock.calls[0]?.[0]).toMatch(/rolled back/);
+    expect(confirm.mock.calls[0]?.[0]).toMatch(/cannot be stopped/);
+    expect(calls.some((c) => c.method === 'POST' && c.url === '/api/jobs/9/cancel')).toBe(true);
+    expect(await screen.findByRole('status')).toHaveTextContent('only if the run has not reached the deployment');
+  });
+
+  it('does nothing when the confirmation is declined; shows the error of a finished run', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const calls = mount(BATCH, { status: 409, body: { detail: 'not_cancellable' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel run' }));
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The run has already ended.');
   });
 });

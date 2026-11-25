@@ -298,6 +298,64 @@ def test_generic_rules_validate_action_token() -> None:
     assert v10_1.map_decryption_rule(named, 1).category == "Admin"
 
 
+def test_fmc_10_1_1_decryption_and_identity_rule_shapes() -> None:
+    # As returned by a real FMC 10.1.1 (lab): ruleAction, a category object, a logging object,
+    # TLS conditions left at "ANY" / false (no narrowing).
+    raw = {
+        "metadata": {"ruleIndex": 5, "category": {"name": "standard_category"}},
+        "enabled": True,
+        "replacePublicKey": False,
+        "sourceNetworks": {},
+        "destinationNetworks": {},
+        "sourceZones": {"objects": [{"type": "SecurityZone", "name": "Z_USERS", "id": "z1"}]},
+        "destinationZones": {"objects": [{"type": "SecurityZone", "name": "Z_OUT", "id": "z2"}]},
+        "vlanTags": {},
+        "logging": {"logEnd": True, "sendEvents": True},
+        "issuerDNs": {},
+        "subjectDNs": {},
+        "urls": {},
+        "certificateStatuses": {"valid": "ANY", "expired": "ANY", "revoked": "ANY"},
+        "cipherSuiteLists": {},
+        "applications": {},
+        "externalCertificates": {},
+        "tlsVersions": {"sslv3": False, "tls10": False, "tls12": False, "tls13": False},
+        "users": {},
+        "clientThreat": "ANY",
+        "ruleAction": "DECRYPT_RESIGN",
+        "decryptionCerts": {"objects": [{"type": "InternalCA", "name": "CA", "id": "c1"}]},
+        "id": "a9db444c-e903-11f1-bddd-6c66e1f74903",
+        "name": "RESIGN-USERS-OUT",
+        "type": "DecryptionPolicyRule",
+    }
+    rule = v10_1.map_decryption_rule(raw, 1)
+    assert (rule.action, rule.category, rule.rule_index) == (
+        "DECRYPT_RESIGN",
+        "standard_category",
+        5,
+    )
+    assert (rule.log_end, rule.send_events) == (True, True)
+    assert "unmodelled" not in rule.attrs  # "ANY" / false conditions do not narrow
+    assert {(f, r.object_id) for f, r in rule.refs} >= {
+        (RuleField.SRC_ZONE, "z1"),
+        (RuleField.DST_ZONE, "z2"),
+    }
+    narrowed = {**raw, "tlsVersions": {"tls10": True}, "issuerDNs": {"objects": [{"id": "d"}]}}
+    assert v10_1.map_decryption_rule(narrowed, 1).attrs["unmodelled"] == ["tls_conditions"]
+    # Identity (10.1.1): authenticationType, zones as plain arrays, metadata.index.
+    ident = v10_1.map_identity_rule(
+        {
+            "id": "i1",
+            "name": "NO-AUTH-SERVERS",
+            "authenticationType": "NO",
+            "sourceZones": [{"type": "SecurityZone", "name": "Z_GOLD", "id": "z3"}],
+            "metadata": {"index": 2},
+        },
+        1,
+    )
+    assert (ident.action, ident.rule_index) == ("NO", 2)
+    assert (RuleField.SRC_ZONE, "z3") in {(f, r.object_id) for f, r in ident.refs}
+
+
 def test_nat_rules() -> None:
     auto = v10_1.map_nat_rule(
         {

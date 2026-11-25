@@ -835,6 +835,34 @@ class GenericRuleModel(_M):
     sendEventsToFMC: bool = False  # noqa: N815
     description: ShortText | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _fmc_10_1_1_shape(cls, data: Any) -> Any:
+        """FMC 10.1.1 decryption / identity rules: ``ruleAction`` (decryption) or
+        ``authenticationType`` (identity) instead of ``action``, a ``logging`` object
+        instead of ``logEnd`` / ``sendEventsToFMC``, identity zones as plain arrays and the
+        identity rule index in ``metadata.index``."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if data.get("action") is None:
+            for key in ("ruleAction", "authenticationType"):
+                if data.get(key) is not None:
+                    data["action"] = data[key]
+                    break
+        logging_ = data.get("logging")
+        if isinstance(logging_, dict):
+            data.setdefault("logBegin", logging_.get("logBegin"))
+            data.setdefault("logEnd", logging_.get("logEnd"))
+            data.setdefault("sendEventsToFMC", logging_.get("sendEvents"))
+        for key in ("sourceZones", "destinationZones"):
+            if isinstance(data.get(key), list):
+                data[key] = {"objects": data[key]}
+        meta = data.get("metadata")
+        if isinstance(meta, dict) and meta.get("ruleIndex") is None and "index" in meta:
+            data["metadata"] = {**meta, "ruleIndex": meta["index"]}
+        return {k: v for k, v in data.items() if v is not None}
+
 
 class PrefilterRuleModel(GenericRuleModel):
     action: Literal["ANALYZE", "BLOCK", "FASTPATH"]
@@ -861,6 +889,12 @@ _DECRYPTION_CONDITION_KEYS = (
     "sslVersions",
     "versions",
     "certificateValidity",
+    # FMC 10.1.1 names
+    "issuerDNs",
+    "subjectDNs",
+    "cipherSuiteLists",
+    "externalCertificates",
+    "clientThreat",
 )
 _OTHER_CONDITION_KEYS = ("originalClientNetworks",)
 

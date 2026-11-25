@@ -945,7 +945,7 @@ export interface AttackSurface {
 /* ---- background jobs ---- */
 
 export type JobKind = 'collect' | 'analyze' | 'batch' | 'rollback' | 'audit_verify' | 'proof' | 'revert';
-export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface JobRun {
   id: number;
@@ -964,6 +964,15 @@ export interface JobRun {
   started_at: string | null;
   updated_at: string | null;
   finished_at: string | null;
+  /** The caller may cancel this run (queued or running, and allowed to start its kind). */
+  can_cancel?: boolean;
+}
+
+export interface CancelResult {
+  run_id: number;
+  result: 'cancelled' | 'requested';
+  /** The FMC deployment already started: it cannot be aborted. */
+  deploy_started: boolean;
 }
 
 export interface JobsList {

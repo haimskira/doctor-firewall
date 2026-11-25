@@ -5,7 +5,7 @@ import { api, errorCode } from '../api/client';
 import type { BatchResult, Changeset, ChangesetBatch, ChangesetDetail, JobRun, PlanOp, TrafficProof } from '../api/types';
 import { useAuth, useMe } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
-import { JobProgress, useBatchError, useJobText, useJobs } from '../components/jobs';
+import { CancelJobButton, JobProgress, useBatchError, useJobText, useJobs } from '../components/jobs';
 import { tagGroup } from '../components/recommendations';
 import { SortedTable } from '../components/sort';
 import { useApi, useQueryParam } from '../hooks';
@@ -342,6 +342,7 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
               <div className="batch-job">
                 <JobProgress job={running} />
                 <span className="muted small">{jobText.step(running)}</span>
+                <CancelJobButton job={running} onDone={onChanged} />
               </div>
             )}
             {b.rollback_resumable && <Alert kind="error">{t('dep.rollbackPending', { count: b.undo_pending })}</Alert>}

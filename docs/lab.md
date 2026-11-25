@@ -49,6 +49,37 @@ docker run --rm -e DF_LAB_PASSWORD --add-host firepower:<fmc-ip> \
   exactly that and deploys. `lab-work/assets.csv` is the scenario's asset table (doctrine tiers).
 * `python -m app.tools.lab_seed` is the small version (≈60 objects, 16 rules).
 
+## 2b. The operational layer (`lab_ops`)
+
+What a production estate has around its access policies, built on the HA pair's primary
+device and matched to the scenario's address plan (`python -m app.tools.lab_ops <step>
+--yes-write-to-lab`, steps `network`, `objects`, `inspection`, `decryption`, `link`, `all`):
+
+* **network** — security zones; outside / DMZ / second ISP; two trunks with VLAN subinterfaces
+  (CORE, GOLD, SILVER, BRONZE, four user sites, PAW, partners, OOB, legacy; the lab vSwitch
+  carries users-s1 on VLAN 1101 and gold on 1120); one interface left *static without an
+  address* (FMC 10.1.1 returns `"ipv4": {"static": {}}`); static routes for every scenario range.
+* **objects** — VLAN tags and groups, URLs and URL groups, time ranges, ICMPv4 / v6, custom SGTs,
+  an interface group.
+* **inspection** — intrusion policies per tier (`DF-IPS-GOLD` on Maximum Detection ...
+  one detection-only) and a file policy.
+* **decryption** — an internal CA and certificate (generated in memory), `DF-LAB-SSL` with one
+  rule per action, an identity policy; **link** attaches both to every access policy.
+
+Run order for a full rebuild: `lab_dryrun wipe` → `lab_ops all` → `lab_dryrun load` (its rules
+then also carry zones, tier IPS, file policy, SGT, VLAN, URL and time conditions on part of the
+rulebase, from `/work/ops.json`) → `lab_ops link`.
+
+What FMC 10.1.1 / FTDv 7.7 taught (the adapter follows it):
+
+* decryption rules carry `ruleAction` (not `action`), `metadata.category` as an object and a
+  `logging` object; identity rules carry `authenticationType` and zones as plain arrays;
+* a virtual FTD refuses EtherChannel ("not supported on 'Virtual' Threat Defense");
+* HA data interfaces take static addresses only (no DHCP); a physical interface PUT needs
+  `hardware.duplex`; outside may not overlap the internal management subnet (converged mode);
+* the API user's token is invalidated when another client (the app's own job) logs in with the
+  same user: run lab tools while no collection / change job runs, or use a second API user.
+
 ## 3. Clean slate, pull, analyse
 
 ```bash

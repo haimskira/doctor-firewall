@@ -25,3 +25,21 @@ UI: a jobs button in the top bar (spinner and count while something runs; a pane
 bars, steps and elapsed time); a notice when a job **you** started ends, with a link to its
 result; *Monitor → Events & Logs → Jobs* for the history. The browser asks every 2 s while a job
 is queued or running, every 15 s otherwise, every 30 s in a hidden tab — no manual refresh.
+
+## Cancelling a job
+
+`POST /api/jobs/{run_id}/cancel` — 404 unknown run, 409 `not_cancellable` unless queued or
+running, 403 unless the caller may start that kind of job (batch / rollback / revert:
+`deploy:approve`; collect / analyze: `collect:run`; proof / audit chain: admin). Audited as
+`job.cancel`. `GET /api/jobs` rows carry `can_cancel` for the caller. A cancelled run has status
+`cancelled` (error `cancelled`) and is never turned into `failed` by the lost-worker check.
+
+* Queued: removed from the queue, nothing started.
+* Jobs that write to the FMC (batch, rollback, revert): cooperative only, never killed — see
+  *Cancelling a run in progress* in `enforcement.md`. The answer is `requested` until the
+  worker reaches a safe point and ends the run, and `deploy_started: true` when the
+  deployment (or an undo) is already in progress and cannot be stopped.
+* Read-only jobs (collection, analysis, proof, audit chain): the worker is stopped with RQ's
+  stop command. A cancelled collection leaves its snapshot `failed` with error `cancelled`,
+  so it can be resumed like any failed pull.
+

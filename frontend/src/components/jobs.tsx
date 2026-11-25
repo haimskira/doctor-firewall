@@ -3,8 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api } from '../api/client';
-import type { JobRun, JobsList } from '../api/types';
+import { api, errorCode } from '../api/client';
+import type { CancelResult, JobRun, JobsList } from '../api/types';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
 import { Ltr } from './common';
 
@@ -197,7 +197,7 @@ function elapsed(job: JobRun, now: number): string {
 
 export function JobProgress({ job }: { job: JobRun }) {
   const { t } = useI18n();
-  const state = job.status === 'failed' ? 'bad' : job.status === 'done' ? 'good' : 'run';
+  const state = job.status === 'failed' || job.status === 'cancelled' ? 'bad' : job.status === 'done' ? 'good' : 'run';
   return (
     <div className="job-progress">
       <div
@@ -217,7 +217,7 @@ export function JobProgress({ job }: { job: JobRun }) {
 
 function StatusIcon({ job }: { job: JobRun }) {
   if (job.status === 'done') return <CheckCircleIcon className="job-icon ok" size={16} aria-hidden="true" />;
-  if (job.status === 'failed') return <WarningCircleIcon className="job-icon bad" size={16} aria-hidden="true" />;
+  if (job.status === 'failed' || job.status === 'cancelled') return <WarningCircleIcon className="job-icon bad" size={16} aria-hidden="true" />;
   return <CircleNotchIcon className="job-icon spin" size={16} aria-hidden="true" />;
 }
 
@@ -237,9 +237,51 @@ export function JobLine({ job, now }: { job: JobRun; now: number }) {
       </div>
       {job.status !== 'done' && <JobProgress job={job} />}
       <div className="muted small">
-        {job.status === 'failed' ? <span className="bad">{text.error(job)}</span> : job.status === 'done' ? t('jobs.status.done') : text.step(job)}
+        {job.status === 'failed' ? <span className="bad">{text.error(job)}</span> : job.status === 'done' ? t('jobs.status.done') : job.status === 'cancelled' ? t('jobs.status.cancelled') : text.step(job)}
       </div>
     </div>
+  );
+}
+
+/** Cancel a queued or running job (confirmed first). Shown only to users who may cancel it. */
+export function CancelJobButton({ job, onDone }: { job: JobRun; onDone?: () => void }) {
+  const { t, tError } = useI18n();
+  const { kick } = useJobs();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+  if (job.can_cancel !== true || (job.status !== 'queued' && job.status !== 'running')) return null;
+  const readOnly = job.kind === 'collect' || job.kind === 'analyze' || job.kind === 'proof' || job.kind === 'audit_verify';
+
+  async function cancel() {
+    if (!window.confirm(t(readOnly ? 'jobs.cancelConfirmRead' : 'jobs.cancelConfirm', { title: job.title }))) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const out = await api<CancelResult>(`/api/jobs/${String(job.id)}/cancel`, 'POST');
+      const text = out.result === 'cancelled' ? t('jobs.cancelDone') : out.deploy_started ? t('jobs.cancelLate') : t('jobs.cancelRequested');
+      setMessage({ kind: 'info', text });
+      kick();
+      onDone?.();
+    } catch (err) {
+      setMessage({ kind: 'error', text: tError(errorCode(err)) });
+      kick();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="cancel-job">
+      <button type="button" className="danger" disabled={busy} onClick={() => void cancel()}>
+        {t('jobs.cancel')}
+      </button>
+      {message !== null && (
+        <span role={message.kind === 'error' ? 'alert' : 'status'} className={`small ${message.kind === 'error' ? 'bad' : 'muted'}`}>
+          {' '}
+          {message.text}
+        </span>
+      )}
+    </span>
   );
 }
 

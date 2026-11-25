@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -50,6 +52,19 @@ OBJECT_RESOURCES = (  # deletion order: containers before their members
     "urls",
 )
 POLICY_TYPES = {"accesspolicies": "AccessPolicy", "prefilterpolicies": "PrefilterPolicy"}
+# Address prefix -> zone, for objects the scenario does not tier (DMZ, partners, literals).
+PREFIX_ZONES = (
+    ("10.0.0.", "CORE"),
+    ("10.20.", "GOLD"),
+    ("10.30.", "SILVER"),
+    ("10.4", "BRONZE"),
+    ("10.5", "BRONZE"),
+    ("10.6", "BRONZE"),
+    ("10.10", "USERS"),
+    ("172.16.", "DMZ"),
+    ("198.51.", "PARTNERS"),
+)
+SGT_BY_DEPT = {"FIN": "SGT_FINANCE", "HR": "SGT_HR", "IT": "SGT_ADMINS", "SEC": "SGT_ADMINS"}
 
 
 class DryRun(Loader):
@@ -57,6 +72,11 @@ class DryRun(Loader):
         super().__init__(fmc, work, scenario, next(iter(scenario.policies)))
         self.m.setdefault("policies", {})
         self.m.setdefault("dynamic", {})
+        # The operational layer (lab_ops): zones, tier IPS, file policy, SGT, VLAN, URL, time.
+        ops_path = work / "ops.json"
+        self.ops: dict[str, Any] = (
+            json.loads(ops_path.read_text(encoding="utf-8")) if ops_path.is_file() else {}
+        )
 
     # ---- helpers
 
@@ -280,6 +300,7 @@ class DryRun(Loader):
         self, r: RuleSpec, ips: dict[str, Any], variables: dict[str, Any] | None
     ) -> dict[str, Any]:
         body = super().rule_body(r, ips, variables)
+        self.enrich(r, body, variables)
         if r.dst_dynamic:
             body["destinationDynamicObjects"] = {
                 "objects": [
@@ -289,6 +310,90 @@ class DryRun(Loader):
                 ]
             }
         return body
+
+    # ---- operational conditions (only when lab_ops ran first)
+
+    def zone_of(self, names: list[str], literals: list[str]) -> str | None:
+        """The one zone all of a side's addresses sit behind, if they agree."""
+        zones: set[str | None] = set()
+        for name in names:
+            obj = self.sc.objects.get(name)
+            if obj is None:
+                zones.add(None)
+                continue
+            if obj.tier:
+                zones.add(obj.tier)
+            elif obj.members:
+                zones.add(self.zone_of(obj.members, []))
+            else:
+                zones.add(self._prefix_zone(obj.value or ""))
+        zones.update(self._prefix_zone(v) for v in literals)
+        return zones.pop() if len(zones) == 1 else None
+
+    @staticmethod
+    def _prefix_zone(value: str) -> str | None:
+        return next((z for prefix, z in PREFIX_ZONES if value.startswith(prefix)), None)
+
+    def _ref(self, bucket: str, name: str) -> dict[str, str] | None:
+        found = (self.ops.get(bucket) or {}).get(name)
+        return {"id": found["id"], "type": found["type"], "name": name} if found else None
+
+    def enrich(
+        self, r: RuleSpec, body: dict[str, Any], variables: dict[str, Any] | None = None
+    ) -> None:
+        """Part of the rules get what production rules carry; deterministic per rule name."""
+        if not self.ops:
+            return
+        h = int(hashlib.sha256(r.name.encode()).hexdigest()[:8], 16) % 100
+        src = self.zone_of(r.src, r.src_literals)
+        dst = self.zone_of(r.dst, r.dst_literals)
+        z_src, z_dst = self._ref("zones", f"Z_{src}"), self._ref("zones", f"Z_{dst}")
+        if h < 65 and z_src and z_dst and src != dst:
+            body["sourceZones"] = {"objects": [z_src]}
+            body["destinationZones"] = {"objects": [z_dst]}
+        allow = r.action == "ALLOW"
+        tier_ips = self._ref("ips", f"DF-IPS-{dst}") if dst else None
+        if "ipsPolicy" in body and tier_ips:
+            body["ipsPolicy"] = tier_ips
+        elif allow and "ipsPolicy" in body and dst == "GOLD" and h % 7 == 0:
+            body["ipsPolicy"] = self._ref("ips", "DF-IPS-LEGACY-DETECT") or body["ipsPolicy"]
+        elif allow and tier_ips and variables is not None and h < 40:
+            # About 40% of the allow rules carry their tier's IPS; the rest is the mess.
+            body["ipsPolicy"] = tier_ips
+            body["variableSet"] = {
+                "id": variables["id"],
+                "name": variables["name"],
+                "type": "VariableSet",
+            }
+        file_policy = self._ref("policies", "DF-FILE-MALWARE")
+        inspected = allow and "ipsPolicy" in body and dst in ("GOLD", "SILVER")
+        if file_policy and inspected and h % 3 == 0:
+            body["filePolicy"] = file_policy
+        dept = next(
+            (d for d in SGT_BY_DEPT for n in r.src if f"_{d}_" in n or n.endswith(f"_{d}")),
+            None,
+        )
+        if dept and h >= 80:
+            sgt = self._ref("objects", SGT_BY_DEPT[dept])
+            if sgt:
+                body["sourceSecurityGroupTags"] = {"objects": [sgt]}
+        extras = {
+            90: ("vlanTags", "objects", "VLAN_USERS"),
+            91: ("vlanTags", "objects", "VLANGRP_DC"),
+            92: ("urls", "objects", "URL_PORTAL"),
+            93: ("urls", "objects", "URLGRP_BUSINESS"),
+            94: ("timeRangeObjects", None, "TR_MAINT_WINDOW"),
+            95: ("timeRangeObjects", None, "TR_BUSINESS_HOURS"),
+        }
+        if h in extras:
+            field, key, name = extras[h]
+            ref = self._ref("objects", name)
+            if ref:
+                body[field] = [ref] if key is None else {key: [ref]}
+        if h == 96 and allow:
+            echo = self._ref("objects", "ICMP_ECHO")
+            if echo:
+                body.setdefault("destinationPorts", {}).setdefault("objects", []).append(echo)
 
     async def load(self, limit: int, do_deploy: bool) -> None:
         self.write_assets()

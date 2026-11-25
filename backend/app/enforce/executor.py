@@ -132,6 +132,13 @@ class BatchError(Exception):
         self.detail = detail
 
 
+def check_cancel(cancel: Callable[[], str | None] | None) -> None:
+    """Stop here if an operator cancelled the run (the failure path then rolls back)."""
+    who = cancel() if cancel is not None else None
+    if who is not None:
+        raise BatchError("cancelled", f"cancelled by {who}")
+
+
 # ------------------------------------------------------------------ JSON helpers
 
 
@@ -1242,6 +1249,7 @@ async def execute_batch(
     transport: Any = None,
     poll_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    cancel: Callable[[], str | None] | None = None,
 ) -> dict[str, Any]:
     """Apply one approved batch. ``lock(key, ttl)`` returns a release callable or None if busy."""
     try:
@@ -1297,12 +1305,16 @@ async def execute_batch(
                 progress.phase("batch_write", 2, 60)
                 for n, op in enumerate(plan.ops):
                     progress.advance(n, len(plan.ops))
+                    check_cancel(cancel)
                     await writer.run(op)
+                check_cancel(cancel)
                 progress.phase("batch_verify", 60, 63)
                 await writer.verify()
                 progress.phase("proof_after", 63, 66)
                 _prove_written(sessions, plan, writer)
                 writer.record_after()
+                # Last chance: once the deployment starts it cannot be aborted on the FMC.
+                check_cancel(cancel)
                 progress.phase("deploying", 66, 98)
                 task_id = await deploy(
                     fmc,

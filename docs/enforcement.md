@@ -108,6 +108,26 @@ after this changeset is deployed and the FMC pulled again (their plans then buil
 Reads (GET / HEAD) are retried when the FMC drops the connection after they were sent (e.g. while
 a deploy is polled); a write that may have landed never is (`app/fmc/client.py`).
 
+### Cancelling a run in progress
+
+`POST /api/jobs/{run_id}/cancel` (whoever may run batches: `deploy:approve`). A batch is never
+killed mid-write: the API sets a Redis flag (`df:cancel:run:<id>`, expires after 6 h) and the
+executor looks at it **before each write, before verification and before the deployment
+starts**. When set, the batch takes the normal failure path with the error
+`cancelled: cancelled by <user>`: the journal is undone in reverse order, the devices are
+redeployed only if something was written, and the batch ends `rolled_back` (the changeset
+`failed`, as after any stopped batch); the job run ends `cancelled`.
+
+* **Not started** (still queued): taken off the queue; the batch stays `approved`.
+* **Deployment already started**: it cannot be aborted on the FMC. The request is accepted
+  (the answer says `deploy_started: true`) but has no effect; the batch ends `deployed` as
+  normal. The same holds while a rollback's redeploy runs.
+* A **revert** checks the flag between batches only: the batch being undone is finished
+  completely, the remaining batches are left untouched (the run ends `cancelled`).
+* An interrupted rollback that is resumed (`rollback`) checks the flag once, before it starts.
+* If the undo itself cannot finish, the batch stays `failed` with its journal (resume it with
+  **Finish rollback**) and the run ends `failed`, not `cancelled`.
+
 ### History and rollback to any point
 
 *Manage → Change history* lists every batch that ran: when, who staged and approved it, its

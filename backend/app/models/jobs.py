@@ -20,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 JOB_KINDS = ("collect", "analyze", "batch", "rollback", "audit_verify", "proof", "revert")
-JOB_STATUSES = ("queued", "running", "done", "failed")
+JOB_STATUSES = ("queued", "running", "done", "failed", "cancelled")
 
 
 def _in(values: tuple[str, ...]) -> str:

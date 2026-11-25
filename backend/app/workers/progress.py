@@ -80,14 +80,15 @@ class Reporter:
         self.args: dict[str, Any] = {}
         self.progress = 0
         self.failure: str | None = None
+        self.cancelled = False
         self._written_at = -1e9
 
     def _write(self, **fields: Any) -> None:
         now = datetime.now(UTC)
         with self.sessions.begin() as db:
             run = db.get(JobRun, self.run_id)
-            if run is None:
-                return
+            if run is None or run.status == "cancelled":
+                return  # a cancelled run keeps its end (a killed job cannot finish itself)
             for key, value in fields.items():
                 setattr(run, key, value)
             run.progress, run.step, run.step_args = self.progress, self.step, dict(self.args)
@@ -115,7 +116,14 @@ class Reporter:
         """The job ends without success (it may return instead of raising)."""
         self.failure = scrub_text(error)[:512]
 
+    def cancel(self) -> None:
+        """The job stopped because an operator cancelled it (not a failure)."""
+        self.cancelled = True
+
     def finish(self) -> None:
+        if self.cancelled:
+            self._write(status="cancelled", error="cancelled", finished_at=datetime.now(UTC))
+            return
         if self.failure is None:
             self.progress, self.step, self.args = 100, "done", {}
         self._write(
@@ -135,6 +143,12 @@ def advance(done: int, total: int, **args: Any) -> None:
     reporter = _current.get()
     if reporter is not None:
         reporter.advance(done, total, **args)
+
+
+def cancelled() -> None:
+    reporter = _current.get()
+    if reporter is not None:
+        reporter.cancel()
 
 
 def fail(error: str) -> None:

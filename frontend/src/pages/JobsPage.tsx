@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom';
 
 import type { JobRun, JobsList } from '../api/types';
 import { Alert, DateTime } from '../components/common';
-import { JobProgress, jobLink, useJobText, useJobs } from '../components/jobs';
+import { CancelJobButton, JobProgress, jobLink, useJobText, useJobs } from '../components/jobs';
 import { SortedTable } from '../components/sort';
 import { useApi } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
-const STATUS_RANK: Record<JobRun['status'], number> = { running: 0, queued: 1, failed: 2, done: 3 };
+const STATUS_RANK: Record<JobRun['status'], number> = { running: 0, queued: 1, failed: 2, cancelled: 3, done: 4 };
 
 function seconds(job: JobRun): number | null {
   if (job.started_at === null) return null;
@@ -79,6 +79,7 @@ export function JobsPage() {
                   {th('progress', t('jobs.col.progress'), true)}
                   {th('created', t('jobs.col.created'), true)}
                   {th('duration', t('jobs.col.duration'), true)}
+                  <th>{t('common.actions')}</th>
                 </tr>
               )}
             >
@@ -98,7 +99,7 @@ export function JobsPage() {
                     {job.status === 'failed' && <div className="bad small">{text.error(job)}</div>}
                   </td>
                   <td className="job-cell">
-                    {job.status !== 'done' && <JobProgress job={job} />}
+                    {job.status !== 'done' && job.status !== 'cancelled' && <JobProgress job={job} />}
                     {(job.status === 'running' || job.status === 'queued') && <div className="muted small">{text.step(job)}</div>}
                   </td>
                   <td>
@@ -106,6 +107,9 @@ export function JobsPage() {
                   </td>
                   <td>
                     <bdi dir="ltr">{duration(seconds(job))}</bdi>
+                  </td>
+                  <td>
+                    <CancelJobButton job={job} onDone={reload} />
                   </td>
                 </tr>
               )}

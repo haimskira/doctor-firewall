@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { api, errorCode } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { Alert, DateTime, Ltr } from '../components/common';
-import { useBatchError, useJobs } from '../components/jobs';
+import { CancelJobButton, useBatchError, useJobs } from '../components/jobs';
 import { SortedTable } from '../components/sort';
 import { useApi } from '../hooks';
 import { isMessageKey, useI18n } from '../i18n/I18nProvider';
@@ -165,6 +165,9 @@ export function HistoryPage() {
               {(e) => {
                 const key = `${String(e.changeset_id)}-${String(e.seq)}`;
                 const statusKey = `dep.batch.${e.status}`;
+                const revertJob = jobs.jobs.find(
+                  (j) => j.kind === 'revert' && j.changeset_id === e.changeset_id && (j.status === 'queued' || j.status === 'running'),
+                );
                 const rowBusy = busy || reverting.has(e.changeset_id) || requested.includes(e.changeset_id);
                 return (
                   <HistoryRow
@@ -178,6 +181,7 @@ export function HistoryPage() {
                     actions={
                       approver && e.status === 'deployed' ? (
                         <>
+                          {revertJob !== undefined && <CancelJobButton job={revertJob} />}
                           {e.watch?.status === 'alert' && (
                             <button type="button" className="secondary" disabled={rowBusy} onClick={() => void dismiss(e)}>
                               {t('watch.dismiss')}
