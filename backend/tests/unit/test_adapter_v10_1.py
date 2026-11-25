@@ -197,6 +197,16 @@ def test_interface_netmask_forms() -> None:
                 "ipv4": {"static": {"address": "10.0.0.1", "netmask": "33"}},
             },
         )
+    # FMC 10.1.1: null optional fields mean "absent".
+    bare = {"id": "i1", "name": "e1", "ifname": None, "enabled": None, "securityZone": None}
+    rec = v10_1.map_interface("physicalinterfaces", bare)
+    assert (rec.ifname, rec.enabled, rec.zone_id) == ("", False, None)
+    # FMC 10.1.1: no address yet (empty / null fields), numeric mask.
+    for static in ({}, {"address": None, "netmask": None}, {"address": "", "netmask": ""}):
+        item = {"id": "i1", "name": "e1", "ipv4": {"static": static}}
+        assert v10_1.map_interface("physicalinterfaces", item).ipv4 is None
+    item = {"id": "i1", "name": "e1", "ipv4": {"static": {"address": "10.0.0.1", "netmask": 24}}}
+    assert v10_1.map_interface("physicalinterfaces", item).ipv4 == "10.0.0.1/24"
 
 
 # ------------------------------------------------------------------ policy dependencies

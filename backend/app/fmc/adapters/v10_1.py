@@ -19,7 +19,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 from app.fmc import normalize
 from app.fmc.errors import FmcProtocolError
@@ -56,6 +63,15 @@ class AdapterError(FmcProtocolError):
 
 class _M(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_is_absent(cls, data: Any) -> Any:
+        """FMC 10.1.1 sends ``null`` where older versions leave the field out: treat it the
+        same (the field default applies; a required field is still reported missing)."""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if v is not None}
+        return data
 
 
 class RefModel(_M):
@@ -225,9 +241,24 @@ class HitCountModel(_M):
     lastFetchTimeStamp: Annotated[str, Field(max_length=64)] | None = None  # noqa: N815
 
 
+def _ip_text(value: Any) -> str | None:
+    """Address / mask text: FMC 10.1.1 sends null or ``""`` for an interface without an
+    address, and the mask as a number (``24``) as well as text."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        value = str(value)
+    if isinstance(value, str):
+        return value.strip()[:64] or None
+    return None
+
+
+IpText = Annotated[str | None, BeforeValidator(_ip_text)]
+
+
 class StaticIpv4(_M):
-    address: Annotated[str, Field(max_length=64)]
-    netmask: Annotated[str, Field(max_length=64)]
+    address: IpText = None
+    netmask: IpText = None
 
 
 class Ipv4Config(_M):
@@ -693,9 +724,10 @@ def map_dynamic_mapping(item: Any) -> str | None:
 def map_interface(kind: str, item: Any) -> InterfaceRecord:
     m = _validate(InterfaceModel, item, kind)
     ipv4 = None
-    if m.ipv4 is not None and m.ipv4.static is not None:
+    static = m.ipv4.static if m.ipv4 is not None else None
+    if static is not None and static.address and static.netmask:
         try:
-            ipv4 = normalize.interface_cidr(m.ipv4.static.address, m.ipv4.static.netmask)
+            ipv4 = normalize.interface_cidr(static.address, static.netmask)
         except ValueError as exc:
             raise AdapterError(f"{kind} {m.id}: invalid IPv4 address") from exc
     return InterfaceRecord(
