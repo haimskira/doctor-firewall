@@ -92,6 +92,6 @@ system Hebrew font — and **Phosphor** icons (MIT). No Cisco logo, name, CSS or
   when it is opened and paging large levels (100 at a time), with rule-reference counts and cycle
   marks; the detail panel lists the rules using the node grouped by the level they go through,
   redundant links with their fix, and overlapping objects. The object page links to it.
-* **Inspection profiles** (Policies flyout): tier → intrusion / file policy table; recommendation
+* **IPS and file policy** (Policies flyout): the organisation's one intrusion policy and one file policy; recommendation
   tag *Inspection* (purple) and an Allow ← Trust action diff in previews.
 * Deliberately absent until the feature exists: Add Rule, Save — no button that does nothing.

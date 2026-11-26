@@ -1520,10 +1520,30 @@ export function SystemLogicDoc() {
 </code>
 </td>
 <td>
-{"חוק מתיר ליעד שדורש IPS או קבצים"}
+{"חוק מתיר ליעד מסווג שאין בו ה-intrusion policy של הארגון (חסרה, אחרת, או שהחוק TRUST)"}
 </td>
 <td>
-{"GOLD ו-CORE זהות 70, CORE 60, SILVER 55, BRONZE 40, + בונוס"}
+{"GOLD 70, CORE 60, SILVER 55, BRONZE 40, + בונוס"}
+</td>
+<td>
+{"כן"}
+</td>
+</tr>
+<tr>
+<td>
+<code>
+{"add_file_policy"}
+</code>
+</td>
+<td>
+{"חוק מתיר ל-GOLD או ל-SILVER בלי file policy"}
+</td>
+<td>
+{"כמו "}
+<code>
+{"add_inspection"}
+</code>
+{" פחות 5, + בונוס"}
 </td>
 <td>
 {"כן"}
@@ -1568,7 +1588,7 @@ export function SystemLogicDoc() {
 </code>
 </td>
 <td>
-{"GOLD או SILVER מעל TLS בלי known-key"}
+{"HTTPS (TCP/443) ל-GOLD או ל-SILVER בלי חוק Decrypt-Resign בחוקת ה-decryption"}
 </td>
 <td>
 {"GOLD 65, SILVER 45"}
@@ -1599,6 +1619,10 @@ export function SystemLogicDoc() {
 {", "}
 <code>
 {"add_inspection"}
+</code>
+{", "}
+<code>
+{"add_file_policy"}
 </code>
 {", "}
 <code>
@@ -2174,6 +2198,10 @@ export function SystemLogicDoc() {
 <code>
 {"add_inspection"}
 </code>
+{" או "}
+<code>
+{"add_file_policy"}
+</code>
 {". ללא מדיניות על יעד GOLD הציון יורד."}
 </td>
 </tr>
@@ -2190,7 +2218,11 @@ export function SystemLogicDoc() {
 <code>
 {"trust_to_allow"}
 </code>
-{")."}
+{"); "}
+<code>
+{"add_file_policy"}
+</code>
+{" ממתין לניתוח הבא."}
 </td>
 </tr>
 <tr>
@@ -2248,24 +2280,28 @@ export function SystemLogicDoc() {
 </tbody>
 </table>
 <h2>
-{"8. IPS וביקורת SSL ("}
+{"8. IPS, קבצים וביקורת SSL ("}
 <code>
 {"inspection.py"}
 </code>
 {")"}
 </h2>
 <p>
-{"גישה ופיקוח הם שתי שכבות: החוק מחליט אם לאפשר, פרופיל הפיקוח מה לעשות בתעבורה שהותרה. הם נחתכים לפי "}
+{"גישה ופיקוח הם שתי שכבות: החוק מחליט אם לאפשר, והפיקוח מה לעשות בתעבורה שהותרה. בארגון יש "}
 <strong>
-{"הרמה של היעד"}
+{"מדיניות אחת מכל סוג"}
 </strong>
-{" (כולל east-west: אפליקציית SILVER שקוראת למסד GOLD מקבלת פיקוח GOLD)."}
+{": intrusion policy אחת, file policy אחת ו-decryption policy אחת. הרמה של היעד (כולל east-west) לא בוחרת מדיניות אחרת. היא קובעת רק "}
+<strong>
+{"אם"}
+</strong>
+{" החוק צריך גם file policy ו-decryption, ומה דחוף יותר."}
 </p>
 <p>
 <strong>
 {"IPS בכל מקום שאפשר:"}
 </strong>
-{" כל רמת שרתים, כולל CORE, מקבלת IPS. החריגה היחידה היא תעבורה ש-Snort ישבור או יטבע בה "}
+{" כל רמת שרתים, כולל CORE, מקבלת את ה-intrusion policy של הארגון. החריגה היחידה היא תעבורה ש-Snort ישבור או יטבע בה "}
 <strong>
 {"וגם"}
 </strong>
@@ -2273,7 +2309,7 @@ export function SystemLogicDoc() {
 <code>
 {"fastpath_candidate"}
 </code>
-{", למטה). תעבורה מה-WAN, ממשתמשים או מ-any לעולם לא נחרגת."}
+{", למטה). תעבורה מה-WAN, ממשתמשים או מ-any לעולם לא נחרגת. חוק שהיעד שלו לא מסווג בטבלת הנכסים לא מקבל המלצה."}
 </p>
 <table>
 <thead>
@@ -2282,13 +2318,13 @@ export function SystemLogicDoc() {
 {"רמת יעד"}
 </th>
 <th>
-{"פענוח"}
-</th>
-<th>
 {"IPS"}
 </th>
 <th>
 {"קבצים"}
+</th>
+<th>
+{"פענוח"}
 </th>
 </tr>
 </thead>
@@ -2298,13 +2334,13 @@ export function SystemLogicDoc() {
 {"CORE · זהות (AD/DC, PKI)"}
 </td>
 <td>
-{"לעולם לא (do-not-decrypt)"}
-</td>
-<td>
-{"ה-intrusion policy של GOLD (ברירת מחדל Maximum Detection, רמה 4)"}
+{"כן"}
 </td>
 <td>
 {"לא"}
+</td>
+<td>
+{"לעולם לא (do-not-decrypt)"}
 </td>
 </tr>
 <tr>
@@ -2312,21 +2348,18 @@ export function SystemLogicDoc() {
 {"CORE · DNS ו-patching"}
 </td>
 <td>
-{"לעולם לא"}
-</td>
-<td>
-{"לפחות Balanced (רמה 2), פרופיל CORE"}
+{"כן"}
 </td>
 <td>
 {"לא"}
+</td>
+<td>
+{"לעולם לא"}
 </td>
 </tr>
 <tr>
 <td>
 {"CORE · NTP"}
-</td>
-<td>
-{"לעולם לא"}
 </td>
 <td>
 {"ללא: "}
@@ -2337,19 +2370,22 @@ export function SystemLogicDoc() {
 <td>
 {"לא"}
 </td>
+<td>
+{"לעולם לא"}
+</td>
 </tr>
 <tr>
 <td>
 {"GOLD"}
 </td>
 <td>
-{"known-key נכנס"}
-</td>
-<td>
-{"מלא, Maximum Detection (רמה 4)"}
+{"כן"}
 </td>
 <td>
 {"כן"}
+</td>
+<td>
+{"Decrypt-Resign על HTTPS"}
 </td>
 </tr>
 <tr>
@@ -2357,13 +2393,13 @@ export function SystemLogicDoc() {
 {"SILVER"}
 </td>
 <td>
-{"סלקטיבי"}
-</td>
-<td>
-{"לפחות Balanced (רמה 2)"}
+{"כן"}
 </td>
 <td>
 {"כן"}
+</td>
+<td>
+{"Decrypt-Resign על HTTPS"}
 </td>
 </tr>
 <tr>
@@ -2371,74 +2407,74 @@ export function SystemLogicDoc() {
 {"BRONZE"}
 </td>
 <td>
-{"לפי חשיפה"}
+{"כן"}
 </td>
 <td>
-{"לפחות Balanced (רמה 2)"}
+{"לא"}
 </td>
 <td>
-{"אופציונלי"}
+{"לא"}
 </td>
 </tr>
 </tbody>
 </table>
+<p>
+{"המדיניות של הארגון מוגדרת במסך \"מדיניות IPS וקבצים\" (שדה אחד ל-intrusion policy ואחד ל-file policy). שדה שלא נבחר מקבל את המדיניות שרוב חוקי ה-ALLOW הפעילים ב-snapshot כבר נושאים (בשוויון: לפי שם). אם אין כזו, או שהמדיניות שנבחרה לא קיימת ב-snapshot, ההמלצה "}
+<strong>
+{"חסומה"}
+</strong>
+{" ("}
+<code>
+{"ips_profile_not_configured"}
+</code>
+{", "}
+<code>
+{"ips_profile_missing"}
+</code>
+{", "}
+<code>
+{"file_profile_not_configured"}
+</code>
+{" או "}
+<code>
+{"file_profile_missing"}
+</code>
+{")."}
+</p>
 <h3>
 <code>
 {"add_inspection"}
 </code>
+{" (IPS בלבד)"}
 </h3>
 <p>
 {"נוצר לחוק "}
 <strong>
 {"מופעל ומתיר, לא מוצל, לא מת"}
 </strong>
-{" (למוצלים ולמתים מוצעת מחיקה), עם ציון, שאינו מועמד ל-fastpath, ושרמת היעד שלו היא GOLD, SILVER, CORE או BRONZE (הראשונה לפי הסדר הזה שנוגעת ביעד). ביעד CORE השירות קובע: אם "}
-<strong>
-{"כל"}
-</strong>
-{" הפורטים הם DNS (53) או WSUS (8530-8531) — פרופיל CORE; כל דבר אחר (Kerberos, LDAP, Global Catalog, SMB, RPC, פורט לא מוכר או any) נחשב "}
-<strong>
-{"זהות"}
-</strong>
-{" ומקבל את ה-intrusion policy של פרופיל GOLD, בלי מדיניות קבצים (\"CORE בגישה, GOLD ב-inspection\"). הוא נוצר כשאחד מאלה מתקיים:"}
+{" (למוצלים ולמתים מוצעת מחיקה), עם ציון, שאינו מועמד ל-fastpath, ושרמת היעד שלו היא GOLD, SILVER, CORE או BRONZE (הראשונה לפי הסדר הזה שנוגעת ביעד). הוא נוצר כשאחד מאלה מתקיים:"}
 </p>
 <ul>
 <li>
-{"אין מדיניות intrusion, או שהחוק הוא TRUST (שלא עובר Snort)."}
+{"אין לחוק intrusion policy: \"הוספת ה-intrusion policy של הארגון\"."}
 </li>
 <li>
-{"למדיניות הקיימת רמה נמוכה מזו שפרופיל הרמה דורש. הרמה נקבעת לפי השם מול מדיניות Cisco המובנות (no rules active 0, Connectivity Over Security 1, Balanced 2, Security Over Connectivity 3, Maximum Detection 4), או לפי מדיניות הבסיס של מדיניות מותאמת. "}
-<strong>
-{"מדיניות מותאמת שאינה תואמת אף אחת מהן אינה נשפטת"}
-</strong>
-{" ולא מוצע להחליפה."}
+{"לחוק intrusion policy אחרת: \"מעבר ל-intrusion policy של הארגון\", והכותרת אומרת מהי המדיניות הנוכחית. אין שיפוט של חוזק המדיניות: מדיניות אחת, והחוק נושא אותה או לא."}
 </li>
 <li>
-{"ליעד GOLD או SILVER אין מדיניות קבצים."}
+{"החוק הוא TRUST (שלא עובר Snort): הוא הופך ל-ALLOW יחד עם הוספת המדיניות (אזהרה "}
+<code>
+{"trust_to_allow"}
+</code>
+{")."}
 </li>
 </ul>
 <p>
-{"הפרופיל לכל רמה מוגדר במסך Inspection profiles (ברירות מחדל: CORE Balanced Security and Connectivity, GOLD Maximum Detection, SILVER Security Over Connectivity, BRONZE Balanced Security and Connectivity, ללא מדיניות קבצים). אם מדיניות היעד אינה קיימת ב-snapshot, התכנית "}
-<strong>
-{"חסומה"}
-</strong>
-{" ("}
-<code>
-{"ips_profile_missing"}
-</code>
-{", "}
-<code>
-{"file_profile_missing"}
-</code>
-{" או "}
-<code>
-{"file_profile_not_configured"}
-</code>
-{"); אם רק חלק הקבצים חסר, חלק ה-IPS יכול להתקדם עם אזהרה. אזהרת ביצועים "}
+{"אזהרת ביצועים "}
 <code>
 {"ips_performance"}
 </code>
-{" כשהיעד הוא Maximum Detection. ההרצה היא "}
+{" כשהמדיניות היא Maximum Detection. ההרצה היא "}
 <code>
 {"set_inspection"}
 </code>
@@ -2446,15 +2482,42 @@ export function SystemLogicDoc() {
 <code>
 {"ipsPolicy"}
 </code>
-{" ו/או "}
-<code>
-{"filePolicy"}
-</code>
 {" (ובחוק ללא variable set את "}
 <code>
 {"Default-Set"}
 </code>
-{" מה-FMC), עם בדיקת drift של הפעולה והמדיניות הנוכחיות."}
+{" מה-FMC), עם בדיקת drift של הפעולה ושל ה-intrusion policy הנוכחית בלבד."}
+</p>
+<h3>
+<code>
+{"add_file_policy"}
+</code>
+{" (קבצים בלבד)"}
+</h3>
+<p>
+{"המלצה נפרדת, לחוק שמגיע ל-GOLD או ל-SILVER ואין בו file policy, בתנאים של "}
+<code>
+{"add_inspection"}
+</code>
+{" (חוק מופעל, מתיר, לא מוצל, לא מת, לא fastpath). חוק TRUST לא מקבל אותה: הוא הופך קודם ל-ALLOW ב-"}
+<code>
+{"add_inspection"}
+</code>
+{", וההמלצה על הקבצים עולה בניתוח הבא. ההרצה היא אותה "}
+<code>
+{"set_inspection"}
+</code>
+{", אבל רק עם "}
+<code>
+{"filePolicy"}
+</code>
+{" ובדיקת drift של ה-file policy בלבד."}
+</p>
+<p>
+<strong>
+{"IPS וקבצים על אותו חוק:"}
+</strong>
+{" שתי ההמלצות כותבות שדות שונים ובודקות רק את השדה שלהן, לכן אפשר לבחור את שתיהן באותו changeset והן רצות זו אחר זו בלי drift שווא. שתי המלצות IPS (או שתיים של קבצים) על אותו חוק עדיין מתנגשות, והשנייה ממתינה ל-changeset הבא. כל שינוי אחר באותו חוק מתנגש עם שתיהן."}
 </p>
 <h3>
 <code>
@@ -2586,7 +2649,7 @@ export function SystemLogicDoc() {
 </code>
 {":"}
 </strong>
-{" בחוקת decryption, חוק פענוח (resign או known-key) שתופס מערכות CORE, או שירותי זהות וניהול לפי פורט (LDAPS 636, Global Catalog 3269, RADIUS over TLS 2083, sftunnel 8305, ISE pxGrid 8910), שלא הוחרגו על ידי חוק do-not-decrypt מוקדם (שאינו בעל תנאי לא מומדל; למערכות: על כל הפורטים, לשירותים: לכל כתובת). AD, Kerberos, LDAPS, RADIUS, ניהול ISE/FMC ועדכונים מצמדי תעודה נשברים תחת פענוח. מוצעים חוקי do-not-decrypt בראש החוקה ("}
+{" בחוקת decryption, חוק פענוח (resign, או known-key שכבר קיים) שתופס מערכות CORE, או שירותי זהות וניהול לפי פורט (LDAPS 636, Global Catalog 3269, RADIUS over TLS 2083, sftunnel 8305, ISE pxGrid 8910), שלא הוחרגו על ידי חוק do-not-decrypt מוקדם (שאינו בעל תנאי לא מומדל; למערכות: על כל הפורטים, לשירותים: לכל כתובת). AD, Kerberos, LDAPS, RADIUS, ניהול ISE/FMC ועדכונים מצמדי תעודה נשברים תחת פענוח. מוצעים חוקי do-not-decrypt בראש החוקה ("}
 <code>
 {"DND_CORE_SERVICES"}
 </code>
@@ -2601,16 +2664,32 @@ export function SystemLogicDoc() {
 <code>
 {"ssl_decrypt_inbound"}
 </code>
-{":"}
+{" (Decrypt-Resign ל-HTTPS):"}
 </strong>
-{" מערכות GOLD או SILVER שחוקי permit (פעילים, לא מוצלים) חושפים מעל TLS (TCP 443, 8443, 9443, 993, 995, 465, או application מרשימת ה-TLS, או any על כל שירות; LDAPS לא נחשב, כי לעולם לא מפענחים אותו) ללא חוק known-key שמכסה אותן. חוק do-not-decrypt שמכסה את המערכת מבטל כיסוי. כל חוקת access נבדקת מול חוקת ה-decryption המקושרת אליה בלבד. אם אין חוקת decryption כלל, ההצעה נוצרת \"ללא חוקת decryption\"."}
+{" מערכות GOLD או SILVER שחוקי permit (פעילים, לא מוצלים) מאפשרים אליהן HTTPS: פורט TCP/443, או application מסוג HTTPS / SSL, או any על כל שירות. פורטי TLS אחרים (8443, 993, 995, 465, LDAPS) אינם HTTPS ולא נכללים, ואף פעם לא CORE. החוקה המקושרת לחוקת ה-access נבדקת לפי סדר החוקים: החוק הראשון שתופס את המערכת ב-443 מכריע. חוק decrypt כלשהו (resign או known-key קיים) מסמן \"מפוענח\". חוק do-not-decrypt שמכסה את המערכת מסמן החרגה מכוונת: אין המלצה. מערכות שנשארו בלי החלטה מקבלות "}
+<strong>
+{"חוק DECRYPT_RESIGN אחד"}
+</strong>
+{" (יעד: המערכות, פורט TCP/443) בחוקת ה-decryption שמקושרת לחוקת ה-access (אם אין חוקת decryption, ההצעה נוצרת \"ללא חוקת decryption\"). אזהרות: ה-CA הפנימי חייב להיות מהימן אצל כל הלקוחות ("}
+<code>
+{"resign_ca_trust"}
+</code>
+{"); אפליקציות עם certificate pinning או mutual TLS נשברות ויש להחריג אותן ("}
+<code>
+{"resign_pinning_mtls"}
+</code>
+{"); יש לחסום תעודות שרת לא תקינות כי הלקוח כבר לא רואה את האמיתית ("}
+<code>
+{"resign_invalid_cert"}
+</code>
+{"). אין Known-Key."}
 </li>
 </ul>
 <p>
 <strong>
 {"חוקי decryption נשארים ידניים בכוונה:"}
 </strong>
-{" known-key דורש תעודה ומפתח פרטי של כל שרת ב-FMC, וחידוש התעודה הוא תלות תפעולית שהמערכת לא יכולה להחזיק. התכנית חסומה עם "}
+{" ה-CA הפנימי והחתימה מחדש מוגדרים ב-FMC, והמערכת לא מחזיקה אותם. ההמלצה מראה איזה חוק להוסיף ומה הוא צריך לתפוס. התכנית חסומה עם "}
 <code>
 {"decryption_rule_manual"}
 </code>
@@ -2746,6 +2825,10 @@ export function SystemLogicDoc() {
 {", "}
 <code>
 {"add_inspection"}
+</code>
+{", "}
+<code>
+{"add_file_policy"}
 </code>
 {", "}
 <code>
@@ -3058,7 +3141,7 @@ export function SystemLogicDoc() {
 {"), ובהרצה נגלל לאחור."}
 </li>
 <li>
-{"batch שמכיל המלצה \"משנה\" (dead, tighten, add_inspection, decrypt) מציג בדיוק אילו flows משתנים, והמאשר חייב לאשר במפורש ("}
+{"batch שמכיל המלצה \"משנה\" (dead, tighten, add_inspection, add_file_policy, decrypt) מציג בדיוק אילו flows משתנים, והמאשר חייב לאשר במפורש ("}
 <code>
 {"acknowledge_change"}
 </code>
@@ -3224,7 +3307,7 @@ export function SystemLogicDoc() {
 {"לא כותבת NAT, static routes, חוקי identity או חוקי decryption. החוקים האלה הם הצעות בלבד."}
 </li>
 <li>
-{"לא מחליפה מדיניות IPS מותאמת שאין לה רמה מזוהה."}
+{"לא מנהלת כמה מדיניות IPS: יש אחת לארגון, וחוק עם מדיניות אחרת מקבל הצעה לעבור אליה."}
 </li>
 <li>
 {"לא מפצלת המלצה בין deploys, לא ממזגת המלצות מתנגשות, ולא נותנת למחבר לאשר את ה-changeset שלו."}

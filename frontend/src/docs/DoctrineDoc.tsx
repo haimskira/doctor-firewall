@@ -41,13 +41,13 @@ export function DoctrineDoc() {
 <strong>
 {"Access ו-Inspection הן שתי שכבות נפרדות."}
 </strong>
-{" החוק עונה \"האם הזרימה מותרת\"; ה-inspection profile עונה \"מה עושים לזרימה שמותרת\". מנהלים אותן בנפרד ומצליבים בכוונה לפי ה-tier של היעד."}
+{" החוק עונה \"האם הזרימה מותרת\"; ה-inspection profile עונה \"מה עושים לזרימה שמותרת\". מנהלים אותן בנפרד. ל-inspection יש מדיניות אחת לכל הארגון: intrusion policy אחת (IPS), file policy אחת ו-decryption policy אחת. ה-tier של היעד קובע רק איפה צריך אותן ומה דחוף יותר."}
 </li>
 <li>
 <strong>
-{"ה-tier קובע גישה, לא inspection."}
+{"ה-tier קובע גישה, ורק אחר כך אם צריך file policy ו-decryption."}
 </strong>
-{" נכס קריטי שכולם צריכים להגיע אליו (DNS, AD) לא נכנס ל-tier הרגיש מבחינת גישה, כי חסימה שלו מפילה את כל הסביבה. לכן הוא CORE, קטגוריה בפני עצמה. אבל עומק ה-inspection נקבע לפי כמה תוקף ירצה את הנכס, ולא לפי מי משתמש בו. AD הוא CORE מבחינת גישה ו-GOLD מבחינת inspection."}
+{" נכס קריטי שכולם צריכים להגיע אליו (DNS, AD) לא נכנס ל-tier הרגיש מבחינת גישה, כי חסימה שלו מפילה את כל הסביבה. לכן הוא CORE, קטגוריה בפני עצמה. ה-IPS הוא אחד לכל הארגון ורץ על כל חוק מתיר שאפשר להריץ עליו אותו, גם על CORE. ה-tier קובע רק מי מקבל גם file policy (GOLD ו-SILVER), על מי מפעילים decryption (HTTPS ל-GOLD ול-SILVER), ומה דחוף יותר."}
 </li>
 </ol>
 <h2>
@@ -57,7 +57,7 @@ export function DoctrineDoc() {
 {"כל שרת מקבל תווית אחת לפני שנוגעים בחוק. CORE מוחרג מה-tiers בכוונה: אם היינו מדרגים לפי קריטיות, DNS/AD היו הופכים ל\"זהב\", וה-tier הכי-מוגן היה גם הכי-נגיש — סתירה פנימית ששוחקת את ההגנה על שאר הזהב."}
 </p>
 <p>
-{"ההחרגה של CORE מה-tiers היא החרגה מכללי הגישה בלבד. בצד ה-inspection, שירותי הזהות שבו (AD/DC ו-PKI) מקבלים את הבדיקה הכי עמוקה ברשת, כי הם היעד שכל תוקף מחפש. הפירוט בפרק \"שירותי הזהות\"."}
+{"ההחרגה של CORE מה-tiers היא החרגה מכללי הגישה בלבד. בצד ה-inspection, CORE מקבל את אותו IPS כמו כל השאר. שירותי הזהות שבו (AD/DC ו-PKI) הם היעד שכל תוקף מחפש, ולכן אסור לעקוף אותם ב-Trust או ב-fastpath. הפירוט בפרק \"שירותי הזהות\"."}
 </p>
 <table>
 <thead>
@@ -162,7 +162,7 @@ export function DoctrineDoc() {
 {"ארכיטקטורה — CORE מעל ה-tiers"}
 </h2>
 <div className="doc-figure">
-<svg viewBox="0 0 760 388" role="img" aria-label="CORE מחוץ ל-tiers; לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר" fontSize="13">
+<svg viewBox="0 0 760 388" role="img" aria-label="CORE מחוץ ל-tiers; לכיוון הזהב הגישה מצטמצמת והבדיקות מתרחבות" fontSize="13">
 <defs>
 <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
 <path d="M0 0L10 5L0 10z" fill="#9aa0a6">
@@ -189,7 +189,7 @@ export function DoctrineDoc() {
 <line x1="180" y1="144" x2="600" y2="144" stroke="#9aa0a6" strokeWidth="1.25" markerEnd="url(#arch-arrow)">
 </line>
 <text x="390" y="136" textAnchor="middle" fontSize="11.5" fill="#6b7280">
-{"לכיוון הזהב: פחות מקורות, יותר inspection"}
+{"לכיוון הזהב: פחות מקורות, יותר בדיקות"}
 </text>
 </g>
 <g>
@@ -202,10 +202,10 @@ export function DoctrineDoc() {
 {"מקורות: רבים"}
 </text>
 <text x="134.5" y="244" textAnchor="middle" fontSize="11.5" fill="#1f2430">
-{"inspection: מאוזן"}
+{"IPS: כן"}
 </text>
 <text x="134.5" y="266" textAnchor="middle" fontSize="11.5" fill="#6b7280">
-{"decryption: לפי חשיפה"}
+{"decryption: לא"}
 </text>
 </g>
 <g>
@@ -218,10 +218,10 @@ export function DoctrineDoc() {
 {"מקורות: קבוצות role"}
 </text>
 <text x="379.5" y="244" textAnchor="middle" fontSize="11.5" fill="#1f2430">
-{"inspection: מלא"}
+{"IPS + file policy"}
 </text>
 <text x="379.5" y="266" textAnchor="middle" fontSize="11.5" fill="#6b7280">
-{"decryption: סלקטיבי"}
+{"decryption: Resign ל-HTTPS"}
 </text>
 </g>
 <g>
@@ -234,10 +234,10 @@ export function DoctrineDoc() {
 {"מקורות: מעטים"}
 </text>
 <text x="624.5" y="244" textAnchor="middle" fontSize="11.5" fill="#1f2430">
-{"inspection: מלא+aggressive"}
+{"IPS + file policy"}
 </text>
 <text x="624.5" y="266" textAnchor="middle" fontSize="11.5" fill="#1f2430">
-{"decryption: known-key"}
+{"decryption: Resign ל-HTTPS"}
 </text>
 </g>
 <g fill="none" stroke="#9aa0a6" strokeWidth="1.25">
@@ -264,7 +264,7 @@ export function DoctrineDoc() {
 </p>
 </div>
 <p>
-{"ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption, אבל שירותי הזהות שבו נבדקים ב-IPS מלא. לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר."}
+{"ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption, אבל כל התעבורה אליו, ושירותי הזהות בראשה, נבדקת ב-IPS. לכיוון הזהב הגישה מצטמצמת והבדיקות מתרחבות: מוסיפים file policy ו-decryption ל-HTTPS."}
 </p>
 <h2>
 {"blast radius — טווח הנזק"}
@@ -685,11 +685,15 @@ export function DoctrineDoc() {
 {"שכבת ה-inspection"}
 </h2>
 <p>
-{"זו השכבה השנייה: החוק מתיר, והפרופיל בודק. ב-FTD כל Access Rule מפנה ל-IPS / File policy, וה-decryption מוכרע ב-SSL policy "}
+{"זו השכבה השנייה: החוק מתיר, והמדיניות בודקת. בארגון יש "}
+<strong>
+{"מדיניות אחת מכל סוג"}
+</strong>
+{": intrusion policy אחת (IPS), file policy אחת ו-decryption policy אחת. ב-FTD כל Access Rule מפנה ל-IPS ול-File policy, וה-decryption מוכרע ב-SSL policy "}
 <em>
 {"לפני"}
 </em>
-{" שה-ACP רואה את ה-payload."}
+{" שה-ACP רואה את ה-payload. ה-tier של היעד לא בוחר מדיניות אחרת: הוא קובע רק אם החוק צריך גם file policy ו-decryption."}
 </p>
 <table>
 <thead>
@@ -698,13 +702,13 @@ export function DoctrineDoc() {
 {"Tier"}
 </th>
 <th>
-{"Decryption"}
-</th>
-<th>
 {"IPS"}
 </th>
 <th>
 {"File / Malware"}
+</th>
+<th>
+{"Decryption"}
 </th>
 <th>
 {"סיבה"}
@@ -722,16 +726,16 @@ export function DoctrineDoc() {
 </td>
 <td>
 <strong>
-{"לא"}
+{"כן"}
 </strong>
+</td>
+<td>
+{"לא"}
 </td>
 <td>
 <strong>
-{"מלא, עם חתימות ל-Kerberos, LDAP, SMB ו-RPC"}
-</strong>
-</td>
-<td>
 {"לא"}
+</strong>
 </td>
 <td>
 {"היעד המרכזי של תוקף. decryption שובר את הפרוטוקולים, אבל ה-IPS רואה אותם גם בלי"}
@@ -745,14 +749,16 @@ export function DoctrineDoc() {
 </td>
 <td>
 <strong>
-{"לא"}
+{"כן"}
 </strong>
 </td>
 <td>
-{"מאוזן"}
+{"לא"}
 </td>
 <td>
+<strong>
 {"לא"}
+</strong>
 </td>
 <td>
 {"DNS tunneling וניצול חולשות בשרת ה-DNS נראים ב-IPS"}
@@ -767,15 +773,15 @@ export function DoctrineDoc() {
 {"NTP"}
 </td>
 <td>
-<strong>
-{"לא"}
-</strong>
-</td>
-<td>
 {"לא, מתאים ל-prefilter ו-fastpath"}
 </td>
 <td>
 {"לא"}
+</td>
+<td>
+<strong>
+{"לא"}
+</strong>
 </td>
 <td>
 {"פרוטוקול פשוט, ערך נמוך לתוקף. חוסך מעבד ל-gold ול-DC"}
@@ -789,12 +795,7 @@ export function DoctrineDoc() {
 </td>
 <td>
 <strong>
-{"כן, מלא"}
-</strong>
-</td>
-<td>
-<strong>
-{"מלא, aggressive"}
+{"כן"}
 </strong>
 </td>
 <td>
@@ -803,7 +804,12 @@ export function DoctrineDoc() {
 </strong>
 </td>
 <td>
-{"הנכס הרגיש — רוצים לראות הכול"}
+<strong>
+{"Decrypt-Resign על HTTPS"}
+</strong>
+</td>
+<td>
+{"הנכס הרגיש — רוצים לראות הכול, גם בתוך HTTPS"}
 </td>
 </tr>
 <tr>
@@ -813,16 +819,20 @@ export function DoctrineDoc() {
 </strong>
 </td>
 <td>
-{"סלקטיבי"}
-</td>
-<td>
-{"מלא / מאוזן"}
-</td>
-<td>
+<strong>
 {"כן"}
+</strong>
 </td>
 <td>
-{"איזון ביצועים/הגנה"}
+<strong>
+{"כן"}
+</strong>
+</td>
+<td>
+{"Decrypt-Resign על HTTPS"}
+</td>
+<td>
+{"חשיפה בינונית; אותן בדיקות כמו ב-GOLD"}
 </td>
 </tr>
 <tr>
@@ -832,13 +842,15 @@ export function DoctrineDoc() {
 </strong>
 </td>
 <td>
-{"לפי חשיפה"}
+<strong>
+{"כן"}
+</strong>
 </td>
 <td>
-{"מאוזן"}
+{"לא"}
 </td>
 <td>
-{"אופציונלי"}
+{"לא"}
 </td>
 <td>
 {"blast radius נמוך"}
@@ -848,9 +860,9 @@ export function DoctrineDoc() {
 </table>
 <p>
 <strong>
-{"ציר ה-inspection מתהפך מול ציר המקורות, חוץ משירותי הזהות."}
+{"ה-IPS זהה בכל מקום; ה-tier מחליט על הבדיקות הנוספות."}
 </strong>
-{" בזהב יש מעט מקורות והכי הרבה inspection. בשירותי ה-CORE הפשוטים יש הרבה מקורות ומעט inspection. שירותי הזהות הם החריג: הרבה מקורות וגם inspection מלא, כי הם הנכס שתוקף הכי רוצה."}
+{" בזהב ובכסף מוסיפים file policy ו-decryption ל-HTTPS. ב-CORE וב-BRONZE לא. כך בזהב יש מעט מקורות והכי הרבה בדיקות, ובשירותי ה-CORE יש הרבה מקורות ופחות בדיקות — חוץ מה-IPS, שנשאר."}
 </p>
 <p>
 {"CORE "}
@@ -864,7 +876,7 @@ export function DoctrineDoc() {
 {" Kerberos, LDAP, SMB ו-RPC לשרתי ה-DC לא עוברים ב-TLS, ולכן ה-IPS רואה את מבנה הפרוטוקול גם כשחלק מהתוכן מוצפן ברמת האפליקציה. מתוך ה-CORE רק שירותים פשוטים כמו NTP מתאימים ל-prefilter ו-fastpath, וזה משחרר מעבד ל-inspection של gold ושל ה-DC (על תעבורת התשתית הכבדה בתוך ה-DC — בפרק \"חריגות\")."}
 </p>
 <h2>
-{"שירותי הזהות: CORE בגישה, GOLD ב-inspection"}
+{"שירותי הזהות: CORE בגישה, ו-IPS על כל התעבורה אליהם"}
 </h2>
 <p>
 {"כמעט כל תקיפה מתקדמת ברשת ארגונית עוברת דרך AD. השליטה ב-Domain Admin היא המטרה, והדרך אליה נראית ברמת IP ופורט כמו תעבורה רגילה לגמרי. רק IPS שמכיר את הפרוטוקול יכול לזהות אותה."}
@@ -936,9 +948,9 @@ export function DoctrineDoc() {
 <ul>
 <li>
 <strong>
-{"IPS מלא"}
+{"IPS"}
 </strong>
-{" על כל התעבורה לשרתי ה-DC, עם חתימות ל-Kerberos, LDAP, SMB, RPC ו-MS-DRSR. לא Trust ולא fastpath."}
+{" על כל התעבורה לשרתי ה-DC, עם ה-intrusion policy של הארגון (כדאי שהיא תכלול חתימות ל-Kerberos, LDAP, SMB, RPC ו-MS-DRSR). לא Trust ולא fastpath."}
 </li>
 <li>
 <strong>
@@ -1093,15 +1105,15 @@ export function DoctrineDoc() {
 <code>
 {"fastpath_candidate"}
 </code>
-{" ולא המלצת IPS. חוק ל-CORE מקבל IPS לפי השירות שבו: "}
-<strong>
-{"זהות"}
-</strong>
-{" (Kerberos 88/464, LDAP 389/636, Global Catalog 3268-3269, SMB 445, RPC 135, או any) — פרופיל GOLD המלא; "}
-<strong>
-{"DNS ו-patching"}
-</strong>
-{" (53, WSUS 8530-8531) — לפחות Balanced. כל השאר מקבל IPS לפי ה-tier."}
+{" ולא המלצת IPS. חוק מתיר שהיעד שלו מסווג בטבלת הנכסים מקבל המלצת IPS ("}
+<code>
+{"add_inspection"}
+</code>
+{"): חוק בלי intrusion policy מקבל את זו של הארגון, וחוק עם intrusion policy אחרת מקבל המלצה לעבור אליה. חוק שמגיע ל-GOLD או ל-SILVER ובלי file policy מקבל גם המלצה נפרדת ("}
+<code>
+{"add_file_policy"}
+</code>
+{"). שתי ההמלצות על אותו חוק יכולות לעלות לאישור וליישום יחד. ה-intrusion policy וה-file policy של הארגון נבחרים במסך \"מדיניות IPS וקבצים\"; אם לא נבחרו, זו המדיניות שרוב החוקים המתירים כבר נושאים."}
 </p>
 <h3>
 {"על מה לא מפעילים SSL decryption"}
@@ -1201,13 +1213,17 @@ export function DoctrineDoc() {
 <code>
 {"ssl_exempt_core"}
 </code>
-{". LDAPS לא נחשב \"TLS שצריך לפענח\" בהמלצת ה-known-key. mTLS, pinning ומכשירים לא מנוהלים לא ניתנים לזיהוי לפי כתובת ופורט — את ההחרגות שלהם מנהלים ידנית, וכדאי לתכנן שהרשימה תגדל."}
+{". LDAPS אינו HTTPS ולכן לא מפוענח אף פעם. mTLS, pinning ומכשירים לא מנוהלים לא ניתנים לזיהוי לפי כתובת ופורט — את ההחרגות שלהם מנהלים ידנית, וכדאי לתכנן שהרשימה תגדל."}
 </p>
 <h2>
-{"SSL decryption דו-כיווני"}
+{"SSL decryption: Decrypt-Resign על HTTPS בלבד"}
 </h2>
 <p>
-{"שני מנועי decryption הפוכים רצים על אותו box, עם cert handling הפוך. אלה לא שני כללים באותה policy — אלה שתי לוגיקות הצפנה נפרדות. ה-SSL policy מכיל את שתיהן, אבל כל כלל שייך לאחת בלבד."}
+{"יש policy אחת של SSL decryption לארגון, ויש בה סוג אחד של פענוח: "}
+<strong>
+{"Decrypt-Resign"}
+</strong>
+{", ורק על HTTPS (TCP/443). ה-FTD עוצר את החיבור, פותח אותו, מעביר את התוכן ל-IPS ול-file policy, וחותם מחדש על תעודת השרת ב-CA פנימי של הארגון. לא משתמשים ב-Known-Key: הוא דורש לייבא ל-FMC את התעודה והמפתח הפרטי של כל שרת ולעדכן אותם בכל חידוש תעודה."}
 </p>
 <table>
 <thead>
@@ -1216,12 +1232,7 @@ export function DoctrineDoc() {
 </th>
 <th>
 <strong>
-{"Outbound — Decrypt-Resign"}
-</strong>
-</th>
-<th>
-<strong>
-{"Inbound — Decrypt-Known-Key"}
+{"Decrypt-Resign על HTTPS"}
 </strong>
 </th>
 </tr>
@@ -1229,13 +1240,10 @@ export function DoctrineDoc() {
 <tbody>
 <tr>
 <td>
-{"מי השרת"}
+{"על מה"}
 </td>
 <td>
-{"חיצוני, לא שלך"}
-</td>
-<td>
-{"שלך, מחזיק cert + key"}
+{"מערכות GOLD ו-SILVER, על TCP/443 (או חוק עם אפליקציית HTTPS)"}
 </td>
 </tr>
 <tr>
@@ -1243,10 +1251,7 @@ export function DoctrineDoc() {
 {"איך עובד"}
 </td>
 <td>
-{"מזייף cert בזמן אמת עם ה-CA שלך"}
-</td>
-<td>
-{"טוען את ה-key האמיתי של השרת"}
+{"חותם מחדש על תעודת השרת ב-CA הפנימי של הארגון"}
 </td>
 </tr>
 <tr>
@@ -1254,10 +1259,15 @@ export function DoctrineDoc() {
 {"מה צריך"}
 </td>
 <td>
-{"internal CA + הפצת root ל-endpoints"}
+{"internal CA ב-FMC, והפצת ה-root CA לכל הלקוחות"}
+</td>
+</tr>
+<tr>
+<td>
+{"מה לא מפענחים"}
 </td>
 <td>
-{"import של כל server cert+key ל-FMC"}
+{"TLS שאינו HTTPS (מייל, 8443, LDAPS), מערכות CORE ושירותי זהות וניהול"}
 </td>
 </tr>
 <tr>
@@ -1265,48 +1275,16 @@ export function DoctrineDoc() {
 {"מגן על"}
 </td>
 <td>
-{"המשתמש (malware/exfil ביוצא)"}
-</td>
-<td>
-{"השרת (attacks בנכנס)"}
-</td>
-</tr>
-<tr>
-<td>
-{"כיוון בזרימה"}
-</td>
-<td>
-{"users → outside"}
-</td>
-<td>
-{"→ "}
-<code>
-{"GRP_SRV_GOLD"}
-</code>
-{" / "}
-<code>
-{"SILVER"}
-</code>
+{"השרת, מפני תקיפות שמסתתרות בתוך HTTPS נכנס"}
 </td>
 </tr>
 </tbody>
 </table>
 <p>
-{"ההבדל המהותי: ה-outbound "}
-<strong>
-{"מייצר אמון יש מאין"}
-</strong>
-{" (cert מזויף); ה-inbound "}
-<strong>
-{"משתמש באמון קיים"}
-</strong>
-{" (ה-key האמיתי)."}
-</p>
-<p>
 <strong>
 {"החוט שמחבר לכל השאר:"}
 </strong>
-{" ה-inbound decryption הוא הזרוע שמממשת את \"gold מקבל inspection מלא\". בלי ה-known-key, ה-IPS על gold עיוור ל-payload המוצפן — ה-inbound decryption הוא מה שהופך את ה-gold-inspection ממשאלה למציאות."}
+{" ה-decryption הוא מה שנותן ל-IPS ול-file policy לראות את התוכן של HTTPS אל ה-GOLD וה-SILVER. בלעדיו הם עיוורים לתוכן המוצפן."}
 </p>
 <h2>
 {"סדר ה-SSL policy"}
@@ -1320,36 +1298,36 @@ export function DoctrineDoc() {
 </p>
 <pre>
 <code>
-{"1.  DO-NOT-DECRYPT   CORE + identity/mgmt      (AD/LDAPS/RADIUS/ISE/FMC — שובר אם תיגע)\n2.  DO-NOT-DECRYPT   mTLS / pinned / unmanaged (רשימה מתוחזקת)\n3.  DO-NOT-DECRYPT   regulatory bypass         (banking/health/gov — outbound)\n4.  DECRYPT-KNOWN-KEY  -> GRP_SRV_GOLD         (inbound, ה-cert שלך)\n5.  DECRYPT-KNOWN-KEY  -> GRP_SRV_SILVER       (inbound)\n6.  DECRYPT-RESIGN   GRP_USERS -> outside      (outbound, ה-CA שלך)\n7.  default          do-not-decrypt + log"}
+{"1.  DO-NOT-DECRYPT   CORE + identity/mgmt      (AD/LDAPS/RADIUS/ISE/FMC — שובר אם תיגע)\n2.  DO-NOT-DECRYPT   mTLS / pinned / unmanaged (רשימה מתוחזקת)\n3.  DO-NOT-DECRYPT   regulatory bypass         (banking/health/gov — outbound)\n4.  DECRYPT-RESIGN   -> GRP_SRV_GOLD, GRP_SRV_SILVER, TCP/443   (ה-CA שלך)\n5.  default          do-not-decrypt + log"}
 </code>
 </pre>
 <p>
-{"הסדר קריטי: אם כלל decrypt רחב היה יושב מעל ה-core/regulatory ותופס אותם קודם — שברת פרודקשן או עברת רגולציה. לכן ה-do-not-decrypt למעלה. ה-inbound (known-key) לפני ה-outbound (resign) כי הוא ספציפי יותר ליעד."}
+{"הסדר קריטי: אם כלל decrypt רחב היה יושב מעל ה-core/regulatory ותופס אותם קודם — שברת פרודקשן או עברת רגולציה. לכן ה-do-not-decrypt למעלה. חוק ה-Decrypt-Resign בא רק אחרי כל ה-do-not-decrypt, וצר ליעד ולפורט: רק HTTPS למערכות ה-GOLD וה-SILVER."}
 </p>
 <h2>
 {"נקודות כשל, ולידציה ופלטפורמה"}
 </h2>
 <p>
-{"שלוש נקודות כשל שה-decryption הדו-כיווני מוסיף — סמן אותן עכשיו:"}
+{"שלוש נקודות כשל ש-Decrypt-Resign מוסיף — סמן אותן עכשיו:"}
 </p>
 <ol>
 <li>
 <strong>
-{"Certificate pinning (outbound)."}
+{"Certificate pinning ו-mutual TLS."}
 </strong>
-{" אפליקציות ו-OS updates שעושים pinning יישברו תחת decrypt-resign, כי ה-cert המזויף ייפסל. חייב bypass list מתוחזק — ותכנן שהיא תגדל לאורך זמן, זה לא חד-פעמי."}
+{" אפליקציות, עדכוני מערכת הפעלה ושירותים עם תעודת לקוח יישברו תחת Decrypt-Resign, כי התעודה שנחתמה מחדש נפסלת. חייבת להיות רשימת do-not-decrypt מתוחזקת, ותכנן שהיא תגדל לאורך זמן."}
 </li>
 <li>
 <strong>
-{"Cert lifecycle (inbound)."}
+{"הפצת ה-root CA."}
 </strong>
-{" כל server cert ב-known-key דורש renewal מסונכרן: כשה-cert על השרת מתחדש ולא עדכנת ב-FMC, ה-decryption נשבר וה-inbound traffic נופל. זו תלות תפעולית חדשה — תכנן אוטומציה/תזכורות."}
+{" Decrypt-Resign עובד רק אם ה-root CA ב-trust store של כל endpoint. BYOD, אורח ולא-מנוהל יראו שגיאות תעודה על הכול. כאן ה-machine-SGT שימושי: תפוס \"מכונות מנוהלות בלבד\" ל-resign, והוצא את הלא-מנוהלות ל-do-not-decrypt."}
 </li>
 <li>
 <strong>
-{"Root CA distribution (outbound)."}
+{"תעודות שרת לא תקינות."}
 </strong>
-{" resign עובד רק אם ה-root CA ב-trust store של כל endpoint. BYOD/אורח/לא-מנוהל יראו cert errors על הכול. כאן ה-machine-SGT שימושי: תפוס \"מכונות מנוהלות בלבד\" ל-resign, והוצא את הלא-מנוהלות ל-do-not-decrypt."}
+{" אחרי החתימה מחדש הלקוח כבר לא רואה את תעודת השרת האמיתית ולא יכול לשפוט אותה, לכן ה-FTD צריך לחסום תעודות לא תקינות (פג תוקף, CA לא מוכר) במקומו."}
 </li>
 </ol>
 <p>

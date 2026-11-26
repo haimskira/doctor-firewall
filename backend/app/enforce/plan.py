@@ -254,16 +254,16 @@ class PlanBuilder:
             self.block(f"unsupported_rule_kind:{rule['policy_kind']}")
         if ips is None and file is None and action is None:
             return
-        op: dict[str, Any] = {
-            "op": "set_inspection",
-            **self._rule(rule),
-            "expect": {
-                "name": rule["name"],
-                "action": current["action"],
-                "ips": current.get("ips"),
-                "file": current.get("file"),
-            },
-        }
+        # The op expects only what it is about: an intrusion-policy op the action and the
+        # intrusion policy, a file-policy op the file policy. Two such ops on one rule then
+        # run one after the other without a false drift.
+        expect: dict[str, Any] = {"name": rule["name"]}
+        if ips is not None or action is not None:
+            expect["action"] = current["action"]
+            expect["ips"] = current.get("ips")
+        if file is not None:
+            expect["file"] = current.get("file")
+        op: dict[str, Any] = {"op": "set_inspection", **self._rule(rule), "expect": expect}
         if ips is not None:
             op["ips"] = {"id": ips["id"], "name": ips["name"], "type": "IntrusionPolicy"}
         if file is not None:
@@ -285,14 +285,31 @@ def touched(plan: dict[str, Any]) -> dict[str, set[str]]:
     """What a plan modifies, deletes and references (for changeset conflict checks)."""
     out: dict[str, set[str]] = {
         "rules": set(),
+        # Rules only an intrusion-policy op / only a file-policy op touches: those two can be
+        # staged together (they write different fields); anything else on the rule clashes.
+        "inspect_ips": set(),
+        "inspect_file": set(),
         "objects": set(),
         "deleted": set(),
         "referenced": set(),
     }
+    other: set[str] = set()  # rules touched by anything but a single-purpose inspection op
     for op in plan.get("ops", []):
         kind = op["op"]
         if kind in ("update_rule", "delete_rule", "set_inspection"):
             out["rules"].add(f"{op['policy']}/{op['rule']}")
+        if kind == "set_inspection":
+            key = f"{op['policy']}/{op['rule']}"
+            if "file" in op and "ips" not in op and "action" not in op:
+                out["inspect_file"].add(key)
+            elif "file" not in op:
+                out["inspect_ips"].add(key)
+            else:
+                other.add(key)
+        elif kind in ("update_rule", "delete_rule"):
+            other.add(f"{op['policy']}/{op['rule']}")
+        elif kind == "create_rule":
+            other.add(f"{op['policy']}/{op['copy_from']}")
         if kind == "create_rule":
             out["rules"].add(f"{op['policy']}/{op['copy_from']}")
         if kind in ("update_group", "rename_object", "delete_object"):
@@ -304,4 +321,6 @@ def touched(plan: dict[str, Any]) -> dict[str, set[str]]:
         for refs in op.get("set", {}).values():
             out["referenced"] |= {r["id"] for r in refs if "id" in r}
         out["referenced"] |= {r["id"] for r in op.get("members", []) if "id" in r}
+    out["inspect_ips"] -= other
+    out["inspect_file"] -= other
     return out

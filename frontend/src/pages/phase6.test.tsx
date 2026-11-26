@@ -19,11 +19,7 @@ function me(permissions: Permission[]): Me {
 }
 
 const CATALOG: InspectionCatalog = {
-  profiles: [
-    { tier: 'GOLD', ips_policy: 'Maximum Detection', file_policy: null, configured: false, min_level: 4, file_required: true },
-    { tier: 'SILVER', ips_policy: 'IPS-OLD', file_policy: 'Block Malware', configured: true, min_level: 2, file_required: true },
-    { tier: 'BRONZE', ips_policy: 'Balanced Security and Connectivity', file_policy: null, configured: false, min_level: 2, file_required: false },
-  ],
+  profile: { ips_policy: 'Maximum Detection', file_policy: null, configured: false, ips_default: true, file_default: false },
   intrusion_policies: [
     { name: 'Balanced Security and Connectivity', level: 2 },
     { name: 'Maximum Detection', level: 4 },
@@ -32,11 +28,11 @@ const CATALOG: InspectionCatalog = {
   snapshot_id: 7,
 };
 
-function renderPage(permissions: Permission[]) {
+function renderPage(permissions: Permission[], catalog: InspectionCatalog = CATALOG) {
   const calls = mockFetch((req) => {
     if (req.url === '/api/auth/me') return { status: 200, body: me(permissions) };
-    if (req.url === '/api/inspection-profiles') return { status: 200, body: CATALOG };
-    if (req.url.startsWith('/api/inspection-profiles/')) return { status: 204 };
+    if (req.url === '/api/inspection-profile' && req.method === 'GET') return { status: 200, body: catalog };
+    if (req.url === '/api/inspection-profile') return { status: 204 };
     return { status: 404, body: { detail: 'not_found' } };
   });
   render(
@@ -54,38 +50,41 @@ function renderPage(permissions: Permission[]) {
 }
 
 describe('InspectionPage', () => {
-  it('maps tiers to FMC policies, flags missing ones, saves and resets', async () => {
+  it('shows the one organisation profile, saves it and resets it', async () => {
     const calls = renderPage(['policy:read', 'conventions:manage']);
-    const gold = await screen.findByLabelText('Intrusion policy — GOLD');
-    expect(gold).toHaveValue('Maximum Detection');
-    expect(within(gold).getByRole('option', { name: 'Maximum Detection · level 4' })).toBeInTheDocument();
-    // A configured policy the latest snapshot does not have stays visible, flagged.
-    expect(screen.getByLabelText('Intrusion policy — SILVER')).toHaveValue('IPS-OLD');
-    expect(screen.getByRole('option', { name: 'IPS-OLD (Not in the latest snapshot)' })).toBeInTheDocument();
+    const ips = await screen.findByLabelText('Intrusion policy');
+    expect(ips).toHaveValue('Maximum Detection');
+    expect(within(ips).getByRole('option', { name: 'Maximum Detection · level 4' })).toBeInTheDocument();
+    // The value was not saved: it is the policy most allow rules carry, and says so.
+    expect(screen.getByText(/Not saved: this is the policy/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to the most used policy' })).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText('File policy — GOLD'), 'Block Malware');
-    const goldRow = gold.closest('tr');
-    expect(goldRow).not.toBeNull();
-    if (goldRow === null) return;
-    await user.click(within(goldRow).getByRole('button', { name: 'Save' }));
-    expect(calls.find((c) => c.url === '/api/inspection-profiles/GOLD')?.body).toEqual({
+    await user.selectOptions(screen.getByLabelText('File policy'), 'Block Malware');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(calls.find((c) => c.url === '/api/inspection-profile' && c.method === 'PUT')?.body).toEqual({
       ips_policy: 'Maximum Detection',
       file_policy: 'Block Malware',
     });
     expect(await screen.findByText(/Re-analyse a snapshot/)).toBeInTheDocument();
+  });
 
-    // Only configured tiers can go back to the doctrine default.
-    expect(within(goldRow).queryByRole('button', { name: 'Back to default' })).not.toBeInTheDocument();
-    const silverRow = screen.getByLabelText('Intrusion policy — SILVER').closest('tr');
-    if (silverRow === null) return;
-    await user.click(within(silverRow).getByRole('button', { name: 'Back to default' }));
-    expect(calls.some((c) => c.url === '/api/inspection-profiles/SILVER' && c.method === 'DELETE')).toBe(true);
+  it('flags a saved policy the latest snapshot lacks and offers the reset', async () => {
+    const saved: InspectionCatalog = {
+      ...CATALOG,
+      profile: { ips_policy: 'IPS-OLD', file_policy: 'Block Malware', configured: true, ips_default: false, file_default: false },
+    };
+    const calls = renderPage(['policy:read', 'conventions:manage'], saved);
+    expect(await screen.findByLabelText('Intrusion policy')).toHaveValue('IPS-OLD');
+    expect(screen.getByRole('option', { name: 'IPS-OLD (Not in the latest snapshot)' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Back to the most used policy' }));
+    expect(calls.some((c) => c.url === '/api/inspection-profile' && c.method === 'DELETE')).toBe(true);
   });
 
   it('is read-only without the conventions permission', async () => {
     renderPage(['policy:read']);
-    expect(await screen.findByText('IPS-OLD')).toBeInTheDocument();
+    expect(await screen.findByText('Maximum Detection')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   });
 });
@@ -114,11 +113,11 @@ describe('inspection preview', () => {
         </AuthProvider>
       </I18nProvider>,
     );
-    expect(await screen.findByText('Reached over TLS by')).toBeInTheDocument();
+    expect(await screen.findByText('Allowed over HTTPS by')).toBeInTheDocument();
     expect(screen.getByText('TRUST').closest('del')).not.toBeNull();
     expect(screen.getByText('Intrusion policy')).toBeInTheDocument();
     expect(screen.getByText('Maximum Detection').closest('ins')).not.toBeNull();
-    expect(screen.getByText('Reached over TLS by')).toBeInTheDocument();
+    expect(screen.getByText('Allowed over HTTPS by')).toBeInTheDocument();
     expect(screen.getByText('WEB_TO_GOLD')).toBeInTheDocument();
   });
 });

@@ -1922,7 +1922,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     estate = Estate(session, snapshot_id)
     drafts: list[Draft] = []
     renames, naming_stats = recommend_renames(estate)
-    profiles = inspection.load_profiles(session)
+    profile = inspection.load_profile(session, snapshot_id)
     ssl = inspection.SslAdvisor(estate)
     ordered = sorted(estate.policies.values(), key=lambda p: (p.kind, p.name))
     ace_rules: dict[int, RuleInfo] = {}
@@ -1946,7 +1946,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
             drafts += recommend_merge_rules(estate, policy, rules)
             drafts += recommend_tighten(estate, policy, rules)
             drafts += recommend_rule_renames(estate, policy, rules, naming_stats)
-            drafts += inspection.recommend_inspection(estate, policy, rules, profiles)
+            drafts += inspection.recommend_inspection(estate, policy, rules, profile)
             ssl.access(policy, rules)
         elif policy.kind == "decryption":
             ssl.decryption_policy(policy, rules)

@@ -31,6 +31,7 @@ KIND_ORDER = (
     "tighten_source",
     "tighten_ports",
     "add_inspection",
+    "add_file_policy",
     "rename_role",
     "rename_convention",
     "remove_shadowed_rule",
@@ -79,8 +80,20 @@ class ItemTooLargeError(ValueError):
         self.limit = limit
 
 
+def _same_rule(t: dict[str, set[str]], o: dict[str, set[str]]) -> bool:
+    """A rule both touch — except an intrusion-policy op next to a file-policy op: they write
+    different fields and each expects only its own, so they run in sequence without drift."""
+    for rule in t["rules"] & o["rules"]:
+        if (rule in t["inspect_ips"] and rule in o["inspect_file"]) or (
+            rule in t["inspect_file"] and rule in o["inspect_ips"]
+        ):
+            continue
+        return True
+    return False
+
+
 def _clash(t: dict[str, set[str]], o: dict[str, set[str]]) -> str | None:
-    if t["rules"] & o["rules"]:
+    if _same_rule(t, o):
         return "same_rule"
     if t["objects"] & o["objects"]:
         return "same_object"

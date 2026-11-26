@@ -23,6 +23,7 @@ export const CHANGING_KINDS: ReadonlySet<RecommendationKind> = new Set<Recommend
   'tighten_source',
   'tighten_ports',
   'add_inspection',
+  'add_file_policy',
   'ssl_decrypt_inbound',
   'fastpath_candidate',
 ]);

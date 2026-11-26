@@ -20,11 +20,18 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.enforce.batch_proof import needs_proof
 from app.enforce.batching import Conflict, Item, ItemTooLargeError, batch, separate
-from app.enforce.executor import abandoned_unwritten, rollback_resumable, stale_after_run
+from app.enforce.executor import (
+    ACTIVE_RUN_STATES,
+    abandoned_unwritten,
+    owner_gone,
+    rollback_resumable,
+    stale_after_run,
+)
 from app.enforce.staleness import stale_since
 from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.inventory import Cluster, ClusterPolicy, Snapshot
+from app.models.jobs import JobRun
 from app.models.recommendations import Recommendation, RecommendationDecision
 from app.runtime import get_audit
 from app.workers import jobs
@@ -98,6 +105,8 @@ class ChangesetOut(BaseModel):
     op_count: int
     item_count: int
     batches: list[BatchOut]
+    # The author may not approve / run it (four-eyes setting on).
+    four_eyes: bool = False
 
 
 class HeldOut(BaseModel):
@@ -136,7 +145,24 @@ def _audit(
     )
 
 
-def _batch_out(b: Batch) -> BatchOut:
+def batch_gone(db: Session, b: Batch) -> bool:
+    """``owner_gone`` after reconciling the batch's queued / running jobs with the queue (a
+    job whose worker died is marked failed first)."""
+    if b.status != "running":
+        return False
+    active = list(
+        db.scalars(
+            select(JobRun).where(JobRun.batch_id == b.id, JobRun.status.in_(ACTIVE_RUN_STATES))
+        )
+    )
+    if active:
+        from app.api.jobs import reconcile_runs
+
+        reconcile_runs(db, active)
+    return owner_gone(db, b)
+
+
+def _batch_out(b: Batch, gone: bool = False) -> BatchOut:
     return BatchOut(
         seq=b.seq,
         status=b.status,
@@ -153,7 +179,7 @@ def _batch_out(b: Batch) -> BatchOut:
         if b.status != "deployed"
         else 0,
         rollback_resumable=rollback_resumable(
-            b, datetime.now(UTC), stale_after_run(get_settings())
+            b, datetime.now(UTC), stale_after_run(get_settings()), gone
         ),
         proof=b.proof,
         proof_after=b.proof_after,
@@ -181,7 +207,8 @@ def _out(db: Session, cs: Changeset) -> ChangesetOut:
         created_at=cs.created_at,
         op_count=int(counts[1]),
         item_count=int(counts[0]),
-        batches=[_batch_out(b) for b in batches],
+        batches=[_batch_out(b, batch_gone(db, b)) for b in batches],
+        four_eyes=get_settings().four_eyes,
     )
 
 
@@ -447,7 +474,7 @@ def approve_batch(
     who: ApproverDep,
     body: ApproveIn | None = None,
 ) -> ChangesetOut | JSONResponse:
-    """Approve the next batch. Four eyes: the changeset's author can never approve it.
+    """Approve the next batch. With the four-eyes setting on, the author may not approve it.
 
     The batch's traffic proof must exist: a batch that preserves traffic is approved only with
     no flow changed; one that changes traffic by design needs ``acknowledge_change``. Nothing
@@ -456,7 +483,7 @@ def approve_batch(
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    if cs.created_by == who.username:
+    if get_settings().four_eyes and cs.created_by == who.username:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "author_cannot_approve")
     if cs.status not in ("open", "in_progress"):
         raise HTTPException(status.HTTP_409_CONFLICT, "changeset_closed")
@@ -527,7 +554,7 @@ def run_batch(
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    if cs.created_by == who.username:
+    if get_settings().four_eyes and cs.created_by == who.username:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "author_cannot_approve")
     if cs.status not in ("open", "in_progress"):
         raise HTTPException(status.HTTP_409_CONFLICT, "changeset_closed")
@@ -576,7 +603,8 @@ def resume_batch_rollback(
     )
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    if not rollback_resumable(target, datetime.now(UTC), stale_after_run(get_settings())):
+    gone = batch_gone(db, target)
+    if not rollback_resumable(target, datetime.now(UTC), stale_after_run(get_settings()), gone):
         raise HTTPException(status.HTTP_409_CONFLICT, "nothing_to_undo")
     _audit(
         audit,
@@ -604,6 +632,12 @@ def cancel_changeset(
     """Cancel what has not run yet (already deployed batches stay deployed). A failed changeset
     can be cancelled too — once no batch is running and no failed batch has writes left to
     undo (finish its rollback first)."""
+    # Batches whose job already ended (reconciled before the rows are locked: it may commit).
+    gone_ids = {
+        b.id
+        for b in db.scalars(select(Batch).where(Batch.changeset_id == changeset_id))
+        if batch_gone(db, b)
+    }
     cs = db.get(Changeset, changeset_id, with_for_update=True)
     if cs is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -613,7 +647,10 @@ def cancel_changeset(
     now, stale_after = datetime.now(UTC), stale_after_run(get_settings())
     # A batch whose worker died before its first write (no undo step saved) wrote nothing:
     # it does not hold the changeset open.
-    abandoned = [b for b in batches if abandoned_unwritten(b, now, stale_after)]
+    abandoned = [b for b in batches if abandoned_unwritten(b, now, stale_after, b.id in gone_ids)]
+    # One whose job ended after it wrote must be rolled back first ("finish rollback").
+    if any(b.status == "running" and b not in abandoned and b.id in gone_ids for b in batches):
+        raise HTTPException(status.HTTP_409_CONFLICT, "rollback_pending")
     if any(b.status == "running" and b not in abandoned for b in batches):
         raise HTTPException(status.HTTP_409_CONFLICT, "batch_running")
     if any(

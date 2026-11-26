@@ -174,7 +174,8 @@ function ChangesetPanel({ cs, onChanged }: { cs: ChangesetDetail; onChanged: () 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const isAuthor = cs.created_by === me.username;
+  // Only with the four-eyes setting on does authorship block approving / running.
+  const isAuthor = Boolean(cs.four_eyes) && cs.created_by === me.username;
   const open = cs.status === 'open' || cs.status === 'in_progress';
   const opLabel = useOpLabel();
   const batchError = useBatchError();

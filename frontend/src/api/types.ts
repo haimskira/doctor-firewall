@@ -80,6 +80,18 @@ export interface FmcConnection {
   last_test_at: string | null;
   last_test_ok: boolean | null;
   sync_interval_minutes: number | null;
+  pinned: boolean;
+  pinned_sha256: string | null;
+}
+
+export interface FmcCertificate {
+  pem: string;
+  sha256: string;
+  subject: string;
+  issuer: string;
+  not_before: string;
+  not_after: string;
+  self_signed: boolean;
 }
 
 export interface FmcTestResult {
@@ -469,6 +481,7 @@ export type RecommendationKind =
   | 'rename_convention'
   | 'literal_to_object'
   | 'add_inspection'
+  | 'add_file_policy'
   | 'ssl_exempt_core'
   | 'ssl_decrypt_inbound'
   | 'remove_redundant_reference'
@@ -492,6 +505,7 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'rename_convention',
   'remove_unused_object',
   'add_inspection',
+  'add_file_policy',
   'ssl_exempt_core',
   'ssl_decrypt_inbound',
   'remove_redundant_reference',
@@ -560,17 +574,15 @@ export interface PreviewRule {
 /** Rule fields in a preview: the match fields plus the attached inspection policies. */
 export type PreviewFieldName = RuleFieldName | 'ips_policy' | 'file_policy';
 
-// ---- phase 6: tier -> inspection profile (mirrors app/api/recommendations.py) ----
-
-export type InspectionTier = 'GOLD' | 'SILVER' | 'BRONZE';
+// ---- phase 6: the organisation's inspection profile (mirrors app/api/recommendations.py) ----
 
 export interface InspectionProfile {
-  tier: InspectionTier;
   ips_policy: string | null;
   file_policy: string | null;
+  /** A choice was saved; otherwise the values are the policies most allow rules carry. */
   configured: boolean;
-  min_level: number;
-  file_required: boolean;
+  ips_default: boolean;
+  file_default: boolean;
 }
 
 export interface InspectionPolicyChoice {
@@ -579,7 +591,7 @@ export interface InspectionPolicyChoice {
 }
 
 export interface InspectionCatalog {
-  profiles: InspectionProfile[];
+  profile: InspectionProfile;
   intrusion_policies: InspectionPolicyChoice[];
   file_policies: InspectionPolicyChoice[];
   snapshot_id: number | null;
@@ -854,6 +866,7 @@ export interface Changeset {
   deploy_limit: number;
   deploy_limit_verified: boolean;
   created_by: string;
+  four_eyes?: boolean;
   created_at: string;
   op_count: number;
   item_count: number;

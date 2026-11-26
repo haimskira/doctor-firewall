@@ -3,6 +3,20 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-032 — Connect to the FMC by IP address: certificate pinning, verification never off
+A hostname-verified connection needed the name `firepower`, an `extra_hosts` mapping and the FMC
+certificate in the trust bundle. Now an admin can type the IP address: the UI fetches the
+certificate the FMC presents (`POST /api/fmc/connections/certificate`, no credentials sent), shows
+subject, issuer, validity and SHA-256 fingerprint, and the admin confirms it. The PEM is stored on
+the connection (`fmc_connections.pinned_cert`). For a pinned connection the TLS context trusts
+exactly that one certificate (partial chain, `CERT_REQUIRED`, TLS 1.2+) and does not check the
+host name - the pin is the trust anchor, and an IP is not in a self-signed FMC certificate.
+Verification is never disabled; there is no "insecure" option. A different certificate later
+(renewal, replacement, interception) fails with `certificate_changed` and is never accepted
+automatically: the admin must fetch and confirm again. Changing the host or port clears the pin.
+Pin set / changed / removed are audited with the fingerprint. Connections without a pin keep the
+CA-bundle + host-name verification unchanged.
+
 ### D-031 — Undo journal written before each write, idempotent undo
 In the lab the FMC connection dropped after a write was sent: the FMC applied it, the client never
 saw the answer, and the in-memory undo list could not be replayed once the FMC was reachable
@@ -36,12 +50,14 @@ directory manages roles they are replaced at every sign-in and an account withou
 role is refused; otherwise roles stay local and an administrator pre-creates the account.
 
 ### D-027 — Inspection: IPS / file executable, decryption advisory
-Attaching an intrusion / file policy to an access rule is a normal executable plan
-(`set_inspection`, drift-checked on action and policy ids). Decryption rules are proposals only:
-known-key decryption needs server certificates and keys the system does not hold, and the
-decryption-rule API differs from access rules. Tier -> policy mapping is configurable
-(*Inspection profiles*), defaulting to Cisco's built-in intrusion policies; strength is judged
-by name or base policy, and unknown custom policies are not second-guessed. A rule given an
+Attaching an intrusion or file policy to an access rule is a normal executable plan
+(`set_inspection`, drift-checked on the fields it writes). Decryption rules are proposals only:
+the internal CA and the decryption-rule API are outside what the system owns. The organisation
+has one intrusion policy, one file policy and one decryption policy (no per-tier profiles): the
+tier only decides whether a rule also needs a file policy and decryption. IPS and file policy are
+two recommendations (`add_inspection`, `add_file_policy`) so each can be approved and run alone;
+decryption is Decrypt-Resign on HTTPS only (known-key was dropped: it needs every server's key in
+the FMC). An unset profile defaults to the policy most allow rules already carry. A rule given an
 intrusion policy without a variable set gets the FMC's built-in `Default-Set`.
 
 ### D-026 — Assets with components

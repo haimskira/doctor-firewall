@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from app.auth.rbac import Role
+from app.fmc.client import validate_pem_certificate
 from app.fmc.validation import validate_host
 
 USERNAME_PATTERN = r"^[A-Za-z0-9._@-]+$"
@@ -16,6 +17,14 @@ Username = Annotated[str, Field(min_length=1, max_length=64, pattern=USERNAME_PA
 Password = Annotated[str, Field(min_length=1, max_length=128)]
 Language = Literal["he", "en"]
 Host = Annotated[str, Field(min_length=1, max_length=253), AfterValidator(validate_host)]
+
+
+def _pem(value: str) -> str:
+    validate_pem_certificate(value)
+    return value.strip() + "\n"
+
+
+PinnedCert = Annotated[str, Field(min_length=1, max_length=16384), AfterValidator(_pem)]
 ConnectionName = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9 ._-]+$")]
 
 
@@ -108,6 +117,7 @@ class FmcConnectionCreate(StrictModel):
     username: Username
     password: Password
     sync_interval_minutes: SyncInterval | None = None
+    pinned_cert: PinnedCert | None = None
 
 
 class FmcConnectionUpdate(StrictModel):
@@ -118,6 +128,23 @@ class FmcConnectionUpdate(StrictModel):
     password: Password | None = None
     sync_interval_minutes: SyncInterval | None = None
     disable_sync: bool = False
+    pinned_cert: PinnedCert | None = None
+    clear_pin: bool = False  # back to the CA bundle + host name verification
+
+
+class FmcCertificateRequest(StrictModel):
+    host: Host
+    port: Annotated[int, Field(ge=1, le=65535)] = 443
+
+
+class FmcCertificateResponse(BaseModel):
+    pem: str
+    sha256: str
+    subject: str
+    issuer: str
+    not_before: datetime
+    not_after: datetime
+    self_signed: bool
 
 
 class FmcConnectionResponse(BaseModel):
@@ -131,6 +158,8 @@ class FmcConnectionResponse(BaseModel):
     last_test_at: datetime | None
     last_test_ok: bool | None
     sync_interval_minutes: int | None
+    pinned: bool = False
+    pinned_sha256: str | None = None
 
 
 class FmcTestResponse(BaseModel):

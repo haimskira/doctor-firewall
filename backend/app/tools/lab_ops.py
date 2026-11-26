@@ -15,14 +15,14 @@ Built on the HA pair's primary device (the secondary follows on deploy), around 
   A port-channel is attempted first: FMC refuses it on a virtual FTD (logged, not fatal).
 * ``objects``: the object kinds the scenario lacks — VLAN tags and groups, URLs and URL groups,
   time ranges, ICMPv4 / ICMPv6 objects, custom security group tags (SGT), interface groups.
-* ``inspection``: intrusion policies per doctrine tier (base policies by tier, one left in
-  detection mode) and a file policy.
-* ``decryption``: an internal CA (re-sign) and an internal certificate (known key), generated
-  here and never written to disk, a decryption policy whose rules cover every action, with and
+* ``inspection``: the organisation's one intrusion policy (``DF-IPS``, Maximum Detection) plus
+  one detection-only policy left as the mess, and a file policy.
+* ``decryption``: an internal CA (Decrypt-Resign), generated here and never written to disk, a
+  decryption policy whose rules cover every action (Decrypt-Resign on HTTPS included), with and
   without categories, URL / application conditions; an identity policy.
 
 ``/work/ops.json`` records what exists (names -> ids); ``lab_dryrun load`` reads it to put
-zones, tier IPS, file policy, SGT, VLAN, URL and time conditions on part of its rules and links
+zones, the IPS, file policy, SGT, VLAN, URL and time conditions on part of its rules and links
 the decryption / identity policies. The password comes from ``DF_LAB_PASSWORD`` (or stdin).
 """
 
@@ -109,12 +109,10 @@ ROUTES = (
     ("172.16.0.0/16", "dmz", "172.16.0.254"),
     ("198.51.0.0/16", "partners", "192.0.2.254"),
 )
-TIER_IPS = {  # doctrine: maximum IPS everywhere it does not break, strongest on GOLD
-    "DF-IPS-GOLD": ("Maximum Detection", "PREVENTION"),
-    "DF-IPS-SILVER": ("Security Over Connectivity", "PREVENTION"),
-    "DF-IPS-CORE": ("Balanced Security and Connectivity", "PREVENTION"),
-    "DF-IPS-BRONZE": ("Balanced Security and Connectivity", "PREVENTION"),
-    "DF-IPS-LEGACY-DETECT": ("Connectivity Over Security", "DETECTION"),  # mess: detect only
+# The organisation has one intrusion policy; the second one is the mess (detection only).
+IPS_POLICIES = {
+    "DF-IPS": ("Maximum Detection", "PREVENTION"),
+    "DF-IPS-LEGACY-DETECT": ("Connectivity Over Security", "DETECTION"),
 }
 SKIP = ("links", "metadata")
 
@@ -500,7 +498,7 @@ class Ops:
     async def inspection(self) -> None:
         log("intrusion policies")
         builtin = await self.by_name("/policy/intrusionpolicies")
-        for name, (base_name, mode) in TIER_IPS.items():
+        for name, (base_name, mode) in IPS_POLICIES.items():
             base = builtin.get(base_name)
             if base is None:
                 log(f"  no base policy {base_name}")
@@ -535,17 +533,6 @@ class Ops:
                 "type": "InternalCA",
                 "cert": ca_cert,
                 "privateKey": ca_key,
-            },
-            "policies",
-        )
-        web_cert, web_key = _self_signed("portal.example.com", ca=False)
-        await self.ensure(
-            "/object/internalcertificates",
-            {
-                "name": "DF-GOLD-PORTAL",
-                "type": "InternalCertificate",
-                "cert": web_cert,
-                "privateKey": web_key,
             },
             "policies",
         )
@@ -635,7 +622,6 @@ class Ops:
             )
 
         ca = self.m["policies"].get("DF-LAB-RESIGN-CA")
-        cert = self.m["policies"].get("DF-GOLD-PORTAL")
         rules: list[dict[str, Any]] = [
             {
                 "name": "DND-CORE-IDENTITY",
@@ -671,20 +657,6 @@ class Ops:
                 "enabled": False,
             },
         ]
-        if cert:
-            rules.insert(
-                3,
-                {
-                    "name": "KNOWN-KEY-GOLD-PORTAL",
-                    "ruleAction": "DECRYPT_KNOWN_KEY",
-                    "destinationNetworks": nets_of("NET_FIN-DB", "NET_PAY-DB"),
-                    "internalCerts": {
-                        "objects": [
-                            {"id": cert["id"], "type": "InternalCertificate", "name": cert["name"]}
-                        ]
-                    },
-                },
-            )
         if ca:
             rules.insert(
                 4,
@@ -693,6 +665,21 @@ class Ops:
                     "ruleAction": "DECRYPT_RESIGN",
                     "sourceZones": {"objects": [self.zone("USERS")]},
                     "destinationZones": {"objects": [self.zone("OUTSIDE")]},
+                    "decryptionCerts": {
+                        "objects": [{"id": ca["id"], "type": "InternalCA", "name": ca["name"]}]
+                    },
+                    "logging": {"logEnd": True, "sendEvents": True},
+                },
+            )
+            rules.insert(
+                5,
+                {
+                    "name": "RESIGN-HTTPS-GOLD",
+                    "ruleAction": "DECRYPT_RESIGN",
+                    "destinationNetworks": nets_of("NET_FIN-DB", "NET_PAY-DB"),
+                    "destinationPorts": {
+                        "literals": [{"type": "PortLiteral", "protocol": "6", "port": "443"}]
+                    },
                     "decryptionCerts": {
                         "objects": [{"id": ca["id"], "type": "InternalCA", "name": ca["name"]}]
                     },

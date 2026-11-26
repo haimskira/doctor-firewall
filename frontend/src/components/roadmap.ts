@@ -22,6 +22,7 @@ export const PHASE_OF: Record<RecommendationKind, Phase> = {
   tighten_source: 'access',
   tighten_ports: 'access',
   add_inspection: 'access',
+  add_file_policy: 'access',
   ssl_exempt_core: 'access',
   ssl_decrypt_inbound: 'access',
   fastpath_candidate: 'access',

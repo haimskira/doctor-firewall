@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import type { SyntheticEvent } from 'react';
-import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
 import type { InspectionCatalog, InspectionPolicyChoice, InspectionProfile } from '../api/types';
@@ -10,13 +9,14 @@ import { useApi } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
 /**
- * Tier -> intrusion / file policy: which FMC policies implement the doctrine's inspection
- * for each destination tier (the input of the "add inspection" recommendations).
+ * The organisation's one intrusion policy and one file policy: the input of the "add intrusion
+ * policy" and "add file policy" recommendations. Left empty, each is the policy most allow rules
+ * already carry.
  */
 export function InspectionPage() {
   const { t, tError } = useI18n();
   const { can } = useAuth();
-  const catalog = useApi<InspectionCatalog>('/api/inspection-profiles');
+  const catalog = useApi<InspectionCatalog>('/api/inspection-profile');
   const [notice, setNotice] = useState<string | null>(null);
   const editable = can('conventions:manage');
 
@@ -31,35 +31,17 @@ export function InspectionPage() {
       {catalog.data !== null && catalog.data.snapshot_id === null && <Alert kind="info">{t('inspection.noSnapshot')}</Alert>}
       {catalog.data !== null && (
         <section className="card">
-          <table>
-            <SortedTable
-              rows={catalog.data.profiles}
-              columns={{ tier: (profile) => profile.tier, ips: (profile) => profile.ips_policy, file: (profile) => profile.file_policy }}
-              head={(th) => (
-                <tr>
-                  {th('tier', t('inspection.tier'))}
-                  <th>{t('inspection.doctrine')}</th>
-                  {th('ips', t('inspection.ips'))}
-                  {th('file', t('inspection.file'))}
-                  <th>{t('common.actions')}</th>
-                </tr>
-              )}
-            >
-              {(profile) => (
-                <ProfileRow
-                  key={`${profile.tier}-${profile.ips_policy ?? ''}-${profile.file_policy ?? ''}-${String(profile.configured)}`}
-                  profile={profile}
-                  intrusion={catalog.data?.intrusion_policies ?? []}
-                  files={catalog.data?.file_policies ?? []}
-                  editable={editable}
-                  onSaved={() => {
-                    setNotice(t('inspection.saved'));
-                    catalog.reload();
-                  }}
-                />
-              )}
-            </SortedTable>
-          </table>
+          <ProfileForm
+            key={`${catalog.data.profile.ips_policy ?? ''}-${catalog.data.profile.file_policy ?? ''}-${String(catalog.data.profile.configured)}`}
+            profile={catalog.data.profile}
+            intrusion={catalog.data.intrusion_policies}
+            files={catalog.data.file_policies}
+            editable={editable}
+            onSaved={() => {
+              setNotice(t('inspection.saved'));
+              catalog.reload();
+            }}
+          />
         </section>
       )}
     </div>
@@ -71,21 +53,18 @@ function PolicySelect({
   value,
   choices,
   withLevel,
-  formId,
   onChange,
 }: {
   label: string;
   value: string;
   choices: InspectionPolicyChoice[];
   withLevel: boolean;
-  formId: string;
   onChange: (value: string) => void;
 }) {
   const { t } = useI18n();
   const known = choices.some((c) => c.name === value);
   return (
     <select
-      form={formId}
       aria-label={label}
       value={value}
       onChange={(e) => {
@@ -107,7 +86,7 @@ function PolicySelect({
   );
 }
 
-function ProfileRow({
+function ProfileForm({
   profile,
   intrusion,
   files,
@@ -125,7 +104,6 @@ function ProfileRow({
   const [file, setFile] = useState(profile.file_policy ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const formId = `inspection-${profile.tier}`;
 
   async function call(action: () => Promise<unknown>) {
     setBusy(true);
@@ -143,7 +121,7 @@ function ProfileRow({
   function save(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     void call(() =>
-      api(`/api/inspection-profiles/${profile.tier}`, 'PUT', {
+      api('/api/inspection-profile', 'PUT', {
         ips_policy: ips === '' ? null : ips,
         file_policy: file === '' ? null : file,
       }),
@@ -151,62 +129,40 @@ function ProfileRow({
   }
 
   return (
-    <tr>
-      <td>
-        <span className={`tier tier-${profile.tier.toLowerCase()}`}>{profile.tier}</span>
-        {!profile.configured && <div className="muted small">{t('inspection.default')}</div>}
-        {error !== null && <Alert kind="error">{tError(error)}</Alert>}
-      </td>
-      <td className="small">{t(`inspection.doctrine.${profile.tier}`)}</td>
-      <td>
+    <form onSubmit={save} className="stack">
+      {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+      <label>
+        <span>{t('inspection.ips')}</span>
         {editable ? (
-          <form id={formId} onSubmit={save}>
-            <PolicySelect
-              label={`${t('inspection.ips')} — ${profile.tier}`}
-              value={ips}
-              choices={intrusion}
-              withLevel
-              formId={formId}
-              onChange={setIps}
-            />
-          </form>
+          <PolicySelect label={t('inspection.ips')} value={ips} choices={intrusion} withLevel onChange={setIps} />
         ) : (
-          (profile.ips_policy ?? t('inspection.none'))
+          <div>{profile.ips_policy ?? t('inspection.none')}</div>
         )}
-      </td>
-      <td>
+        {profile.ips_default && <div className="muted small">{t('inspection.default')}</div>}
+        <div className="muted small">{t('inspection.ipsHelp')}</div>
+      </label>
+      <label>
+        <span>{t('inspection.file')}</span>
         {editable ? (
-          <PolicySelect
-            label={`${t('inspection.file')} — ${profile.tier}`}
-            value={file}
-            choices={files}
-            withLevel={false}
-            formId={formId}
-            onChange={setFile}
-          />
+          <PolicySelect label={t('inspection.file')} value={file} choices={files} withLevel={false} onChange={setFile} />
         ) : (
-          (profile.file_policy ?? t('inspection.none'))
+          <div>{profile.file_policy ?? t('inspection.none')}</div>
         )}
-      </td>
-      <td className="actions">
-        {editable && (
-          <>
-            <button type="submit" form={formId} disabled={busy}>
-              {t('common.save')}
+        {profile.file_default && <div className="muted small">{t('inspection.default')}</div>}
+        <div className="muted small">{t('inspection.fileHelp')}</div>
+      </label>
+      {editable && (
+        <div className="actions">
+          <button type="submit" disabled={busy}>
+            {t('common.save')}
+          </button>
+          {profile.configured && (
+            <button type="button" className="secondary" disabled={busy} onClick={() => void call(() => api('/api/inspection-profile', 'DELETE'))}>
+              {t('inspection.reset')}
             </button>
-            {profile.configured && (
-              <button
-                type="button"
-                className="secondary"
-                disabled={busy}
-                onClick={() => void call(() => api(`/api/inspection-profiles/${profile.tier}`, 'DELETE'))}
-              >
-                {t('inspection.reset')}
-              </button>
-            )}
-          </>
-        )}
-      </td>
-    </tr>
+          )}
+        </div>
+      )}
+    </form>
   );
 }

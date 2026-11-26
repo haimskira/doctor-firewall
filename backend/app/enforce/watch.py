@@ -38,7 +38,7 @@ from app.enforce.batch_proof import batch_plans
 from app.enforce.plan import touched
 from app.fmc import trace
 from app.fmc.adapters import select_adapter
-from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
+from app.fmc.client import FmcSession, ThrottlePolicy, connection_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import server_version
 from app.fmc.records import PolicyKind
@@ -310,6 +310,7 @@ async def check(
             return w.status
         trace.bind(connection_id=conn.id, connection_name=conn.name, batch_id=b.id)
         host, port, username = conn.host, conn.port, conn.username
+        pinned_cert = conn.pinned_cert
         token, context = conn.password_enc, FmcConnection.password_context(conn.id)
         baseline_at, baseline = w.baseline_at, dict(w.baseline)
         w.next_check_at = now + timedelta(minutes=settings.deploy_watch_minutes)
@@ -320,7 +321,7 @@ async def check(
             port=port,
             username=username,
             password_provider=lambda: box.decrypt(token, context),
-            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            ssl_context=connection_ssl_context(settings.fmc_ca_bundle, pinned_cert),
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(

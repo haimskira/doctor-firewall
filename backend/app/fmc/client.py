@@ -24,8 +24,10 @@ Procedures implemented here (Cisco FMC REST API Quick Start Guide 10.1):
   is never retried on a status code: it may have been applied behind the gateway.
 * Collections are read with ``offset``/``limit`` paging (max 1000 per page).
 
-TLS: the server certificate is always verified against the internal trust store,
-with hostname checking. There is no code path that disables verification.
+TLS: the server certificate is always verified. Either against the internal trust store with
+hostname checking, or - for a connection an admin pinned - against exactly the one certificate
+that admin confirmed (``build_pinned_ssl_context``). There is no code path that disables
+verification of a session that carries credentials.
 
 Everything the FMC returns is treated as untrusted data and validated before use.
 """
@@ -45,12 +47,14 @@ from types import TracebackType
 from typing import Any, Self
 
 import httpx
+from cryptography import x509
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.crypto import zeroize
 from app.fmc import trace
 from app.fmc.errors import (
     FmcAuthError,
+    FmcCertificateChangedError,
     FmcProtocolError,
     FmcRateLimitedError,
     FmcTlsError,
@@ -66,6 +70,8 @@ MAX_REFRESHES = 3
 MAX_RESPONSE_BYTES = 50 * 1024 * 1024
 MAX_PAGE_SIZE = 1000
 MAX_PAGES = 100_000
+MAX_PINNED_PEM_BYTES = 16 * 1024
+_X509_CERT_HAS_EXPIRED = 10  # OpenSSL X509_V_ERR_CERT_HAS_EXPIRED
 
 # Returns the API password freshly decrypted; the client zeroizes it after use.
 PasswordProvider = Callable[[], bytearray]
@@ -79,6 +85,64 @@ def build_ssl_context(ca_bundle: Path) -> ssl.SSLContext:
     if not ctx.check_hostname or ctx.verify_mode != ssl.CERT_REQUIRED:  # pragma: no cover
         raise FmcTlsError("refusing an SSL context without full verification")
     return ctx
+
+
+class PinnedSSLContext(ssl.SSLContext):
+    """Marker type: the trust anchor is one pinned server certificate (no hostname check)."""
+
+
+def validate_pem_certificate(pem: str) -> x509.Certificate:
+    """Exactly one X.509 certificate in PEM form, or ValueError."""
+    stripped = pem.strip()
+    if (
+        len(stripped) > MAX_PINNED_PEM_BYTES
+        or stripped.count("-----BEGIN") != 1
+        or not stripped.startswith("-----BEGIN CERTIFICATE-----")
+        or not stripped.endswith("-----END CERTIFICATE-----")
+    ):
+        raise ValueError("not a single PEM certificate")
+    try:
+        return x509.load_pem_x509_certificate(stripped.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("not a single PEM certificate") from exc
+
+
+def build_pinned_ssl_context(pem: str) -> ssl.SSLContext:
+    """Verify the FMC against one certificate (trust on first use, confirmed by an admin).
+
+    The certificate itself is the only trust anchor (partial chain), so the connection succeeds
+    only when the FMC presents exactly that certificate. The host name is not checked: a pin
+    is bound to the key, and an IP address is not in the FMC's self-signed certificate.
+    """
+    try:
+        validate_pem_certificate(pem)
+    except ValueError as exc:
+        raise FmcTlsError("the pinned FMC certificate is not valid") from exc
+    ctx = PinnedSSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.check_hostname = False
+    ctx.load_verify_locations(cadata=pem.strip())
+    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    if ctx.verify_mode != ssl.CERT_REQUIRED:  # pragma: no cover
+        raise FmcTlsError("refusing an SSL context without verification")
+    return ctx
+
+
+def connection_ssl_context(ca_bundle: Path, pinned_cert: str | None) -> ssl.SSLContext:
+    """The context for one FMC connection: its pin when it has one, else the CA bundle."""
+    if pinned_cert:
+        return build_pinned_ssl_context(pinned_cert)
+    return build_ssl_context(ca_bundle)
+
+
+def _is_expired_failure(exc: BaseException) -> bool:
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, ssl.SSLCertVerificationError):
+            return seen.verify_code == _X509_CERT_HAS_EXPIRED
+        seen = seen.__cause__ or seen.__context__
+    return False
 
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})  # repeating them changes nothing on the FMC
@@ -204,6 +268,7 @@ class FmcSession:
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             transport=transport,
         )
+        self._pinned = isinstance(ssl_context, PinnedSSLContext)
         self._tokens: _Tokens | None = None
 
     async def __aenter__(self) -> Self:
@@ -252,6 +317,10 @@ class FmcSession:
                 except httpx.TransportError as exc:
                     trace.record_request(method, path, kwargs.get("params"), started, error=exc)
                     if _is_tls_failure(exc):
+                        if self._pinned and not _is_expired_failure(exc):
+                            raise FmcCertificateChangedError(
+                                "the FMC presented a certificate other than the pinned one"
+                            ) from exc
                         raise FmcTlsError("TLS verification of the FMC failed") from exc
                     # A connection that never opened is safe to repeat (writes too); a read
                     # is safe to repeat whatever happened to the connection.

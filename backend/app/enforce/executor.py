@@ -55,7 +55,7 @@ from app.enforce.staleness import stale_since
 from app.enforce.watch import open_watch
 from app.fmc import trace
 from app.fmc.adapters import FmcAdapter, select_adapter
-from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
+from app.fmc.client import FmcSession, ThrottlePolicy, connection_ssl_context
 from app.fmc.errors import (
     FmcError,
     FmcProtocolError,
@@ -70,6 +70,7 @@ from app.models.assets import ClusterSetting
 from app.models.enforce import Batch, Changeset, ChangesetItem
 from app.models.fmc import FmcConnection
 from app.models.inventory import Cluster, Snapshot
+from app.models.jobs import JobRun
 from app.workers import progress
 
 log = logging.getLogger(__name__)
@@ -638,10 +639,11 @@ class Writer:
 
         if item.get("name") != expect["name"]:
             raise BatchError("drift", f"rule {op.get('rule_name')} was renamed in the FMC")
+        # Only what the op is about is compared (old plans carry all three keys).
         if (
-            item.get("action") != expect["action"]
-            or ref_id(item.get("ipsPolicy")) != expect.get("ips")
-            or ref_id(item.get("filePolicy")) != expect.get("file")
+            ("action" in expect and item.get("action") != expect["action"])
+            or ("ips" in expect and ref_id(item.get("ipsPolicy")) != expect["ips"])
+            or ("file" in expect and ref_id(item.get("filePolicy")) != expect["file"])
         ):
             raise BatchError(
                 "drift", f"rule {op.get('rule_name')}: action or inspection changed in the FMC"
@@ -662,20 +664,22 @@ class Writer:
             body,
         )
         self.results.append({"op": "set_inspection", "name": body["name"], "id": op["rule"]})
-        wanted = (
-            body["action"],
-            ref_id(body.get("ipsPolicy")),
-            ref_id(body.get("filePolicy")),
-        )
+        wanted: dict[str, Any] = {}
+        if "action" in op:
+            wanted["action"] = body["action"]
+        if "ips" in op:
+            wanted["ips"] = ref_id(body.get("ipsPolicy"))
+        if "file" in op:
+            wanted["file"] = ref_id(body.get("filePolicy"))
 
         async def verify() -> None:
             after = await self.get(path)
-            found = (
-                after.get("action"),
-                ref_id(after.get("ipsPolicy")),
-                ref_id(after.get("filePolicy")),
-            )
-            if found != wanted:
+            found = {
+                "action": after.get("action"),
+                "ips": ref_id(after.get("ipsPolicy")),
+                "file": ref_id(after.get("filePolicy")),
+            }
+            if any(found[k] != v for k, v in wanted.items()):
                 raise BatchError("verification_failed", f"inspection of {op.get('rule_name')}")
 
         self.checks.append(verify)
@@ -1010,7 +1014,7 @@ class _Plan:
     title: str
     ticket: str
     approved_by: str
-    connection: tuple[str, int, str, str, str]
+    connection: tuple[str, int, str, str, str, str | None]
     ops: list[dict[str, Any]]
     targets: set[str]
 
@@ -1025,7 +1029,7 @@ def _load(sessions: sessionmaker[Session], batch_id: int, settings: Settings) ->
             raise BatchError("changeset_closed")
         if b.status != "approved" or b.approved_by is None:
             raise BatchError("batch_not_approved")
-        if b.approved_by == cs.created_by:
+        if settings.four_eyes and b.approved_by == cs.created_by:
             raise BatchError("author_cannot_approve")
         limits = {
             s.cluster_fmc_id: s.deploy_change_limit for s in db.scalars(select(ClusterSetting))
@@ -1112,7 +1116,7 @@ def _prove_written(sessions: sessionmaker[Session], plan: _Plan, writer: Writer)
 
 def _connection_and_targets(
     db: Session, cs: Changeset, b: Batch
-) -> tuple[tuple[str, int, str, str, str], set[str]]:
+) -> tuple[tuple[str, int, str, str, str, str | None], set[str]]:
     conn = db.get(FmcConnection, cs.connection_id) if cs.connection_id else None
     if conn is None:
         raise BatchError("connection_deleted")
@@ -1131,6 +1135,7 @@ def _connection_and_targets(
         conn.username,
         conn.password_enc,
         FmcConnection.password_context(conn.id),
+        conn.pinned_cert,
     )
     return connection, targets
 
@@ -1261,7 +1266,7 @@ async def execute_batch(
         log.warning("batch refused", extra={"batch": batch_id, "reason": reason})
         _not_started(sessions, audit, batch_id, reason)
         return {"ok": False, "error": exc.code, "status": "approved", "detail": reason}
-    host, port, username, token, context = plan.connection
+    host, port, username, token, context, pinned_cert = plan.connection
     try:
         release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
     except Exception:
@@ -1284,7 +1289,7 @@ async def execute_batch(
             port=port,
             username=username,
             password_provider=password_provider,
-            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            ssl_context=connection_ssl_context(settings.fmc_ca_bundle, pinned_cert),
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(
@@ -1451,32 +1456,54 @@ def _abandon(
         log.exception("could not record the end of a batch", extra={"batch": plan.batch_id})
 
 
-def rollback_resumable(b: Batch, now: datetime, stale_after: timedelta) -> bool:
+ACTIVE_RUN_STATES = ("queued", "running")
+
+
+def owner_gone(db: Session, b: Batch, exclude_run: int | None = None) -> bool:
+    """The batch says ``running`` but no job for it is queued or running any more (its worker
+    died, or the job was stopped / cancelled): it is abandoned now, without waiting for the
+    stale timeout. ``exclude_run``: the job asking (a resume runs for the same batch)."""
+    if b.status != "running":
+        return False
+    runs = select(JobRun.status).where(JobRun.batch_id == b.id)
+    since = b.approved_at or b.started_at
+    if since is not None:
+        # Only this batch's jobs: ids can repeat after a restore, and a job runs after approval.
+        runs = runs.where(JobRun.created_at >= since)
+    if exclude_run is not None:
+        runs = runs.where(JobRun.id != exclude_run)
+    states = set(db.scalars(runs))
+    # Evidence needed: a job for it that ended, and none still queued / running. With no job
+    # record at all the stale timeout decides, as before.
+    return bool(states) and not states & set(ACTIVE_RUN_STATES)
+
+
+def _abandoned(b: Batch, now: datetime, stale_after: timedelta, gone: bool) -> bool:
+    return (
+        b.status == "running"
+        and b.started_at is not None
+        and (gone or now - b.started_at > stale_after)
+    )
+
+
+def rollback_resumable(b: Batch, now: datetime, stale_after: timedelta, gone: bool = False) -> bool:
     """A failed batch with undo left to do (journal steps, or the re-deploy after them), or
-    one whose worker died mid-run."""
+    one whose worker died mid-run (``gone``: its job already ended, see ``owner_gone``)."""
     if b.status == "failed":
         return bool(b.journal) and (
             any(step.get("state") != "undone" for step in b.journal)
             or any(r.get("op") == "undo_failed" for r in b.results)
         )
-    return (
-        b.status == "running"
-        and b.started_at is not None
-        and now - b.started_at > stale_after
-        and bool(b.journal)
-    )
+    return _abandoned(b, now, stale_after, gone) and bool(b.journal)
 
 
-def abandoned_unwritten(b: Batch, now: datetime, stale_after: timedelta) -> bool:
-    """A batch still ``running`` long after its job must have ended, with no undo step saved:
-    its worker died before the first write (every write is journaled before it is sent), so
-    nothing was written. Its changeset can be cancelled."""
-    return (
-        b.status == "running"
-        and b.started_at is not None
-        and now - b.started_at > stale_after
-        and not b.journal
-    )
+def abandoned_unwritten(
+    b: Batch, now: datetime, stale_after: timedelta, gone: bool = False
+) -> bool:
+    """A batch still ``running`` after its job ended (or long after it must have), with no
+    undo step saved: its worker died before the first write (every write is journaled before
+    it is sent), so nothing was written. Its changeset can be cancelled."""
+    return _abandoned(b, now, stale_after, gone) and not b.journal
 
 
 def reverting(b: Batch) -> bool:
@@ -1498,6 +1525,7 @@ async def resume_rollback(
     transport: Any = None,
     poll_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    run_id: int | None = None,
 ) -> dict[str, Any]:
     """Finish the rollback of a batch from its saved journal, then re-deploy the devices.
 
@@ -1511,7 +1539,8 @@ async def resume_rollback(
         cs = db.get(Changeset, b.changeset_id) if b is not None else None
         if b is None or cs is None:
             raise BatchError("not_found")
-        if not rollback_resumable(b, datetime.now(UTC), stale_after_run(settings)):
+        gone = owner_gone(db, b, exclude_run=run_id)
+        if not rollback_resumable(b, datetime.now(UTC), stale_after_run(settings), gone):
             raise BatchError("nothing_to_undo")
         connection, targets = _connection_and_targets(db, cs, b)
         journal = copy.deepcopy(b.journal)
@@ -1540,7 +1569,7 @@ async def resume_rollback(
                 b.error = f"{previous[1] or ''} | resume: {reason}"[:500]
         return {"ok": False, "error": reason, "status": "failed"}
 
-    host, port, username, token, context = connection
+    host, port, username, token, context, pinned_cert = connection
     try:
         release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
     except Exception:
@@ -1558,7 +1587,7 @@ async def resume_rollback(
             port=port,
             username=username,
             password_provider=password_provider,
-            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            ssl_context=connection_ssl_context(settings.fmc_ca_bundle, pinned_cert),
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(

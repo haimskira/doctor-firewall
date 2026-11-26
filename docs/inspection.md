@@ -1,52 +1,63 @@
-# Inspection by destination tier (phase 6)
+# Inspection: one IPS, one file policy, one decryption policy (phase 6)
 
 Access and inspection are two layers (doctrine): the access rule decides *whether* a flow is
-allowed, the inspection profile *what is done* to an allowed flow. They are crossed by the tier
-of the **destination** — east-west included (a SILVER application calling a GOLD database gets
-GOLD inspection). The system proposes **where** inspection belongs; turning a profile on is an
-approved, deployed change like any other.
+allowed, the inspection *what is done* to an allowed flow. The organisation has **one**
+intrusion policy, **one** file policy and **one** decryption policy: no per-tier profiles. The
+tier of the **destination** (east-west included) only decides *whether* a rule needs more
+inspection and how urgent it is. The system proposes **where** inspection belongs; attaching a
+policy is an approved, deployed change like any other.
 
-| Destination tier | Decryption | IPS | File / malware |
+| Destination tier | IPS (the organisation's policy) | File / malware | Decryption |
 |---|---|---|---|
-| CORE: identity (AD / DC, PKI) | never (do-not-decrypt, at the top of the SSL policy) | the GOLD intrusion policy (*Maximum Detection*) | no |
-| CORE: DNS, patching | never | at least *Balanced* (the CORE profile) | no |
-| CORE: NTP | never | none: proposed for fastpath | no |
-| GOLD | inbound known-key | full, aggressive (*Maximum Detection*) | yes |
-| SILVER | selective | full or balanced (at least *Balanced*) | yes |
-| BRONZE | by exposure | balanced (at least *Balanced*) | optional |
+| CORE: identity (AD / DC, PKI) | yes | no | never (do-not-decrypt, at the top of the SSL policy) |
+| CORE: DNS, patching | yes | no | never |
+| CORE: NTP | none: proposed for fastpath | no | never |
+| GOLD | yes | yes | Decrypt-Resign, HTTPS only |
+| SILVER | yes | yes | Decrypt-Resign, HTTPS only |
+| BRONZE | yes | no | no |
 
-**IPS wherever it can run (maximum protection).** Every server tier gets IPS. CORE is a tier
-for access, not for inspection: a rule to CORE whose every port is DNS (53) or WSUS (8530-8531)
-gets the CORE profile; anything else (Kerberos, LDAP, Global Catalog, SMB, RPC, an unknown port,
-any) counts as **identity** and gets the GOLD intrusion policy, without a file policy (AD is the
-target of almost every advanced attack). NTP to CORE is proposed for fastpath. The only exemption is traffic
-Snort would break or drown in **and** that stays between known systems (see *Never IPS* below);
-traffic from the WAN, from users or from *any* is never exempt.
+**IPS wherever it can run (maximum protection).** Every server tier gets the intrusion policy,
+CORE included. The only exemption is traffic Snort would break or drown in **and** that stays
+between known systems (see *Never IPS* below); traffic from the WAN, from users or from *any*
+is never exempt. NTP to CORE is proposed for fastpath. A rule whose destination is not
+classified in the asset table gets no proposal.
 
 Code: `backend/app/analysis/inspection.py`; executor operation `set_inspection` in
 `backend/app/enforce/`.
 
-## Inspection profiles
+## The organisation profile
 
-*Policies → Inspection profiles* maps each tier to the FMC intrusion and file policy that
-implement it (names as they appear in the FMC; the lists come from the latest snapshot).
-Defaults, until configured: CORE *Balanced Security and Connectivity* (DNS / patching), GOLD *Maximum Detection*, SILVER *Security Over Connectivity*,
-BRONZE *Balanced Security and Connectivity*; no file policy (there is no built-in one).
-Changes apply at the next analysis. Editing needs `conventions:manage` (admin).
+*Policies -> IPS and file policy* holds the one intrusion policy and the one file policy (names
+as they appear in the FMC; the lists come from the latest snapshot). API:
+`GET / PUT / DELETE /api/inspection-profile`; stored as one row (key `ALL`). A field left empty
+is the policy most enabled ALLOW rules of the snapshot already carry (ties: by name), so a
+network that already runs one policy needs no setup. When no such policy exists, or the chosen
+one is not in the snapshot, the recommendation is **blocked** (`ips_profile_not_configured`,
+`ips_profile_missing`, `file_profile_not_configured`, `file_profile_missing`). Changes apply at
+the next analysis. Editing needs `conventions:manage` (admin).
 
-Intrusion policy strength is judged against Cisco's built-in policies — *Connectivity Over
-Security* (1) < *Balanced* (2) < *Security Over Connectivity* (3) < *Maximum Detection* (4) — by
-name, else by the custom policy's base policy. A custom policy that matches none of them is not
-judged (no proposal to replace it).
+There is no judgement of policy strength: a rule is fine when it carries the organisation's
+intrusion policy; a rule carrying another one is proposed to **switch** (the title says which one
+it has now).
 
 ## Recommendation kinds
 
+IPS and file policy are **separate** recommendations. They write different fields and each
+expects only its own, so both on one rule can be staged in one changeset and run one after the
+other without a false drift. (Two IPS proposals, or two file proposals, on one rule still clash;
+the second waits for the next changeset. Any other change to the rule clashes with both.)
+
 | Kind | When | Executable |
 |---|---|---|
-| `add_inspection` | an enabled permit access rule (not shadowed, not dead, not a fastpath candidate) whose destination is GOLD / SILVER / CORE / BRONZE (most demanding first, in that order) has no intrusion policy, a weaker one than the tier's profile, or (GOLD / SILVER) no file policy. A **Trust** rule becomes **Allow** — trusted traffic skips Snort | yes: one rule update (`set_inspection`) |
-| `fastpath_candidate` | an enabled permit access rule (not Trust, not shadowed / dead) whose **every** service is in `IPS_EXEMPT` and whose both ends are inside (table below) | no — proposal: move it to the prefilter (FASTPATH) or to Trust with logging; warning `fastpath_no_inspection`, blocked `fastpath_manual` |
-| `ssl_exempt_core` | in a decryption policy, a decrypt rule (resign or known-key) catches traffic to CORE systems, or identity / management services by port (`NEVER_DECRYPT`: LDAPS 636, Global Catalog 3269, RADIUS over TLS 2083, sftunnel 8305, ISE pxGrid 8910), not exempted by an earlier do-not-decrypt rule (any port for systems, any address for services) | no — proposal: `DND_CORE_SERVICES` / `DND_IDENTITY_MGMT_SERVICES` at the top |
-| `ssl_decrypt_inbound` | GOLD / SILVER systems reached over TLS (TCP 443, 8443, 9443, 993, 995, 465, TLS applications, or any service; not LDAPS, which is never decrypted) by permit rules, but no known-key rule in the decryption policy covers them (or there is no decryption policy) — the IPS is blind to the payload | no — proposal: a known-key rule for those systems |
+| `add_inspection` | an enabled permit access rule (not shadowed, not dead, not a fastpath candidate) with a classified destination that does not carry the organisation's intrusion policy: none, another one (switch), or a **Trust** rule (becomes **Allow**: trusted traffic skips Snort) | yes: one rule update (`set_inspection`, expects action and intrusion policy) |
+| `add_file_policy` | the same kind of rule whose destination is GOLD or SILVER and that has no file policy. A Trust rule waits: it becomes Allow first | yes: one rule update (`set_inspection`, expects the file policy only) |
+| `fastpath_candidate` | an enabled permit access rule (not Trust, not shadowed / dead) whose **every** service is in `IPS_EXEMPT` and whose both ends are inside (table below) | no: proposal to move it to the prefilter (FASTPATH) or to Trust with logging; warning `fastpath_no_inspection`, blocked `fastpath_manual` |
+| `ssl_exempt_core` | in a decryption policy, a decrypt rule (resign, or an existing known-key) catches traffic to CORE systems, or identity / management services by port (`NEVER_DECRYPT`: LDAPS 636, Global Catalog 3269, RADIUS over TLS 2083, sftunnel 8305, ISE pxGrid 8910), not exempted by an earlier do-not-decrypt rule (any port for systems, any address for services) | no: proposal `DND_CORE_SERVICES` / `DND_IDENTITY_MGMT_SERVICES` at the top |
+| `ssl_decrypt_inbound` | **Decrypt-Resign for HTTPS**: GOLD / SILVER systems that permit rules allow HTTPS to (TCP/443, or an HTTPS / SSL application, or any service) and that the decryption policy linked to the access policy does not settle on 443. A decrypt rule (any action) reaching the system on 443 counts as decrypted; a do-not-decrypt rule covering it is a deliberate exclusion. Other TLS (8443, mail, LDAPS) is not HTTPS and never proposed; never CORE | no: proposal of **one** `DECRYPT_RESIGN` rule (destination: those systems, port TCP/443); warnings `resign_ca_trust`, `resign_pinning_mtls`, `resign_invalid_cert`; blocked `decryption_rule_manual` |
+
+Known-key decryption is not proposed (it needs each server's certificate and private key in the
+FMC and every renewal mirrored there). A known-key rule already in the FMC is still understood as
+"decrypted".
 
 ## Never IPS
 
@@ -82,13 +93,18 @@ port and stay a maintained manual list.
 **Neither IPS nor decryption:** FMC-FTD management, and backup / replication / storage inside
 the data centre.
 
-Decryption rules stay manual on purpose: known-key needs each server's certificate and private
-key in the FMC, and its renewal is an operational dependency the system cannot own.
+Decryption rules stay manual on purpose: the internal CA used to re-sign is configured in the
+FMC, and the system does not own it. The recommendation shows which rule to add and what it
+should match. Under Decrypt-Resign: the internal CA must be trusted by every client; applications
+with certificate pinning or mutual TLS break (exclude them with do-not-decrypt above the rule);
+block invalid server certificates, since the client no longer sees the real one.
 
 ## Writing (`set_inspection`)
 
-The operation carries the rule's action and intrusion / file policy ids from the snapshot; the
-executor stops on any difference (drift). It sets `ipsPolicy` / `filePolicy` (and `action`
+The operation carries only what it is about in `expect`: the action and intrusion policy id for
+an IPS proposal, the file policy id for a file proposal (old plans carrying all three are still
+read). The executor stops when what is expected differs in the FMC (drift) and verifies only
+what it wrote. It sets `ipsPolicy` / `filePolicy` (and `action`
 ALLOW for a Trust rule) and, when the rule has no variable set, the FMC's built-in
 `Default-Set` (read from `/object/variablesets`). Verification reads the rule back; rollback
 restores the original rule. Order inside a changeset: after tightening, before removals.

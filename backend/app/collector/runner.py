@@ -22,7 +22,7 @@ from app.core.crypto import SecretBox
 from app.core.logging import scrub_text
 from app.fmc import trace
 from app.fmc.adapters import select_adapter
-from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
+from app.fmc.client import FmcSession, ThrottlePolicy, connection_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import server_version
 from app.models.enforce import Changeset
@@ -117,6 +117,7 @@ async def run_collection(
         host, port, username, token = conn.host, conn.port, conn.username, conn.password_enc
         context = FmcConnection.password_context(conn.id)
         connection_id = conn.id
+        pinned_cert = conn.pinned_cert
         trace.bind(connection_id=conn.id, connection_name=conn.name)
 
     def password_provider() -> bytearray:
@@ -128,7 +129,7 @@ async def run_collection(
             port=port,
             username=username,
             password_provider=password_provider,
-            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            ssl_context=connection_ssl_context(settings.fmc_ca_bundle, pinned_cert),
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(

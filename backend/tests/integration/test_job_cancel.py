@@ -310,3 +310,49 @@ def test_a_finished_run_cannot_be_cancelled(client: TestClient, admin: dict[str,
         row.status = "done"
     resp = client.post(f"/api/jobs/{run_id}/cancel", headers=admin)
     assert (resp.status_code, resp.json()["detail"]) == (409, "not_cancellable")
+
+
+def test_a_batch_whose_job_died_is_abandoned_at_once(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    """A batch left "running" by a job that is no longer queued / running (worker killed,
+    job stopped) does not wait for the stale timeout: with nothing written its changeset can
+    be cancelled; with writes journaled "finish rollback" is offered (cancel says so)."""
+    flow = Flow(client, admin)
+    unused = flow.find("remove_unused_object", "GRP_UNUSED")
+    cs_id, batch_id = flow.approved_batch([unused])
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.status, b.started_at = "running", datetime.now(UTC)  # fresh: not stale by time
+        s.add(
+            JobRun(
+                kind="batch",
+                batch_id=batch_id,
+                changeset_id=cs_id,
+                title="t",
+                requested_by="p5w-appr",
+                status="failed",
+                error="worker_lost",
+            )
+        )
+    url = f"/api/changesets/{cs_id}"
+    # Written (journaled) before the job died: roll back first.
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.journal = [{"state": "done", "op": "delete", "path": "/x"}]
+    batch = flow.opt.get(url).json()["batches"][0]
+    assert batch["rollback_resumable"] is True
+    refused = flow.opt.post(f"{url}/cancel", headers=flow.oh)
+    assert (refused.status_code, refused.json()["detail"]) == (409, "rollback_pending")
+    # Nothing written: the changeset cancels at once.
+    with get_sessionmaker().begin() as s:
+        b = s.get(Batch, batch_id)
+        assert b is not None
+        b.journal = []
+    done = flow.opt.post(f"{url}/cancel", headers=flow.oh)
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "cancelled"
+    assert _status(batch_id) == "cancelled"
+    flow.close()

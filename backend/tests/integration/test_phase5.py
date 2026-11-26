@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.session import get_sessionmaker
 from app.models.audit import AuditRecord
 from app.models.recommendations import Recommendation
@@ -109,7 +110,9 @@ def test_recommendations_carry_executable_plans(client: TestClient, admin: dict[
     )
 
 
-def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict[str, str]) -> None:
+def test_changeset_staging_batches_and_approvals(
+    client: TestClient, admin: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     sid = _analysed(client, admin)
     split = _find(client, sid, "split_rule", "MIXED_TIERS_SQL")
     rename = _find(client, sid, "rename_role", "GRP_10.30.0.0")
@@ -234,11 +237,17 @@ def test_changeset_staging_batches_and_approvals(client: TestClient, admin: dict
                 },
             )
             assert mine.status_code == 201, mine.text
-            self_approve = both.post(
-                f"/api/changesets/{mine.json()['id']}/batches/1/approve", headers=bh
-            )
+            own = f"/api/changesets/{mine.json()['id']}/batches/1/approve"
+            # Four eyes is off by default: the author may approve (here the proof is missing).
+            assert both.post(own, headers=bh).json()["detail"] == "proof_pending"
+            assert both.get(f"/api/changesets/{mine.json()['id']}").json()["four_eyes"] is False
+            monkeypatch.setenv("DF_FOUR_EYES", "true")
+            get_settings.cache_clear()
+            self_approve = both.post(own, headers=bh)
             assert self_approve.status_code == 403
             assert self_approve.json()["detail"] == "author_cannot_approve"
+            monkeypatch.delenv("DF_FOUR_EYES")
+            get_settings.cache_clear()
         if last > 1:
             out_of_order = appr.post(f"{url}/{last}/approve", headers=ah)
             assert out_of_order.json()["detail"] == "previous_batch_not_deployed"

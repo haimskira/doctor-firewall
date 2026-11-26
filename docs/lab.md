@@ -10,7 +10,13 @@ firewall in another network.
 
 ## 1. Reach the lab FMC (verified TLS)
 
-A lab FMC usually presents a self-signed certificate issued to `firepower`:
+**By IP address (simplest):** *Integrations → FMC*, type the IP, user and password, press
+*Fetch certificate*, compare the SHA-256 fingerprint with the one shown in the FMC and tick the
+confirmation. The certificate is pinned to the connection; no trust bundle or `extra_hosts` is
+needed. (The `lab_*` command-line tools below still use the CA-bundle mode.)
+
+**Optional - by name with a CA bundle:** a lab FMC usually presents a self-signed certificate
+issued to `firepower`:
 
 ```bash
 # its certificate becomes a trust anchor (site-local, not in Git)
@@ -24,7 +30,7 @@ EOF
 scripts/dev-up.sh            # builds certs/dev-trust.pem = dev CA + extra-ca.pem
 ```
 
-Then add the FMC under *Integrations → FMC* with host `firepower`.
+Then add the FMC under *Integrations → FMC* with host `firepower` (no pin).
 
 ## 2. Build the mess (≈10 000 objects, 3 000 rules)
 
@@ -61,13 +67,13 @@ device and matched to the scenario's address plan (`python -m app.tools.lab_ops 
   address* (FMC 10.1.1 returns `"ipv4": {"static": {}}`); static routes for every scenario range.
 * **objects** — VLAN tags and groups, URLs and URL groups, time ranges, ICMPv4 / v6, custom SGTs,
   an interface group.
-* **inspection** — intrusion policies per tier (`DF-IPS-GOLD` on Maximum Detection ...
-  one detection-only) and a file policy.
-* **decryption** — an internal CA and certificate (generated in memory), `DF-LAB-SSL` with one
-  rule per action, an identity policy; **link** attaches both to every access policy.
+* **inspection** — the organisation's one intrusion policy (`DF-IPS`, Maximum Detection),
+  one detection-only policy left as the mess, and a file policy.
+* **decryption** — an internal CA (generated in memory), `DF-LAB-SSL` with one
+  rule per action (Decrypt-Resign on HTTPS included), an identity policy; **link** attaches both to every access policy.
 
 Run order for a full rebuild: `lab_dryrun wipe` → `lab_ops all` → `lab_dryrun load` (its rules
-then also carry zones, tier IPS, file policy, SGT, VLAN, URL and time conditions on part of the
+then also carry zones, the IPS, file policy, SGT, VLAN, URL and time conditions on part of the
 rulebase, from `/work/ops.json`) → `lab_ops link`.
 
 What FMC 10.1.1 / FTDv 7.7 taught (the adapter follows it):

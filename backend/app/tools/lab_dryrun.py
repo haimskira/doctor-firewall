@@ -72,7 +72,7 @@ class DryRun(Loader):
         super().__init__(fmc, work, scenario, next(iter(scenario.policies)))
         self.m.setdefault("policies", {})
         self.m.setdefault("dynamic", {})
-        # The operational layer (lab_ops): zones, tier IPS, file policy, SGT, VLAN, URL, time.
+        # The operational layer (lab_ops): zones, the IPS, file policy, SGT, VLAN, URL, time.
         ops_path = work / "ops.json"
         self.ops: dict[str, Any] = (
             json.loads(ops_path.read_text(encoding="utf-8")) if ops_path.is_file() else {}
@@ -352,13 +352,13 @@ class DryRun(Loader):
             body["sourceZones"] = {"objects": [z_src]}
             body["destinationZones"] = {"objects": [z_dst]}
         allow = r.action == "ALLOW"
-        tier_ips = self._ref("ips", f"DF-IPS-{dst}") if dst else None
+        tier_ips = self._ref("ips", "DF-IPS") if dst else None
         if "ipsPolicy" in body and tier_ips:
             body["ipsPolicy"] = tier_ips
         elif allow and "ipsPolicy" in body and dst == "GOLD" and h % 7 == 0:
             body["ipsPolicy"] = self._ref("ips", "DF-IPS-LEGACY-DETECT") or body["ipsPolicy"]
         elif allow and tier_ips and variables is not None and h < 40:
-            # About 40% of the allow rules carry their tier's IPS; the rest is the mess.
+            # About 40% of the allow rules carry the organisation's IPS; the rest is the mess.
             body["ipsPolicy"] = tier_ips
             body["variableSet"] = {
                 "id": variables["id"],

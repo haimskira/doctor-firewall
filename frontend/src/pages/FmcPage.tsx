@@ -3,7 +3,7 @@ import type { SyntheticEvent } from 'react';
 import { SortedTable } from '../components/sort';
 
 import { api, errorCode } from '../api/client';
-import type { FmcConnection, FmcTestResult } from '../api/types';
+import type { FmcCertificate, FmcConnection, FmcTestResult } from '../api/types';
 import { Alert, DateTime, Ltr } from '../components/common';
 import { useI18n } from '../i18n/I18nProvider';
 
@@ -27,6 +27,11 @@ export function FmcPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [testing, setTesting] = useState<number | null>(null);
+  // The certificate read from the FMC, and the admin's confirmation of its fingerprint.
+  const [cert, setCert] = useState<FmcCertificate | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [clearPin, setClearPin] = useState(false);
 
   const fail = useCallback(
     (err: unknown) => {
@@ -41,7 +46,32 @@ export function FmcPage() {
 
   useEffect(reload, [reload]);
 
+  function resetPin() {
+    setCert(null);
+    setConfirmed(false);
+    setClearPin(false);
+  }
+
+  async function fetchCertificate() {
+    setFetching(true);
+    setMessage(null);
+    resetPin();
+    try {
+      setCert(
+        await api<FmcCertificate>('/api/fmc/connections/certificate', 'POST', {
+          host: form.host.trim(),
+          port: Number(form.port),
+        }),
+      );
+    } catch (err: unknown) {
+      fail(err);
+    } finally {
+      setFetching(false);
+    }
+  }
+
   function startEdit(conn: FmcConnection) {
+    resetPin();
     setEditingId(conn.id);
     setForm({
       name: conn.name,
@@ -68,6 +98,7 @@ export function FmcPage() {
           ...base,
           password: form.password,
           sync_interval_minutes: sync,
+          ...(cert !== null && confirmed ? { pinned_cert: cert.pem } : {}),
         });
       } else {
         await api<FmcConnection>(
@@ -76,12 +107,15 @@ export function FmcPage() {
           {
             ...base,
             ...(form.password === '' ? {} : { password: form.password }),
+            ...(cert !== null && confirmed ? { pinned_cert: cert.pem } : {}),
+            ...(clearPin && cert === null ? { clear_pin: true } : {}),
             ...(sync === null ? { disable_sync: true } : { sync_interval_minutes: sync }),
           },
         );
       }
       setForm(EMPTY);
       setEditingId(null);
+      resetPin();
       setMessage(null);
       reload();
     } catch (err: unknown) {
@@ -136,7 +170,8 @@ export function FmcPage() {
     form.username !== '' &&
     /^\d{1,5}$/.test(form.port) &&
     (form.sync.trim() === '' || /^\d{2,5}$/.test(form.sync.trim())) &&
-    (!creating || form.password !== '');
+    (!creating || form.password !== '') &&
+    (cert === null || confirmed);
 
   return (
     <div className="stack">
@@ -154,6 +189,7 @@ export function FmcPage() {
                 <tr>
                   {th('name', t('fmc.name'))}
                   {th('host', t('fmc.host'))}
+                  <th>{t('fmc.pin')}</th>
                   {th('user', t('fmc.username'))}
                   {th('version', t('fmc.version'))}
                   {th('domain', t('fmc.domain'))}
@@ -170,6 +206,15 @@ export function FmcPage() {
                     <Ltr>
                       {conn.host}:{conn.port}
                     </Ltr>
+                  </td>
+                  <td>
+                    {conn.pinned_sha256 === null ? (
+                      t('fmc.pinNone')
+                    ) : (
+                      <Ltr>
+                        <code title={conn.pinned_sha256}>{conn.pinned_sha256.slice(0, 23)}…</code>
+                      </Ltr>
+                    )}
                   </td>
                   <td>
                     <Ltr>{conn.username}</Ltr>
@@ -235,6 +280,8 @@ export function FmcPage() {
               value={form.host}
               onChange={(e) => {
                 setForm({ ...form, host: e.target.value });
+                setCert(null);
+                setConfirmed(false);
               }}
             />
           </label>
@@ -247,6 +294,8 @@ export function FmcPage() {
               value={form.port}
               onChange={(e) => {
                 setForm({ ...form, port: e.target.value });
+                setCert(null);
+                setConfirmed(false);
               }}
             />
           </label>
@@ -289,6 +338,62 @@ export function FmcPage() {
               }}
             />
           </label>
+          <div className="stack" style={{ gridColumn: '1 / -1' }}>
+            <p className="muted">{t('fmc.pinHelp')}</p>
+            {!creating && (
+              <p className="muted">
+                {t('fmc.pinCurrent')}{' '}
+                <Ltr>{connections.find((c) => c.id === editingId)?.pinned_sha256 ?? t('fmc.pinNone')}</Ltr>
+              </p>
+            )}
+            <div className="row">
+              <button
+                type="button"
+                className="secondary"
+                disabled={fetching || form.host.trim() === '' || !/^\d{1,5}$/.test(form.port)}
+                onClick={() => void fetchCertificate()}
+              >
+                {fetching ? t('common.loading') : t('fmc.fetchCert')}
+              </button>
+              {!creating && cert === null && (
+                <label className="row">
+                  <input
+                    type="checkbox"
+                    checked={clearPin}
+                    onChange={(e) => {
+                      setClearPin(e.target.checked);
+                    }}
+                  />
+                  {t('fmc.clearPin')}
+                </label>
+              )}
+            </div>
+            {cert !== null && (
+              <div className="card" data-testid="fmc-cert">
+                <dl>
+                  <dt>{t('fmc.cert.subject')}</dt>
+                  <dd><Ltr>{cert.subject}</Ltr></dd>
+                  <dt>{t('fmc.cert.issuer')}</dt>
+                  <dd><Ltr>{cert.issuer}</Ltr></dd>
+                  <dt>{t('fmc.cert.validity')}</dt>
+                  <dd><DateTime value={cert.not_before} /> – <DateTime value={cert.not_after} /></dd>
+                  <dt>SHA-256</dt>
+                  <dd><Ltr><code>{cert.sha256}</code></Ltr></dd>
+                </dl>
+                {!cert.self_signed && <p className="muted">{t('fmc.cert.notSelfSigned')}</p>}
+                <label className="row">
+                  <input
+                    type="checkbox"
+                    checked={confirmed}
+                    onChange={(e) => {
+                      setConfirmed(e.target.checked);
+                    }}
+                  />
+                  {t('fmc.cert.confirm')}
+                </label>
+              </div>
+            )}
+          </div>
           <div className="row">
             <button type="submit" disabled={!formValid}>
               {t('common.save')}

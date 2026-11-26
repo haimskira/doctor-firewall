@@ -39,9 +39,10 @@ RECOMMENDATIONS: dict[str, str] = {
     "merge_rules": "Merge adjacent rules that differ only by their sources.",
     "tighten_source": "Replace an any source behind zones with the networks behind them.",
     "tighten_ports": "Open only the ports the destination assets declare.",
-    "add_inspection": "Attach the IPS / file policy the destination tier requires.",
+    "add_inspection": "Attach the organisation's intrusion policy (IPS) to an allow rule.",
+    "add_file_policy": "Attach the organisation's file policy to a rule reaching GOLD or SILVER.",
     "ssl_exempt_core": "Exempt CORE services from decryption.",
-    "ssl_decrypt_inbound": "Decrypt inbound traffic to servers with known keys.",
+    "ssl_decrypt_inbound": "Decrypt-Resign HTTPS (TCP/443) to GOLD and SILVER servers.",
     "fastpath_candidate": "Consider fastpath for heavy traffic between known data-centre systems.",
     "remove_unused_object": "Delete an object nothing uses.",
 }

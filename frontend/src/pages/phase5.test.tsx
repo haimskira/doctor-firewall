@@ -232,8 +232,14 @@ describe('DeployPage', () => {
     expect(within(batch).getByRole('button', { name: 'Recompute the traffic proof' })).toBeEnabled();
   });
 
-  it('never offers approval to the author', async () => {
+  it('offers approval to the author when four eyes is off (the default)', async () => {
     setup(me('opt', ['policy:read', 'changeset:write', 'deploy:approve']), CS);
+    const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
+    expect(within(panel).queryByText(/You authored this changeset/)).not.toBeInTheDocument();
+  });
+
+  it('never offers approval to the author when four eyes is on', async () => {
+    setup(me('opt', ['policy:read', 'changeset:write', 'deploy:approve']), { ...CS, four_eyes: true });
     const panel = await screen.findByRole('region', { name: 'Q4 clean-up' });
     expect(within(panel).getByText(/You authored this changeset/)).toBeInTheDocument();
     expect(within(panel).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();

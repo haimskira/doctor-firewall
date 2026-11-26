@@ -31,6 +31,9 @@ class FmcConnection(Base):
     username: Mapped[str] = mapped_column(String(128), nullable=False)
     password_enc: Mapped[str] = mapped_column(Text, nullable=False)
     # Discovered from the generatetoken response; kept as a parameter for every call.
+    # PEM of the one FMC certificate this connection trusts (pinning, confirmed by an admin);
+    # NULL = verify against the CA bundle and the host name.
+    pinned_cert: Mapped[str | None] = mapped_column(Text)
     domain_uuid: Mapped[str | None] = mapped_column(String(36))
     server_version: Mapped[str | None] = mapped_column(String(128))
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

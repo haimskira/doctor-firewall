@@ -1,4 +1,4 @@
-"""Phase 6 units: intrusion policy strength, IPS exemptions, the set_inspection plan."""
+"""Phase 6 units: IPS exemptions, the set_inspection plans (IPS / file), Decrypt-Resign."""
 
 from __future__ import annotations
 
@@ -7,19 +7,18 @@ from typing import Any
 
 from app.analysis.expand import Leaves
 from app.analysis.inspection import (
-    CORE_IDENTITY,
     DEMAND_ORDER,
     DOCTRINE,
+    HTTPS_APPS,
+    HTTPS_PORT,
     NEVER_DECRYPT,
-    TLS_APPS,
-    TLS_PORTS,
-    core_service,
+    SslAdvisor,
     ips_exemption,
     ips_level,
 )
 from app.analysis.score import AssetIndex
 from app.analysis.space import PortSet
-from app.enforce.batching import KIND_ORDER
+from app.enforce.batching import KIND_ORDER, Item, conflicts, separate
 from app.enforce.plan import PlanBuilder, touched
 
 RULE = {"policy": "p1", "policy_kind": "access", "id": "r1", "name": "APP_TO_GOLD"}
@@ -38,11 +37,13 @@ def test_ips_level_by_name_then_base_policy() -> None:
 
 
 def test_doctrine_table() -> None:
-    assert DOCTRINE["GOLD"].min_level == 4
+    # One intrusion policy for the organisation: the tier only decides the file policy and urgency.
     assert DOCTRINE["GOLD"].file_policy
     assert DOCTRINE["SILVER"].file_policy
+    assert not DOCTRINE["CORE"].file_policy
     assert not DOCTRINE["BRONZE"].file_policy
-    assert DOCTRINE["BRONZE"].default_ips == "Balanced Security and Connectivity"
+    assert DOCTRINE["GOLD"].priority > DOCTRINE["SILVER"].priority > DOCTRINE["BRONZE"].priority
+    assert DEMAND_ORDER.index("SILVER") < DEMAND_ORDER.index("CORE") < DEMAND_ORDER.index("BRONZE")
 
 
 def test_set_inspection_plan() -> None:
@@ -51,15 +52,15 @@ def test_set_inspection_plan() -> None:
         RULE,
         {"action": "TRUST", "ips": None, "file": None},
         ips={"id": "i4", "name": "Maximum Detection"},
-        file={"id": "f1", "name": "Block Malware"},
         action="ALLOW",
     )
     plan = pb.build()
     assert plan["executable"] is True
     (op,) = plan["ops"]
-    assert op["expect"] == {"name": "APP_TO_GOLD", "action": "TRUST", "ips": None, "file": None}
+    # An intrusion-policy op expects the action and the intrusion policy, not the file policy.
+    assert op["expect"] == {"name": "APP_TO_GOLD", "action": "TRUST", "ips": None}
     assert op["ips"] == {"id": "i4", "name": "Maximum Detection", "type": "IntrusionPolicy"}
-    assert op["file"]["type"] == "FilePolicy"
+    assert "file" not in op
     assert op["action"] == "ALLOW"
     assert touched(plan)["rules"] == {"p1/r1"}
 
@@ -74,9 +75,71 @@ def test_set_inspection_plan() -> None:
     assert prefilter.build()["blocked"] == ["unsupported_rule_kind:prefilter"]
 
 
+def test_file_policy_plan_expects_only_the_file_policy() -> None:
+    pb = PlanBuilder()
+    pb.set_inspection(
+        RULE,
+        {"action": "ALLOW", "ips": "i4", "file": None},
+        file={"id": "f1", "name": "Block Malware"},
+    )
+    (op,) = pb.build()["ops"]
+    assert op["expect"] == {"name": "APP_TO_GOLD", "file": None}
+    assert op["file"] == {"id": "f1", "name": "Block Malware", "type": "FilePolicy"}
+    assert "ips" not in op
+    assert "action" not in op
+
+
+def _item(key: str, kind: str, *ops: dict[str, Any]) -> Item:
+    plan = {"version": 1, "ops": list(ops), "executable": True, "blocked": []}
+    return Item(key, kind, key, plan, frozenset({"c"}))
+
+
+def _ips_plan() -> dict[str, Any]:
+    pb = PlanBuilder()
+    pb.set_inspection(
+        RULE, {"action": "ALLOW", "ips": None, "file": None}, ips={"id": "i", "name": "n"}
+    )
+    op: dict[str, Any] = pb.build()["ops"][0]
+    return op
+
+
+def _file_plan() -> dict[str, Any]:
+    pb = PlanBuilder()
+    pb.set_inspection(
+        RULE, {"action": "ALLOW", "ips": None, "file": None}, file={"id": "f", "name": "n"}
+    )
+    op: dict[str, Any] = pb.build()["ops"][0]
+    return op
+
+
+def test_ips_and_file_on_one_rule_stage_together_but_nothing_else_does() -> None:
+    ips = _item("ips", "add_inspection", _ips_plan())
+    file = _item("file", "add_file_policy", _file_plan())
+    assert conflicts([ips, file]) == []
+    taken, held = separate([ips, file])
+    assert [i.key for i in taken] == ["ips", "file"]
+    assert held == []
+
+    # Two intrusion-policy ops on the same rule still clash (second one is held).
+    other_ips = _item("ips2", "add_inspection", _ips_plan())
+    assert [c.reason for c in conflicts([ips, other_ips])] == ["same_rule"]
+    assert [
+        c.second for c in conflicts([file, _item("file2", "add_file_policy", _file_plan())])
+    ] == ["file2"]
+    # A rule edit (any other operation) on the rule clashes with both.
+    edit = {"op": "update_rule", "policy": "p1", "rule": "r1", "set": {}}
+    rule_edit = _item("edit", "tighten_ports", edit)
+    assert [c.reason for c in conflicts([rule_edit, ips])] == ["same_rule"]
+    assert [c.reason for c in conflicts([file, rule_edit])] == ["same_rule"]
+    # An old plan that wrote both policies in one op clashes with each of the two.
+    both = _item("both", "add_inspection", {**_ips_plan(), "file": _file_plan()["file"]})
+    assert [c.reason for c in conflicts([both, file])] == ["same_rule"]
+
+
 def test_inspection_runs_after_tightening() -> None:
     assert KIND_ORDER.index("tighten_ports") < KIND_ORDER.index("add_inspection")
-    assert KIND_ORDER.index("add_inspection") < KIND_ORDER.index("remove_dead_rule")
+    assert KIND_ORDER.index("add_inspection") < KIND_ORDER.index("add_file_policy")
+    assert KIND_ORDER.index("add_file_policy") < KIND_ORDER.index("remove_dead_rule")
 
 
 # ---- IPS wherever it can run; fastpath only for heavy / fragile traffic between known systems
@@ -105,21 +168,6 @@ def _info(src: list[str] | None, dst: list[str] | None, ports: list[str] | None)
 def _exempt(src: list[str] | None, dst: list[str] | None, ports: list[str] | None) -> list[str]:
     estate: Any = SimpleNamespace(assets=ASSETS)
     return [e.key for e in ips_exemption(estate, _info(src, dst, ports))]
-
-
-def test_core_is_access_not_inspection_identity_gets_gold_ips() -> None:
-    assert DOCTRINE["CORE"].min_level == 2  # DNS / patching: balanced
-    assert not DOCTRINE["CORE"].file_policy
-    assert CORE_IDENTITY.min_level == 4
-    assert not CORE_IDENTITY.file_policy
-    assert DEMAND_ORDER.index("SILVER") < DEMAND_ORDER.index("CORE") < DEMAND_ORDER.index("BRONZE")
-    dns = ["10.30.0.1"]
-    assert core_service(_info(None, dns, ["UDP/53", "TCP/53"])) == "dns_patching"
-    assert core_service(_info(None, dns, ["TCP/8530"])) == "dns_patching"
-    assert core_service(_info(None, dns, ["TCP/88", "UDP/88"])) == "identity"  # Kerberos
-    assert core_service(_info(None, dns, ["UDP/53", "TCP/445"])) == "identity"  # + SMB
-    assert core_service(_info(None, dns, ["TCP/9999"])) == "identity"  # unknown: strongest
-    assert core_service(_info(None, dns, None)) == "identity"  # any port
 
 
 def test_ntp_to_core_from_known_sources_is_a_fastpath_candidate() -> None:
@@ -157,8 +205,100 @@ def test_routing_bfd_and_management_need_small_explicit_ends() -> None:
     assert _exempt(None, ["192.0.2.2"], ["TCP/179"]) == []  # any
 
 
-def test_never_decrypt_and_tls_exposure_do_not_overlap() -> None:
+def test_never_decrypt_and_https_do_not_overlap() -> None:
     ldaps = PortSet.build(["TCP/636"])
     assert NEVER_DECRYPT.covers(ldaps)
-    assert not TLS_PORTS.intersects(ldaps)
-    assert "LDAPS" not in TLS_APPS
+    assert not HTTPS_PORT.intersects(ldaps)
+    assert "LDAPS" not in HTTPS_APPS
+    assert "IMAPS" not in HTTPS_APPS  # only HTTPS is decrypted
+
+
+# ---- Decrypt-Resign: HTTPS only, GOLD / SILVER only
+
+SSL_ASSETS = [
+    SimpleNamespace(network="10.20.0.0/24", system="SQL-FIN", tier="GOLD"),
+    SimpleNamespace(network="10.30.0.0/24", system="PORTAL", tier="SILVER"),
+    SimpleNamespace(network="10.40.0.0/24", system="DNS", tier="CORE"),
+]
+ACP: Any = SimpleNamespace(fmc_id="acp", name="ACP", kind="access", links=[{"id": "ssl"}])
+SSL: Any = SimpleNamespace(fmc_id="ssl", name="SSL", kind="decryption", links=[])
+
+
+def _access(dst: str, ports: list[str], tiers: tuple[str, ...], apps: tuple[str, ...] = ()) -> Any:
+    rule = SimpleNamespace(enabled=True, rule_index=1, name="WEB", fmc_id="r1", action="ALLOW")
+    refs = {"app": [SimpleNamespace(label=a) for a in apps]}
+    return SimpleNamespace(
+        rule=rule,
+        permit=True,
+        unmodelled=False,
+        refs=refs,
+        score=SimpleNamespace(shadowed_by=None, dst_tiers=tiers),
+        leaves={"dst_net": Leaves(addresses={dst}), "dst_port": Leaves(ports=set(ports))},
+    )
+
+
+def _decrypt(action: str, dst: list[str], ports: list[str] | None) -> Any:
+    rule = SimpleNamespace(enabled=True, rule_index=1, name=action, fmc_id=action, action=action)
+    leaves = {"dst_net": Leaves(addresses=set(dst))}
+    if ports is not None:
+        leaves["dst_port"] = Leaves(ports=set(ports))
+    return SimpleNamespace(rule=rule, permit=False, unmodelled=False, refs={}, leaves=leaves)
+
+
+def _advise(access: list[Any], decryption: list[Any]) -> list[Any]:
+    estate: Any = SimpleNamespace(asset_rows=SSL_ASSETS)
+    advisor = SslAdvisor(estate)
+    advisor.access(ACP, access)
+    advisor.decryption_policy(SSL, decryption)
+    return advisor._decrypt_inbound()
+
+
+def test_resign_is_proposed_for_https_only() -> None:
+    web = _access("10.20.0.0/24", ["TCP/443"], ("GOLD",))
+    (draft,) = _advise([web], [])
+    (new_rule,) = draft.preview["after"]
+    assert new_rule["action"] == "DECRYPT_RESIGN"  # never known-key
+    assert new_rule["fields"] == {"dst_net": ["SQL-FIN"], "dst_port": ["TCP/443"]}
+    assert "Decrypt-Resign" in draft.title
+    assert "HTTPS" in draft.title
+    assert draft.warnings == ["resign_ca_trust", "resign_pinning_mtls", "resign_invalid_cert"]
+    assert draft.plan["blocked"] == ["decryption_rule_manual"]
+    # An application-based HTTPS rule counts; other TLS ports and protocols do not.
+    assert _advise([_access("10.20.0.0/24", ["TCP/9999"], ("GOLD",), apps=("HTTPS",))], [])
+    for ports in (["TCP/8443"], ["TCP/993"], ["TCP/636"], ["TCP/22"]):
+        assert _advise([_access("10.20.0.0/24", ports, ("GOLD",))], []) == []
+
+
+def test_one_rule_covers_gold_and_silver_systems_missing_it() -> None:
+    gold = _access("10.20.0.0/24", ["TCP/443"], ("GOLD",))
+    silver = _access("10.30.0.0/24", ["TCP/443"], ("SILVER",))
+    (draft,) = _advise([gold, silver], [])
+    assert draft.preview["systems"] == ["PORTAL", "SQL-FIN"]
+    assert draft.priority == 65  # a GOLD system is in
+
+
+def test_resign_is_never_proposed_for_core() -> None:
+    dns = _access("10.40.0.0/24", ["TCP/443"], ("CORE",))
+    assert _advise([dns], []) == []
+
+
+def test_existing_decryption_settles_the_system() -> None:
+    web = _access("10.20.0.0/24", ["TCP/443"], ("GOLD",))
+    for action in ("DECRYPT_RESIGN", "DECRYPT_KNOWN_KEY"):
+        assert _advise([web], [_decrypt(action, ["10.20.0.0/24"], ["TCP/443"])]) == []
+        assert _advise([web], [_decrypt(action, ["10.20.0.0/24"], None)]) == []  # any port
+    # Decrypting another port does not cover HTTPS.
+    assert _advise([web], [_decrypt("DECRYPT_RESIGN", ["10.20.0.0/24"], ["TCP/8443"])])
+    # Do-not-decrypt over the system is a deliberate exclusion: nothing to propose.
+    assert _advise([web], [_decrypt("DO_NOT_DECRYPT", ["10.20.0.0/24"], ["TCP/443"])]) == []
+    # ... unless a decrypt rule comes first for the same traffic, which also settles it.
+    assert (
+        _advise(
+            [web],
+            [
+                _decrypt("DECRYPT_RESIGN", ["10.20.0.0/24"], ["TCP/443"]),
+                _decrypt("DO_NOT_DECRYPT", ["10.20.0.0/24"], ["TCP/443"]),
+            ],
+        )
+        == []
+    )

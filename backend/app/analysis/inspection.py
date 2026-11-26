@@ -1,20 +1,18 @@
-"""Phase 6: inspection where the doctrine wants it — IPS / file policy and SSL decryption.
+"""Phase 6: inspection where the doctrine wants it — IPS, file policy and SSL decryption.
 
 Access and inspection are two separate layers (doctrine): the rule decides whether a flow is
-allowed, the inspection profile what is done to an allowed flow, and the two are crossed by
-the tier of the **destination** — east-west included (a SILVER app calling a GOLD database
-gets GOLD inspection):
+allowed, the inspection what is done to an allowed flow. The organisation has **one** intrusion
+policy, **one** file policy and **one** decryption policy — no per-tier profiles. The tier of the
+destination only decides *whether* a rule needs inspection and how urgent it is:
 
-========  ======================  ==========================  ==============
-tier      decryption              IPS                         file / malware
-========  ======================  ==========================  ==============
-CORE      no (do-not-decrypt)     identity: GOLD's full IPS   no
-                                  DNS / patching: balanced
-                                  NTP: fastpath
-GOLD      yes, inbound known-key  full, aggressive            yes
-SILVER    selective               full / balanced             yes
-BRONZE    by exposure             balanced                    optional
-========  ======================  ==========================  ==============
+========  ==================================  ==================  =======================
+tier      IPS (the organisation's policy)     file policy         decryption
+========  ==================================  ==================  =======================
+CORE      yes (NTP and storage: fastpath)     no                  never (do-not-decrypt)
+GOLD      yes                                 yes                 Decrypt-Resign, HTTPS
+SILVER    yes                                 yes                 Decrypt-Resign, HTTPS
+BRONZE    yes                                 no                  no
+========  ==================================  ==================  =======================
 
 IPS is the rule, everywhere it can run. The only exemptions are traffic Snort would break or
 drown in **and** that stays between known systems (``IPS_EXEMPT``): storage, replication,
@@ -22,13 +20,15 @@ routing protocols, BFD, FMC-FTD management inside the data centre, and NTP to CO
 are proposed for fastpath (``fastpath_candidate``) instead of getting an intrusion policy.
 Traffic from the WAN is never exempt — an exemption needs both ends inside.
 
-Decryption is the opposite: never on CORE systems, nor on identity / management services by
-port (``NEVER_DECRYPT``) wherever they are.
+The intrusion policy and the file policy are two separate recommendations on a rule
+(``add_inspection`` and ``add_file_policy``): each is an ordinary executable plan, they write
+different fields and can be deployed together or one after the other.
 
-The system proposes *where*. Attaching an intrusion / file policy to an access rule is an
-ordinary executable plan (approved and deployed like any other change); decryption and fastpath
-rules are proposals only — they depend on certificates, keys and a prefilter design the system
-does not own.
+Decryption is Decrypt-Resign on HTTPS only (TCP/443), for the systems whose traffic the IPS and
+the file policy cannot read otherwise (GOLD, SILVER). Never on CORE systems, nor on identity /
+management services by port (``NEVER_DECRYPT``) wherever they are. Decryption and fastpath rules
+are proposals only — they depend on the internal CA and a prefilter design the system does not
+own.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.expand import build_space
@@ -57,8 +57,8 @@ from app.analysis.recommend import (
 )
 from app.analysis.space import AddressSet, PortSet
 from app.enforce.plan import PlanBuilder
-from app.models.inventory import Policy
-from app.models.recommendations import INSPECTION_TIERS, InspectionProfile
+from app.models.inventory import Policy, Rule
+from app.models.recommendations import ORG_PROFILE, InspectionProfile
 
 # Cisco's built-in intrusion policies, weakest to strongest. Custom policies are ranked by
 # their base policy; a policy that matches none of these is not judged.
@@ -69,10 +69,11 @@ IPS_LEVELS = (
     ("security over connectivity", 3),
     ("maximum detection", 4),
 )
+# Any decrypt action counts as "already decrypted" (an existing known-key rule decrypts too).
 DECRYPT_ACTIONS = frozenset({"DECRYPT_RESIGN", "DECRYPT_KNOWN_KEY"})
-# TLS a known-key rule could open for the IPS. LDAPS is TLS but never decrypted (NEVER_DECRYPT).
-TLS_PORTS = PortSet.build(["TCP/443", "TCP/8443", "TCP/9443", "TCP/993", "TCP/995", "TCP/465"])
-TLS_APPS = frozenset({"HTTPS", "SSL", "TLS", "IMAPS", "POP3S", "SMTPS"})
+# Only HTTPS is decrypted: other TLS (mail, LDAPS, 8443 ...) is left alone.
+HTTPS_PORT = PortSet.build(["TCP/443"])
+HTTPS_APPS = frozenset({"HTTPS", "SSL"})
 SAMPLE = 20
 
 # Services never decrypted, wherever they run: identity (LDAPS, global catalog over TLS,
@@ -138,59 +139,71 @@ _EXEMPT_ALL = PortSet.build(
 
 @dataclass(frozen=True)
 class Need:
-    min_level: int  # weakest acceptable intrusion policy (IPS_LEVELS)
     file_policy: bool
-    default_ips: str
     priority: int
 
 
+# The tier decides whether a rule also needs a file policy and how urgent the work is. The IPS
+# itself is wanted on every tier.
 DOCTRINE = {
-    # CORE is a tier for access, not for inspection. Its profile is the one for DNS and
-    # patching (balanced); identity services (AD / DC, PKI) get GOLD's full IPS (CORE_IDENTITY)
-    # and NTP is proposed for fastpath. No file policy, and never decrypted.
-    "CORE": Need(2, False, "Balanced Security and Connectivity", 60),
-    "GOLD": Need(4, True, "Maximum Detection", 70),
-    "SILVER": Need(2, True, "Security Over Connectivity", 55),
-    "BRONZE": Need(2, False, "Balanced Security and Connectivity", 40),
+    "CORE": Need(False, 60),
+    "GOLD": Need(True, 70),
+    "SILVER": Need(True, 55),
+    "BRONZE": Need(False, 40),
 }
-# A rule reaching several tiers gets the most demanding one (SILVER before CORE: the same
-# default IPS strength plus a file policy).
+# A rule reaching several tiers gets the most demanding one.
 DEMAND_ORDER = ("GOLD", "SILVER", "CORE", "BRONZE")
-
-# "AD is CORE for access and GOLD for inspection": a rule to CORE gets GOLD's intrusion policy
-# (no file policy) unless every service it allows is DNS or patching. Any port, an unknown
-# port, or an identity port (Kerberos, LDAP, Global Catalog, SMB, RPC) means identity.
-CORE_IDENTITY = Need(4, False, "Maximum Detection", 70)
-CORE_BALANCED = PortSet.build(["TCP/53", "UDP/53", "TCP/8530-8531"])  # DNS, WSUS
-
-
-def core_service(info: RuleInfo) -> str:
-    """``identity`` or ``dns_patching`` for a rule whose destination is CORE."""
-    ports = build_space(info.leaves).dst_port
-    if ports.any or ports.tokens or not ports.by_protocol or not CORE_BALANCED.covers(ports):
-        return "identity"
-    return "dns_patching"
 
 
 @dataclass(frozen=True)
 class Profile:
-    tier: str
+    """The organisation's intrusion / file policy (names as in the FMC)."""
+
     ips_policy: str | None
     file_policy: str | None
-    configured: bool
+    configured: bool  # a row was saved (a value may still come from the snapshot)
+    ips_default: bool  # the intrusion policy is the one most allow rules already carry
+    file_default: bool
 
 
-def load_profiles(session: Session) -> dict[str, Profile]:
-    """The tier -> intrusion / file policy mapping (doctrine defaults where not configured)."""
-    rows = {p.tier: p for p in session.scalars(select(InspectionProfile))}
-    out: dict[str, Profile] = {}
-    for tier in INSPECTION_TIERS:
-        row = rows.get(tier)
-        if row is None:
-            out[tier] = Profile(tier, DOCTRINE[tier].default_ips, None, configured=False)
-        else:
-            out[tier] = Profile(tier, row.ips_policy, row.file_policy, configured=True)
-    return out
+def most_used(session: Session, snapshot_id: int, column: Any) -> str | None:
+    """The policy name carried by most enabled allow rules of the snapshot (ties: by name)."""
+    count = func.count()
+    row = session.execute(
+        select(column, count)
+        .where(
+            Rule.snapshot_id == snapshot_id,
+            Rule.policy_kind == "access",
+            Rule.enabled.is_(True),
+            Rule.action == "ALLOW",
+            column.is_not(None),
+        )
+        .group_by(column)
+        .order_by(count.desc(), column)
+        .limit(1)
+    ).first()
+    return str(row[0]) if row is not None else None
+
+
+def load_profile(session: Session, snapshot_id: int | None) -> Profile:
+    """The saved profile; what it leaves open is the policy most allow rules already carry."""
+    row = session.get(InspectionProfile, ORG_PROFILE)
+    ips = row.ips_policy if row is not None else None
+    file = row.file_policy if row is not None else None
+    ips_default = ips is None and snapshot_id is not None
+    file_default = file is None and snapshot_id is not None
+    if snapshot_id is not None:
+        if ips is None:
+            ips = most_used(session, snapshot_id, Rule.ips_policy)
+        if file is None:
+            file = most_used(session, snapshot_id, Rule.file_policy)
+    return Profile(
+        ips,
+        file,
+        configured=row is not None,
+        ips_default=ips_default and ips is not None,
+        file_default=file_default and file is not None,
+    )
 
 
 def ips_level(name: str | None, base: str | None = None) -> int | None:
@@ -203,12 +216,6 @@ def ips_level(name: str | None, base: str | None = None) -> int | None:
             if keyword in lowered:
                 return level
     return None
-
-
-def _policy_level(policy: Policy | None, name: str | None) -> int | None:
-    if policy is not None:
-        return ips_level(policy.name, str(policy.attrs.get("base_policy") or "") or None)
-    return ips_level(name)
 
 
 def _by_name(estate: Estate, kind: str) -> dict[str, Policy]:
@@ -291,12 +298,14 @@ def _view(
 
 
 def recommend_inspection(
-    estate: Estate, policy: Policy, rules: list[RuleInfo], profiles: dict[str, Profile]
+    estate: Estate, policy: Policy, rules: list[RuleInfo], profile: Profile
 ) -> list[Draft]:
-    """Access rules whose destination tier needs more inspection than they have."""
+    """Allow rules that miss the organisation's intrusion policy (``add_inspection``) or, for
+    GOLD / SILVER destinations, a file policy (``add_file_policy``) — two separate proposals."""
     intrusion = _by_name(estate, "intrusion")
     files = _by_name(estate, "file")
-    by_id = {p.fmc_id: p for p in estate.policies.values() if p.kind == "intrusion"}
+    ips_target = intrusion.get(profile.ips_policy) if profile.ips_policy else None
+    file_target = files.get(profile.file_policy) if profile.file_policy else None
     evaluator = Evaluator(estate)
     drafts: list[Draft] = []
     for info in rules:
@@ -314,94 +323,60 @@ def recommend_inspection(
         tier = _destination_tier(info)
         if tier is None:
             continue
-        need, profile = DOCTRINE[tier], profiles[tier]
-        service = core_service(info) if tier == "CORE" else None
-        if service == "identity":
-            # CORE for access, GOLD for inspection: GOLD's intrusion policy, no file policy.
-            gold = profiles["GOLD"]
-            need, profile = CORE_IDENTITY, Profile("CORE", gold.ips_policy, None, gold.configured)
-        target = intrusion.get(profile.ips_policy) if profile.ips_policy else None
-        target_level = _policy_level(target, profile.ips_policy)
-        required = target_level if target_level is not None else need.min_level
-        current_level = _policy_level(
-            by_id.get(r.ips_policy_id or "") or intrusion.get(r.ips_policy or ""), r.ips_policy
-        )
         trust = r.action == "TRUST"
         ips_ok = (
             not trust
             and r.ips_policy is not None
             and (
                 r.ips_policy == profile.ips_policy
-                or current_level is None
-                or current_level >= required
+                or (ips_target is not None and r.ips_policy_id == ips_target.fmc_id)
             )
         )
-        file_needed = need.file_policy and not r.file_policy
-        if ips_ok and not file_needed:
-            continue
-        file_target = files.get(profile.file_policy) if profile.file_policy else None
-        drafts.append(
-            _inspection_draft(
-                estate,
-                evaluator,
-                policy,
-                info,
-                tier=tier,
-                service=service,
-                need=need,
-                profile=profile,
-                ips_target=None if ips_ok else target,
-                ips_needed=not ips_ok,
-                file_target=file_target if file_needed else None,
-                file_needed=file_needed,
-                trust=trust,
+        if not ips_ok:
+            drafts.append(
+                _ips_draft(estate, evaluator, policy, info, tier, profile, ips_target, trust)
             )
-        )
+        # A Trust rule cannot carry a file policy: it becomes Allow first (the IPS proposal),
+        # the file policy follows at the next analysis.
+        if DOCTRINE[tier].file_policy and not r.file_policy and not trust:
+            drafts.append(_file_draft(estate, evaluator, policy, info, tier, profile, file_target))
     return drafts
 
 
-def _inspection_draft(
+def _ips_draft(
     estate: Estate,
     evaluator: Evaluator,
     policy: Policy,
     info: RuleInfo,
-    *,
     tier: str,
-    service: str | None,
-    need: Need,
     profile: Profile,
-    ips_target: Policy | None,
-    ips_needed: bool,
-    file_target: Policy | None,
-    file_needed: bool,
+    target: Policy | None,
     trust: bool,
 ) -> Draft:
     r = info.rule
     warnings: list[str] = []
     blocked: list[str] = []
-    if ips_needed and ips_target is None:
-        blocked.append("ips_profile_missing")
-    if file_needed and file_target is None:
-        reason = "file_profile_missing" if profile.file_policy else "file_profile_not_configured"
-        # The intrusion part can still go ahead; the file policy stays a to-do.
-        (warnings if ips_needed and ips_target is not None else blocked).append(reason)
+    if target is None:
+        blocked.append(
+            "ips_profile_missing" if profile.ips_policy else "ips_profile_not_configured"
+        )
     if trust:
         warnings.append("trust_to_allow")
-    if ips_target is not None and ips_level(ips_target.name) == 4:
+    if (
+        target is not None
+        and ips_level(target.name, str(target.attrs.get("base_policy") or "")) == 4
+    ):
         warnings.append("ips_performance")
 
-    new_ips = ips_target.name if ips_target is not None else r.ips_policy
-    new_file = file_target.name if file_target is not None else r.file_policy
+    wanted = target.name if target is not None else profile.ips_policy
+    new_ips = target.name if target is not None else r.ips_policy
     before = _view(info, r.ips_policy, r.file_policy)
     after = with_status(
-        _view(info, new_ips, new_file, "ALLOW" if trust else None), "modified", before
+        _view(info, new_ips, r.file_policy, "ALLOW" if trust else None), "modified", before
     )
     if trust:
         after["changes"]["action"] = {"added": ["ALLOW"], "removed": ["TRUST"]}
-
-    _ace, score = evaluator.evaluate(
-        info, info.refs, overrides={"ips_policy": new_ips, "file_policy": new_file}
-    )
+    _ace, score = evaluator.evaluate(info, info.refs, overrides={"ips_policy": new_ips})
     old = _old_score(info)
 
     def build(pb: PlanBuilder) -> None:
@@ -410,35 +385,23 @@ def _inspection_draft(
         pb.set_inspection(
             _rule_dict(info),
             {"action": r.action, "ips": r.ips_policy_id, "file": r.file_policy_id},
-            ips={"id": ips_target.fmc_id, "name": ips_target.name}
-            if ips_target is not None
-            else None,
-            file={"id": file_target.fmc_id, "name": file_target.name}
-            if file_target is not None
-            else None,
-            action="ALLOW" if trust and ips_target is not None else None,
+            ips={"id": target.fmc_id, "name": target.name} if target is not None else None,
+            action="ALLOW" if trust and target is not None else None,
         )
 
-    parts = []
-    if ips_needed:
-        wanted = ips_target.name if ips_target else profile.ips_policy or "(not configured)"
-        parts.append(f"IPS {wanted}")
-    if file_needed:
-        if file_target is not None:
-            parts.append(f"file policy {file_target.name}")
-        elif profile.file_policy:
-            parts.append("file policy (not in this snapshot)")
-        else:
-            parts.append("file policy (not configured)")
+    name = f"#{r.rule_index} {r.name}"
+    goal = wanted or "(none chosen)"
+    if trust:
+        title = f"Change {name} from Trust to Allow and attach intrusion policy {goal}"
+    elif r.ips_policy:
+        title = f"Switch {name} to the organisation's intrusion policy {goal} (now {r.ips_policy})"
+    else:
+        title = f"Attach the organisation's intrusion policy {goal} to {name}"
     return Draft(
         kind="add_inspection",
-        principle="inspection_by_destination_tier",
-        title=(
-            f"Inspect #{r.rule_index} {r.name} "
-            f"({tier}{' ' + service.replace('_', ' / ') if service else ''} destination): "
-            + " + ".join(parts)
-        ),
-        priority=_rule_priority(need.priority, info),
+        principle="ips_wherever_possible",
+        title=f"{title} ({tier} destination)",
+        priority=_rule_priority(DOCTRINE[tier].priority, info),
         display="inline",
         deploy_cost=1,
         targets=[_rule_target(info)],
@@ -447,11 +410,61 @@ def _inspection_draft(
             "before": [before],
             "after": [after],
             "tier": tier,
-            **({"core_service": service} if service else {}),
         },
         policy_fmc_id=policy.fmc_id,
         score_delta=(score - old) if score is not None and old is not None else None,
         warnings=warnings,
+        plan=_plan(build),
+    )
+
+
+def _file_draft(
+    estate: Estate,
+    evaluator: Evaluator,
+    policy: Policy,
+    info: RuleInfo,
+    tier: str,
+    profile: Profile,
+    target: Policy | None,
+) -> Draft:
+    r = info.rule
+    blocked: list[str] = []
+    if target is None:
+        blocked.append(
+            "file_profile_missing" if profile.file_policy else "file_profile_not_configured"
+        )
+    new_file = target.name if target is not None else r.file_policy
+    before = _view(info, r.ips_policy, r.file_policy)
+    after = with_status(_view(info, r.ips_policy, new_file), "modified", before)
+    _ace, score = evaluator.evaluate(info, info.refs, overrides={"file_policy": new_file})
+    old = _old_score(info)
+
+    def build(pb: PlanBuilder) -> None:
+        for reason in blocked:
+            pb.block(reason)
+        pb.set_inspection(
+            _rule_dict(info),
+            {"action": r.action, "ips": r.ips_policy_id, "file": r.file_policy_id},
+            file={"id": target.fmc_id, "name": target.name} if target is not None else None,
+        )
+
+    goal = target.name if target is not None else profile.file_policy or "(none chosen)"
+    return Draft(
+        kind="add_file_policy",
+        principle="file_policy_gold_silver",
+        title=f"Attach file policy {goal} to #{r.rule_index} {r.name} ({tier} destination)",
+        priority=_rule_priority(DOCTRINE[tier].priority - 5, info),
+        display="inline",
+        deploy_cost=1,
+        targets=[_rule_target(info)],
+        preview={
+            "policy": _policy_ref(policy),
+            "before": [before],
+            "after": [after],
+            "tier": tier,
+        },
+        policy_fmc_id=policy.fmc_id,
+        score_delta=(score - old) if score is not None and old is not None else None,
         plan=_plan(build),
     )
 
@@ -474,7 +487,7 @@ def _fastpath_draft(policy: Policy, info: RuleInfo, exempt: list[Exempt]) -> Dra
         title=(
             f"Consider fastpath for #{r.rule_index} {r.name}: "
             + ", ".join(e.label for e in exempt)
-            + " between known systems"
+            + " between known systems (no IPS on this traffic)"
         ),
         priority=_rule_priority(35 if r.ips_policy else 25, info),
         display="inline",
@@ -518,7 +531,7 @@ class _Node:
 
 
 class SslAdvisor:
-    """Collects TLS exposure of GOLD / SILVER systems and checks the decryption policies."""
+    """Collects the HTTPS exposure of GOLD / SILVER systems and checks the decryption policies."""
 
     def __init__(self, estate: Estate) -> None:
         self.estate = estate
@@ -548,12 +561,13 @@ class SslAdvisor:
                 continue
             space = build_space(info.leaves)
             apps = {x.label.upper() for x in info.refs.get("app", [])}
-            tls = (
-                (space.dst_port.any and space.token("app").any)
-                or (not space.dst_port.any and space.dst_port.intersects(TLS_PORTS))
-                or bool(apps & TLS_APPS)
+            ports = space.dst_port
+            https = (
+                (ports.any and space.token("app").any)
+                or (not ports.any and ports.intersects(HTTPS_PORT))
+                or bool(apps & HTTPS_APPS)
             )
-            if not tls:
+            if not https:
                 continue
             for key, node in self.nodes.items():
                 if node.tier in ("GOLD", "SILVER") and space.dst_net.intersects(node.addresses):
@@ -637,7 +651,7 @@ class SslAdvisor:
             principle="core_not_decrypted",
             title=(
                 f"{policy.name}: exempt {' and '.join(parts)} from decryption — "
-                f"add do-not-decrypt at the top"
+                f"add a Do not decrypt rule above the decrypt rules"
             ),
             priority=80,
             display="inline",
@@ -656,19 +670,24 @@ class SslAdvisor:
             plan=_plan(lambda pb: pb.block("decryption_rule_manual")),
         )
 
-    # ---- GOLD / SILVER served over TLS need inbound known-key decryption
+    # ---- GOLD / SILVER served over HTTPS need Decrypt-Resign
 
     def _covered(self, rules: list[RuleInfo], node: _Node) -> bool:
+        """True when the decryption policy settles HTTPS to the system, either way: the first
+        rule that reaches it on TCP/443 decrypts it (any decrypt action) or deliberately leaves
+        it alone (do-not-decrypt covering it)."""
         for info in rules:
             r = info.rule
             if not r.enabled:
                 continue
             if info.unmodelled:
                 continue  # conditions the analysis does not model: proves nothing either way
-            dst = build_space(info.leaves).dst_net
-            if r.action == "DO_NOT_DECRYPT" and dst.covers(node.addresses):
-                return False
-            if r.action == "DECRYPT_KNOWN_KEY" and dst.intersects(node.addresses):
+            space = build_space(info.leaves)
+            dst, ports = space.dst_net, space.dst_port
+            on_https = ports.any or ports.intersects(HTTPS_PORT)
+            if r.action == "DO_NOT_DECRYPT" and on_https and dst.covers(node.addresses):
+                return True
+            if r.action in DECRYPT_ACTIONS and on_https and dst.intersects(node.addresses):
                 return True
         return False
 
@@ -717,35 +736,40 @@ class SslAdvisor:
     def _decrypt_inbound(self) -> list[Draft]:
         out: list[Draft] = []
         for policy, rules, exposed in self._targets():
-            for tier in ("GOLD", "SILVER"):
-                missing = [n for n in exposed if n.tier == tier and not self._covered(rules, n)]
-                if missing:
-                    out.append(self._inbound_draft(policy, tier, missing))
+            missing = [n for n in exposed if not self._covered(rules, n)]
+            if missing:
+                out.append(self._resign_draft(policy, missing))
         return out
 
-    def _inbound_draft(self, policy: Policy | None, tier: str, nodes: list[_Node]) -> Draft:
-        systems = sorted(n.system for n in nodes)
+    def _resign_draft(self, policy: Policy | None, nodes: list[_Node]) -> Draft:
+        by_system = {n.system: n for n in nodes}
+        systems = sorted(by_system)
+        gold = sum(1 for n in by_system.values() if n.tier == "GOLD")
+        silver = len(systems) - gold
         where = policy.name if policy is not None else "No decryption policy"
+        mix = ", ".join(
+            f"{count} {tier}" for tier, count in (("GOLD", gold), ("SILVER", silver)) if count
+        )
         new_rule = {
             "id": None,
             "index": None,
-            "name": f"KNOWN_KEY_{tier}",
-            "action": "DECRYPT_KNOWN_KEY",
+            "name": "DECRYPT_RESIGN_HTTPS",
+            "action": "DECRYPT_RESIGN",
             "enabled": True,
             "section": "",
             "category": "",
-            "fields": {"dst_net": systems},
+            "fields": {"dst_net": systems, "dst_port": ["TCP/443"]},
             "status": "added",
         }
         sample = [r for n in nodes for r in n.rules][:SAMPLE]
         return Draft(
             kind="ssl_decrypt_inbound",
-            principle="inspection_by_destination_tier",
+            principle="decrypt_https_for_inspection",
             title=(
-                f"{where}: decrypt inbound TLS to {len(systems)} {tier} system(s) with their "
-                f"own certificate (known-key) — the IPS is blind to it today"
+                f"{where}: add a Decrypt-Resign rule for HTTPS (TCP/443) to {len(systems)} "
+                f"system(s) ({mix}) — IPS and file policy cannot read their HTTPS today"
             ),
-            priority=65 if tier == "GOLD" else 45,
+            priority=65 if gold else 45,
             display="inline",
             deploy_cost=1,
             targets=(
@@ -753,7 +777,7 @@ class SslAdvisor:
                 if policy is not None
                 else []
             )
-            + [{"type": "system", "id": f"{tier}|{s}", "name": s} for s in systems],
+            + [{"type": "system", "id": f"{n.tier}|{n.system}", "name": n.system} for n in nodes],
             preview={
                 **({"policy": _policy_ref(policy)} if policy is not None else {}),
                 "before": [],
@@ -762,6 +786,6 @@ class SslAdvisor:
                 "rules": sample,
             },
             policy_fmc_id=policy.fmc_id if policy is not None else None,
-            warnings=["server_cert_import_required", "cert_lifecycle"],
+            warnings=["resign_ca_trust", "resign_pinning_mtls", "resign_invalid_cert"],
             plan=_plan(lambda pb: pb.block("decryption_rule_manual")),
         )

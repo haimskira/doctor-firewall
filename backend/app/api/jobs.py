@@ -95,7 +95,7 @@ class CancelOut(BaseModel):
     deploy_started: bool = False
 
 
-def _reconcile(db: Session, runs: list[JobRun]) -> None:
+def reconcile_runs(db: Session, runs: list[JobRun]) -> None:
     """A run still queued / running whose worker died is failed, not left spinning."""
     now = datetime.now(UTC)
     redis = None
@@ -153,7 +153,7 @@ def list_jobs(
     active = list(
         db.scalars(base.where(JobRun.status.in_(("queued", "running"))).order_by(JobRun.id.desc()))
     )
-    _reconcile(db, active)
+    reconcile_runs(db, active)
     active = [r for r in active if r.status in ("queued", "running")]
     rows: list[JobRun] = []
     if state != "finished":

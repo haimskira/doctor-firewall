@@ -17,7 +17,7 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.analysis.inspection import DOCTRINE, ips_level, load_profiles
+from app.analysis.inspection import ips_level, load_profile
 from app.analysis.naming import TOKENS_BY_KIND, TemplateError, validate_template
 from app.analysis.roadmap import PHASE_NAMES, kinds_of
 from app.api.schemas import StrictModel
@@ -34,7 +34,7 @@ from app.models.enforce import Changeset, ChangesetItem
 from app.models.inventory import Policy, Snapshot
 from app.models.recommendations import (
     CONVENTION_KINDS,
-    INSPECTION_TIERS,
+    ORG_PROFILE,
     RECOMMENDATION_KINDS,
     InspectionProfile,
     NamingConvention,
@@ -56,7 +56,6 @@ CollectorDep = Annotated[Principal, Depends(require(Permission.COLLECT_RUN))]
 FmcIdQuery = Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 KindPattern = "^(" + "|".join(RECOMMENDATION_KINDS) + ")$"
 ConventionKindPath = Annotated[str, Path(pattern="^(" + "|".join(CONVENTION_KINDS) + ")$")]
-TierPath = Annotated[str, Path(pattern="^(" + "|".join(INSPECTION_TIERS) + ")$")]
 PolicyName = Annotated[str, Field(min_length=1, max_length=256)]
 
 
@@ -698,7 +697,7 @@ def delete_convention(
     db.commit()
 
 
-# ------------------------------------------------------------------ inspection profiles
+# ------------------------------------------------------------------ inspection profile
 
 
 class InspectionProfileIn(StrictModel):
@@ -707,13 +706,12 @@ class InspectionProfileIn(StrictModel):
 
 
 class InspectionProfileOut(BaseModel):
-    tier: str
     ips_policy: str | None
     file_policy: str | None
     configured: bool
-    # Doctrine for the tier: weakest acceptable built-in level and whether a file policy is due.
-    min_level: int
-    file_required: bool
+    # The value shown is not saved: it is the policy most allow rules of the snapshot carry.
+    ips_default: bool
+    file_default: bool
 
 
 class PolicyChoice(BaseModel):
@@ -722,7 +720,7 @@ class PolicyChoice(BaseModel):
 
 
 class InspectionCatalog(BaseModel):
-    profiles: list[InspectionProfileOut]
+    profile: InspectionProfileOut
     intrusion_policies: list[PolicyChoice]
     file_policies: list[PolicyChoice]
     snapshot_id: int | None
@@ -737,11 +735,11 @@ def _latest_complete(db: Session) -> int | None:
     )
 
 
-@router.get("/inspection-profiles", response_model=InspectionCatalog)
-def list_inspection_profiles(db: DbDep, _: ReaderDep) -> InspectionCatalog:
-    """Tier -> intrusion / file policy, and the policies the latest snapshot offers."""
-    profiles = load_profiles(db)
+@router.get("/inspection-profile", response_model=InspectionCatalog)
+def get_inspection_profile(db: DbDep, _: ReaderDep) -> InspectionCatalog:
+    """The organisation's intrusion / file policy, and the policies the latest snapshot offers."""
     sid = _latest_complete(db)
+    profile = load_profile(db, sid)
     choices: dict[str, list[PolicyChoice]] = {"intrusion": [], "file": []}
     if sid is not None:
         for p in db.scalars(
@@ -756,26 +754,21 @@ def list_inspection_profiles(db: DbDep, _: ReaderDep) -> InspectionCatalog:
             )
             choices[p.kind].append(PolicyChoice(name=p.name, level=level))
     return InspectionCatalog(
-        profiles=[
-            InspectionProfileOut(
-                tier=t,
-                ips_policy=profiles[t].ips_policy,
-                file_policy=profiles[t].file_policy,
-                configured=profiles[t].configured,
-                min_level=DOCTRINE[t].min_level,
-                file_required=DOCTRINE[t].file_policy,
-            )
-            for t in INSPECTION_TIERS
-        ],
+        profile=InspectionProfileOut(
+            ips_policy=profile.ips_policy,
+            file_policy=profile.file_policy,
+            configured=profile.configured,
+            ips_default=profile.ips_default,
+            file_default=profile.file_default,
+        ),
         intrusion_policies=choices["intrusion"],
         file_policies=choices["file"],
         snapshot_id=sid,
     )
 
 
-@router.put("/inspection-profiles/{tier}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/inspection-profile", status_code=status.HTTP_204_NO_CONTENT)
 def set_inspection_profile(
-    tier: TierPath,
     body: InspectionProfileIn,
     request: Request,
     db: DbDep,
@@ -783,24 +776,24 @@ def set_inspection_profile(
     who: ConventionDep,
 ) -> None:
     """Takes effect at the next analysis (recommendations are recomputed per snapshot)."""
-    current = db.get(InspectionProfile, tier, with_for_update=True)
+    current = db.get(InspectionProfile, ORG_PROFILE, with_for_update=True)
     if current is None:
-        db.add(InspectionProfile(tier=tier, updated_by=who.username, **body.model_dump()))
+        db.add(InspectionProfile(tier=ORG_PROFILE, updated_by=who.username, **body.model_dump()))
     else:
         current.ips_policy, current.file_policy = body.ips_policy, body.file_policy
         current.updated_by = who.username
-    _audit(audit, db, who, request, "inspection.set", tier, body.model_dump())
+    _audit(audit, db, who, request, "inspection.set", ORG_PROFILE, body.model_dump())
     db.commit()
 
 
-@router.delete("/inspection-profiles/{tier}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/inspection-profile", status_code=status.HTTP_204_NO_CONTENT)
 def reset_inspection_profile(
-    tier: TierPath, request: Request, db: DbDep, audit: AuditDep, who: ConventionDep
+    request: Request, db: DbDep, audit: AuditDep, who: ConventionDep
 ) -> None:
-    """Back to the doctrine default."""
-    current = db.get(InspectionProfile, tier)
+    """Back to the policy most allow rules already carry."""
+    current = db.get(InspectionProfile, ORG_PROFILE)
     if current is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     db.delete(current)
-    _audit(audit, db, who, request, "inspection.reset", tier, {})
+    _audit(audit, db, who, request, "inspection.reset", ORG_PROFILE, {})
     db.commit()

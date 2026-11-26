@@ -12,6 +12,8 @@ from sqlalchemy import Sequence, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    FmcCertificateRequest,
+    FmcCertificateResponse,
     FmcConnectionCreate,
     FmcConnectionResponse,
     FmcConnectionUpdate,
@@ -24,7 +26,8 @@ from app.core.config import get_settings
 from app.core.crypto import SecretBox
 from app.db.session import get_db, get_sessionmaker
 from app.fmc import trace
-from app.fmc.client import build_ssl_context
+from app.fmc.certificate import fetch_server_certificate, pem_fingerprint
+from app.fmc.client import connection_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import probe
 from app.models.enforce import Batch, Changeset
@@ -57,6 +60,8 @@ def _to_response(conn: FmcConnection) -> FmcConnectionResponse:
         last_test_at=conn.last_test_at,
         last_test_ok=conn.last_test_ok,
         sync_interval_minutes=conn.sync_interval_minutes,
+        pinned=conn.pinned_cert is not None,
+        pinned_sha256=pem_fingerprint(conn.pinned_cert) if conn.pinned_cert else None,
     )
 
 
@@ -133,6 +138,50 @@ def list_connections(db: DbDep, _: AdminDep) -> list[FmcConnectionResponse]:
     return [_to_response(c) for c in db.scalars(select(FmcConnection).order_by(FmcConnection.id))]
 
 
+@router.post("/certificate", response_model=FmcCertificateResponse)
+def fetch_certificate(
+    body: FmcCertificateRequest, request: Request, db: DbDep, audit: AuditDep, admin: AdminDep
+) -> FmcCertificateResponse:
+    """Read the certificate the FMC presents so an admin can confirm its fingerprint.
+
+    Nothing is trusted by this call and no credentials are sent on the connection."""
+    target = f"{body.host}:{body.port}"
+    try:
+        cert = fetch_server_certificate(body.host, body.port, get_settings().fmc_timeout_seconds)
+    except FmcError as exc:
+        _audit(
+            audit,
+            db,
+            admin,
+            request,
+            "fmc.certificate.fetch",
+            target,
+            outcome="failure",
+            details={"error": exc.code},
+        )
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, exc.code) from exc
+    _audit(
+        audit,
+        db,
+        admin,
+        request,
+        "fmc.certificate.fetch",
+        target,
+        details={"sha256": cert.sha256},
+    )
+    db.commit()
+    return FmcCertificateResponse(
+        pem=cert.pem,
+        sha256=cert.sha256,
+        subject=cert.subject,
+        issuer=cert.issuer,
+        not_before=cert.not_before,
+        not_after=cert.not_after,
+        self_signed=cert.self_signed,
+    )
+
+
 @router.post("", response_model=FmcConnectionResponse, status_code=status.HTTP_201_CREATED)
 def create_connection(
     body: FmcConnectionCreate,
@@ -155,6 +204,7 @@ def create_connection(
         port=body.port,
         username=body.username,
         sync_interval_minutes=body.sync_interval_minutes,
+        pinned_cert=body.pinned_cert,
         password_enc=box.encrypt(body.password.encode(), FmcConnection.password_context(conn_id)),
     )
     db.add(conn)
@@ -167,6 +217,16 @@ def create_connection(
         conn.name,
         details={"host": conn.host, "port": conn.port, "username": conn.username},
     )
+    if conn.pinned_cert:
+        _audit(
+            audit,
+            db,
+            admin,
+            request,
+            "fmc.connection.pin",
+            conn.name,
+            details={"sha256": pem_fingerprint(conn.pinned_cert), "previous": None},
+        )
     db.commit()
     return _to_response(conn)
 
@@ -206,6 +266,17 @@ def update_connection(
         if value is not None and value != getattr(conn, field):
             setattr(conn, field, value)
             changed.append(field)
+    previous_pin = pem_fingerprint(conn.pinned_cert) if conn.pinned_cert else None
+    host_moved = "host" in changed or "port" in changed
+    if body.pinned_cert is not None:
+        conn.pinned_cert = body.pinned_cert
+    elif host_moved or body.clear_pin:
+        # A pin belongs to the server it was read from: a new address needs a new confirmation.
+        conn.pinned_cert = None
+    new_pin = pem_fingerprint(conn.pinned_cert) if conn.pinned_cert else None
+    pin_changed = new_pin != previous_pin
+    if pin_changed:
+        changed.append("pinned_cert")
     if body.disable_sync and conn.sync_interval_minutes is not None:
         conn.sync_interval_minutes = None
         changed.append("sync_interval_minutes")
@@ -219,7 +290,7 @@ def update_connection(
             body.password.encode(), FmcConnection.password_context(conn.id)
         )
         changed.append("password")
-    if set(changed) & {"name", "host", "port", "username", "password"}:
+    if set(changed) & {"name", "host", "port", "username", "password", "pinned_cert"}:
         # Connection identity changed: the last test result no longer applies.
         conn.last_test_ok = None
     if changed:
@@ -231,6 +302,16 @@ def update_connection(
             "fmc.connection.update",
             conn.name,
             details={"fields": changed},
+        )
+    if pin_changed:
+        _audit(
+            audit,
+            db,
+            admin,
+            request,
+            "fmc.connection.pin" if new_pin else "fmc.connection.unpin",
+            conn.name,
+            details={"sha256": new_pin, "previous": previous_pin},
         )
     db.commit()
     return _to_response(conn)
@@ -273,7 +354,7 @@ def test_connection(
             "test", get_sessionmaker(), connection_id=conn.id, connection_name=conn.name
         ):
             trace.set_step("token, server version")
-            ssl_context = build_ssl_context(settings.fmc_ca_bundle)
+            ssl_context = connection_ssl_context(settings.fmc_ca_bundle, conn.pinned_cert)
             # Sync endpoint runs in a worker thread, so a private event loop is safe here.
             probed = asyncio.run(
                 probe(

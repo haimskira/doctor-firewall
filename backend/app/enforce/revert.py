@@ -47,7 +47,7 @@ from app.enforce.executor import (
     deploy,
 )
 from app.fmc.adapters import select_adapter
-from app.fmc.client import FmcSession, ThrottlePolicy, build_ssl_context
+from app.fmc.client import FmcSession, ThrottlePolicy, connection_ssl_context
 from app.fmc.errors import FmcError
 from app.fmc.probe import server_version
 from app.models.enforce import Batch, Changeset
@@ -307,7 +307,7 @@ async def revert_batch(
             )
         return {"ok": status == "reverted", "status": status, "error": error, **(extra or {})}
 
-    host, port, username, token, context = connection
+    host, port, username, token, context, pinned_cert = connection
     try:
         release = await lock(f"df:fmc-write:{host}:{port}", settings.write_lock_ttl_seconds)
     except Exception:
@@ -327,7 +327,7 @@ async def revert_batch(
             port=port,
             username=username,
             password_provider=password_provider,
-            ssl_context=build_ssl_context(settings.fmc_ca_bundle),
+            ssl_context=connection_ssl_context(settings.fmc_ca_bundle, pinned_cert),
             timeout=settings.fmc_timeout_seconds,
             transport=transport,
             throttle=ThrottlePolicy(

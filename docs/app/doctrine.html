@@ -111,13 +111,13 @@
 <ol>
   <li><strong>Least privilege עם איזון תחזוקה.</strong> לפתוח את הצר ביותר שעונה על הצורך העסקי, בלי להידרדר למאות חוקי <code>/32→/32</code> שאי אפשר לנהל. האיזון הוא בין שלושה: אבטחה (כמה צר), תחזוקתיות (כמה חוקים ישברו כשמשהו זז), וקריאוּת (האם מישהו יבין את ה-policy בעוד שנתיים).</li>
   <li><strong>החוק מעוגן ביעד.</strong> היעד הוא הנכס המוגן, הוא גבול ה-audit, והוא מה שקובע blast radius. ממנו נגזר הכול — object group אחד per role של היעד, ובלוק חוקים נפרד per tier. לשאלה "מי מגיע לזהב?" צריכה להיות תשובה במקום אחד.</li>
-  <li><strong>Access ו-Inspection הן שתי שכבות נפרדות.</strong> החוק עונה "האם הזרימה מותרת"; ה-inspection profile עונה "מה עושים לזרימה שמותרת". מנהלים אותן בנפרד ומצליבים בכוונה לפי ה-tier של היעד.</li>
-  <li><strong>ה-tier קובע גישה, לא inspection.</strong> נכס קריטי שכולם צריכים להגיע אליו (DNS, AD) לא נכנס ל-tier הרגיש מבחינת גישה, כי חסימה שלו מפילה את כל הסביבה. לכן הוא CORE, קטגוריה בפני עצמה. אבל עומק ה-inspection נקבע לפי כמה תוקף ירצה את הנכס, ולא לפי מי משתמש בו. AD הוא CORE מבחינת גישה ו-GOLD מבחינת inspection.</li>
+  <li><strong>Access ו-Inspection הן שתי שכבות נפרדות.</strong> החוק עונה "האם הזרימה מותרת"; ה-inspection profile עונה "מה עושים לזרימה שמותרת". מנהלים אותן בנפרד. ל-inspection יש מדיניות אחת לכל הארגון: intrusion policy אחת (IPS), file policy אחת ו-decryption policy אחת. ה-tier של היעד קובע רק איפה צריך אותן ומה דחוף יותר.</li>
+  <li><strong>ה-tier קובע גישה, ורק אחר כך אם צריך file policy ו-decryption.</strong> נכס קריטי שכולם צריכים להגיע אליו (DNS, AD) לא נכנס ל-tier הרגיש מבחינת גישה, כי חסימה שלו מפילה את כל הסביבה. לכן הוא CORE, קטגוריה בפני עצמה. ה-IPS הוא אחד לכל הארגון ורץ על כל חוק מתיר שאפשר להריץ עליו אותו, גם על CORE. ה-tier קובע רק מי מקבל גם file policy (GOLD ו-SILVER), על מי מפעילים decryption (HTTPS ל-GOLD ול-SILVER), ומה דחוף יותר.</li>
 </ol>
 
 <h2>סיווג נכסים ל-tiers</h2>
 <p>כל שרת מקבל תווית אחת לפני שנוגעים בחוק. CORE מוחרג מה-tiers בכוונה: אם היינו מדרגים לפי קריטיות, DNS/AD היו הופכים ל"זהב", וה-tier הכי-מוגן היה גם הכי-נגיש — סתירה פנימית ששוחקת את ההגנה על שאר הזהב.</p>
-<p>ההחרגה של CORE מה-tiers היא החרגה מכללי הגישה בלבד. בצד ה-inspection, שירותי הזהות שבו (AD/DC ו-PKI) מקבלים את הבדיקה הכי עמוקה ברשת, כי הם היעד שכל תוקף מחפש. הפירוט בפרק "שירותי הזהות".</p>
+<p>ההחרגה של CORE מה-tiers היא החרגה מכללי הגישה בלבד. בצד ה-inspection, CORE מקבל את אותו IPS כמו כל השאר. שירותי הזהות שבו (AD/DC ו-PKI) הם היעד שכל תוקף מחפש, ולכן אסור לעקוף אותם ב-Trust או ב-fastpath. הפירוט בפרק "שירותי הזהות".</p>
 <table>
   <thead><tr><th>Tier</th><th>מה נכנס</th><th>מדורג לפי</th><th>אופי הגישה</th></tr></thead>
   <tbody>
@@ -131,7 +131,7 @@
 
 <h2>ארכיטקטורה — CORE מעל ה-tiers</h2>
 <div class="figure">
-<svg viewBox="0 0 760 388" role="img" aria-label="CORE מחוץ ל-tiers; לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר" font-size="13">
+<svg viewBox="0 0 760 388" role="img" aria-label="CORE מחוץ ל-tiers; לכיוון הזהב הגישה מצטמצמת והבדיקות מתרחבות" font-size="13">
   <defs>
     <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#9aa0a6"/>
@@ -146,28 +146,28 @@
   </g>
   <g>
     <line x1="180" y1="144" x2="600" y2="144" stroke="#9aa0a6" stroke-width="1.25" marker-end="url(#arch-arrow)"/>
-    <text x="390" y="136" text-anchor="middle" font-size="11.5" fill="#6b7280">לכיוון הזהב: פחות מקורות, יותר inspection</text>
+    <text x="390" y="136" text-anchor="middle" font-size="11.5" fill="#6b7280">לכיוון הזהב: פחות מקורות, יותר בדיקות</text>
   </g>
   <g>
     <rect x="24" y="160" width="221" height="120" rx="8" fill="none" stroke="#9aa0a6" stroke-width="1.25"/>
     <text x="134.5" y="190" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2430">BRONZE</text>
     <text x="134.5" y="222" text-anchor="middle" font-size="11.5" fill="#1f2430">מקורות: רבים</text>
-    <text x="134.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">inspection: מאוזן</text>
-    <text x="134.5" y="266" text-anchor="middle" font-size="11.5" fill="#6b7280">decryption: לפי חשיפה</text>
+    <text x="134.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">IPS: כן</text>
+    <text x="134.5" y="266" text-anchor="middle" font-size="11.5" fill="#6b7280">decryption: לא</text>
   </g>
   <g>
     <rect x="269" y="160" width="221" height="120" rx="8" fill="none" stroke="#9aa0a6" stroke-width="1.25"/>
     <text x="379.5" y="190" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2430">SILVER</text>
     <text x="379.5" y="222" text-anchor="middle" font-size="11.5" fill="#1f2430">מקורות: קבוצות role</text>
-    <text x="379.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">inspection: מלא</text>
-    <text x="379.5" y="266" text-anchor="middle" font-size="11.5" fill="#6b7280">decryption: סלקטיבי</text>
+    <text x="379.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">IPS + file policy</text>
+    <text x="379.5" y="266" text-anchor="middle" font-size="11.5" fill="#6b7280">decryption: Resign ל-HTTPS</text>
   </g>
   <g>
     <rect x="514" y="160" width="221" height="120" rx="8" fill="#2563eb" fill-opacity="0.10" stroke="#2563eb" stroke-width="2"/>
     <text x="624.5" y="190" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2430">GOLD</text>
     <text x="624.5" y="222" text-anchor="middle" font-size="11.5" fill="#1f2430">מקורות: מעטים</text>
-    <text x="624.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">inspection: מלא+aggressive</text>
-    <text x="624.5" y="266" text-anchor="middle" font-size="11.5" fill="#1f2430">decryption: known-key</text>
+    <text x="624.5" y="244" text-anchor="middle" font-size="11.5" fill="#1f2430">IPS + file policy</text>
+    <text x="624.5" y="266" text-anchor="middle" font-size="11.5" fill="#1f2430">decryption: Resign ל-HTTPS</text>
   </g>
   <g fill="none" stroke="#9aa0a6" stroke-width="1.25">
     <path d="M134.5 314V282" marker-end="url(#arch-arrow)"/>
@@ -182,7 +182,7 @@
 </svg>
 <p class="caption">CORE + שלושת ה-tiers · גישה מול inspection</p>
 </div>
-<p>ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption, אבל שירותי הזהות שבו נבדקים ב-IPS מלא. לכיוון הזהב הגישה מצטמצמת וה-inspection מתגבר.</p>
+<p>ה-CORE נגיש מכולם בפורטים צרים ומוחרג מ-decryption, אבל כל התעבורה אליו, ושירותי הזהות בראשה, נבדקת ב-IPS. לכיוון הזהב הגישה מצטמצמת והבדיקות מתרחבות: מוסיפים file policy ו-decryption ל-HTTPS.</p>
 
 <h2>blast radius — טווח הנזק</h2>
 <p><code>blast radius</code> = טווח הנזק. השאלה: "אם הנכס הזה נפרץ, כמה רחוק התוקף יכול להגיע ממנו, וכמה דברים נופלים איתו". המונח מגיע מפיצוץ — רדיוס ההדף. בפיירוול הוא עונה על: נניח שהתוקף כבר בפנים על השרת הזה — מה עכשיו?</p>
@@ -262,22 +262,22 @@ GOLD     ALLOW  GRP_SRC_DBA_PAW        -> GRP_SRV_GOLD   : TCP 22,3389</code></p
 </ul>
 
 <h2>שכבת ה-inspection</h2>
-<p>זו השכבה השנייה: החוק מתיר, והפרופיל בודק. ב-FTD כל Access Rule מפנה ל-IPS / File policy, וה-decryption מוכרע ב-SSL policy <em>לפני</em> שה-ACP רואה את ה-payload.</p>
+<p>זו השכבה השנייה: החוק מתיר, והמדיניות בודקת. בארגון יש <strong>מדיניות אחת מכל סוג</strong>: intrusion policy אחת (IPS), file policy אחת ו-decryption policy אחת. ב-FTD כל Access Rule מפנה ל-IPS ול-File policy, וה-decryption מוכרע ב-SSL policy <em>לפני</em> שה-ACP רואה את ה-payload. ה-tier של היעד לא בוחר מדיניות אחרת: הוא קובע רק אם החוק צריך גם file policy ו-decryption.</p>
 <table>
-  <thead><tr><th>Tier</th><th>Decryption</th><th>IPS</th><th>File / Malware</th><th>סיבה</th></tr></thead>
+  <thead><tr><th>Tier</th><th>IPS</th><th>File / Malware</th><th>Decryption</th><th>סיבה</th></tr></thead>
   <tbody>
-    <tr><td><strong>CORE · זהות</strong><br>AD/DC, PKI</td><td><strong>לא</strong></td><td><strong>מלא, עם חתימות ל-Kerberos, LDAP, SMB ו-RPC</strong></td><td>לא</td><td>היעד המרכזי של תוקף. decryption שובר את הפרוטוקולים, אבל ה-IPS רואה אותם גם בלי</td></tr>
-    <tr><td><strong>CORE · DNS ו-patching</strong></td><td><strong>לא</strong></td><td>מאוזן</td><td>לא</td><td>DNS tunneling וניצול חולשות בשרת ה-DNS נראים ב-IPS</td></tr>
-    <tr><td><strong>CORE · שירותים פשוטים</strong><br>NTP</td><td><strong>לא</strong></td><td>לא, מתאים ל-prefilter ו-fastpath</td><td>לא</td><td>פרוטוקול פשוט, ערך נמוך לתוקף. חוסך מעבד ל-gold ול-DC</td></tr>
-    <tr><td><strong>GOLD</strong></td><td><strong>כן, מלא</strong></td><td><strong>מלא, aggressive</strong></td><td><strong>כן</strong></td><td>הנכס הרגיש — רוצים לראות הכול</td></tr>
-    <tr><td><strong>SILVER</strong></td><td>סלקטיבי</td><td>מלא / מאוזן</td><td>כן</td><td>איזון ביצועים/הגנה</td></tr>
-    <tr><td><strong>BRONZE</strong></td><td>לפי חשיפה</td><td>מאוזן</td><td>אופציונלי</td><td>blast radius נמוך</td></tr>
+    <tr><td><strong>CORE · זהות</strong><br>AD/DC, PKI</td><td><strong>כן</strong></td><td>לא</td><td><strong>לא</strong></td><td>היעד המרכזי של תוקף. decryption שובר את הפרוטוקולים, אבל ה-IPS רואה אותם גם בלי</td></tr>
+    <tr><td><strong>CORE · DNS ו-patching</strong></td><td><strong>כן</strong></td><td>לא</td><td><strong>לא</strong></td><td>DNS tunneling וניצול חולשות בשרת ה-DNS נראים ב-IPS</td></tr>
+    <tr><td><strong>CORE · שירותים פשוטים</strong><br>NTP</td><td>לא, מתאים ל-prefilter ו-fastpath</td><td>לא</td><td><strong>לא</strong></td><td>פרוטוקול פשוט, ערך נמוך לתוקף. חוסך מעבד ל-gold ול-DC</td></tr>
+    <tr><td><strong>GOLD</strong></td><td><strong>כן</strong></td><td><strong>כן</strong></td><td><strong>Decrypt-Resign על HTTPS</strong></td><td>הנכס הרגיש — רוצים לראות הכול, גם בתוך HTTPS</td></tr>
+    <tr><td><strong>SILVER</strong></td><td><strong>כן</strong></td><td><strong>כן</strong></td><td>Decrypt-Resign על HTTPS</td><td>חשיפה בינונית; אותן בדיקות כמו ב-GOLD</td></tr>
+    <tr><td><strong>BRONZE</strong></td><td><strong>כן</strong></td><td>לא</td><td>לא</td><td>blast radius נמוך</td></tr>
   </tbody>
 </table>
-<p><strong>ציר ה-inspection מתהפך מול ציר המקורות, חוץ משירותי הזהות.</strong> בזהב יש מעט מקורות והכי הרבה inspection. בשירותי ה-CORE הפשוטים יש הרבה מקורות ומעט inspection. שירותי הזהות הם החריג: הרבה מקורות וגם inspection מלא, כי הם הנכס שתוקף הכי רוצה.</p>
+<p><strong>ה-IPS זהה בכל מקום; ה-tier מחליט על הבדיקות הנוספות.</strong> בזהב ובכסף מוסיפים file policy ו-decryption ל-HTTPS. ב-CORE וב-BRONZE לא. כך בזהב יש מעט מקורות והכי הרבה בדיקות, ובשירותי ה-CORE יש הרבה מקורות ופחות בדיקות — חוץ מה-IPS, שנשאר.</p>
 <p>CORE <strong>חייב</strong> החרגה מ-decryption. AD, Kerberos, LDAPS ו-certificate pinning של עדכונים נשברים כשמפענחים באמצע. אבל <strong>החרגה מ-decryption היא לא החרגה מ-IPS.</strong> Kerberos, LDAP, SMB ו-RPC לשרתי ה-DC לא עוברים ב-TLS, ולכן ה-IPS רואה את מבנה הפרוטוקול גם כשחלק מהתוכן מוצפן ברמת האפליקציה. מתוך ה-CORE רק שירותים פשוטים כמו NTP מתאימים ל-prefilter ו-fastpath, וזה משחרר מעבד ל-inspection של gold ושל ה-DC (על תעבורת התשתית הכבדה בתוך ה-DC — בפרק "חריגות").</p>
 
-<h2>שירותי הזהות: CORE בגישה, GOLD ב-inspection</h2>
+<h2>שירותי הזהות: CORE בגישה, ו-IPS על כל התעבורה אליהם</h2>
 <p>כמעט כל תקיפה מתקדמת ברשת ארגונית עוברת דרך AD. השליטה ב-Domain Admin היא המטרה, והדרך אליה נראית ברמת IP ופורט כמו תעבורה רגילה לגמרי. רק IPS שמכיר את הפרוטוקול יכול לזהות אותה.</p>
 <table>
   <thead><tr><th>טכניקה</th><th>איך היא נראית ברשת</th><th>מה ה-IPS יכול לזהות</th></tr></thead>
@@ -290,7 +290,7 @@ GOLD     ALLOW  GRP_SRC_DBA_PAW        -> GRP_SRV_GOLD   : TCP 22,3389</code></p
 </table>
 <p>מה זה אומר בפועל:</p>
 <ul>
-  <li><strong>IPS מלא</strong> על כל התעבורה לשרתי ה-DC, עם חתימות ל-Kerberos, LDAP, SMB, RPC ו-MS-DRSR. לא Trust ולא fastpath.</li>
+  <li><strong>IPS</strong> על כל התעבורה לשרתי ה-DC, עם ה-intrusion policy של הארגון (כדאי שהיא תכלול חתימות ל-Kerberos, LDAP, SMB, RPC ו-MS-DRSR). לא Trust ולא fastpath.</li>
   <li><strong>צמצום גישה גם בתוך CORE.</strong> כולם מגיעים לפורטים של אימות ושל שאילתות. רפליקציה רק בין שרתי DC. RDP, WinRM וניהול רק מתחנות ניהול מוגדרות.</li>
   <li><strong>logging לכל connection</strong> לשרתי ה-DC, וחיבור של התראות IPS על ה-DC ל-SIEM בעדיפות גבוהה.</li>
   <li><strong>בלי decryption.</strong> הפרוטוקולים נשברים, והחתימות עובדות גם בלי זה.</li>
@@ -318,7 +318,7 @@ GOLD     ALLOW  GRP_SRC_DBA_PAW        -> GRP_SRV_GOLD   : TCP 22,3389</code></p
   </tbody>
 </table>
 <p><strong>"בלי IPS" לא אומר "פתוח".</strong> כל חריגה כזו היא נקודה עיוורת, ולכן החוק שלה חייב להיות צר: כתובות מדויקות, פורטים מדויקים, בלי any, ועם לוג. תעבורה מה-WAN, ממשתמשים או מ-any לעולם לא נכנסת לחריגה.</p>
-<p><strong>מה המערכת עושה:</strong> חוק מתיר שכל השירותים שלו ברשימה למעלה, ושני הצדדים שלו "בפנים" (ל-storage ולרפליקציה: מערכות DC מטבלת הנכסים, CORE עד BRONZE; ל-routing, BFD וניהול: קבוצות קטנות ומפורשות של עד 256 כתובות; ל-NTP: יעד CORE מכל מקור מפורש) — מקבל המלצת <code>fastpath_candidate</code> ולא המלצת IPS. חוק ל-CORE מקבל IPS לפי השירות שבו: <strong>זהות</strong> (Kerberos 88/464, LDAP 389/636, Global Catalog 3268-3269, SMB 445, RPC 135, או any) — פרופיל GOLD המלא; <strong>DNS ו-patching</strong> (53, WSUS 8530-8531) — לפחות Balanced. כל השאר מקבל IPS לפי ה-tier.</p>
+<p><strong>מה המערכת עושה:</strong> חוק מתיר שכל השירותים שלו ברשימה למעלה, ושני הצדדים שלו "בפנים" (ל-storage ולרפליקציה: מערכות DC מטבלת הנכסים, CORE עד BRONZE; ל-routing, BFD וניהול: קבוצות קטנות ומפורשות של עד 256 כתובות; ל-NTP: יעד CORE מכל מקור מפורש) — מקבל המלצת <code>fastpath_candidate</code> ולא המלצת IPS. חוק מתיר שהיעד שלו מסווג בטבלת הנכסים מקבל המלצת IPS (<code>add_inspection</code>): חוק בלי intrusion policy מקבל את זו של הארגון, וחוק עם intrusion policy אחרת מקבל המלצה לעבור אליה. חוק שמגיע ל-GOLD או ל-SILVER ובלי file policy מקבל גם המלצה נפרדת (<code>add_file_policy</code>). שתי ההמלצות על אותו חוק יכולות לעלות לאישור וליישום יחד. ה-intrusion policy וה-file policy של הארגון נבחרים במסך "מדיניות IPS וקבצים"; אם לא נבחרו, זו המדיניות שרוב החוקים המתירים כבר נושאים.</p>
 
 <h3>על מה לא מפעילים SSL decryption</h3>
 <p>כלל אצבע: לא מפענחים כששלושת התנאים מתקיימים יחד — תשתית קריטית שהרשת לא עובדת בלעדיה, תעבורה בין ציודים מנוהלים ומוכרים, ותקלה בפענוח תשבור יותר ממה שהיא תגן.</p>
@@ -336,40 +336,37 @@ GOLD     ALLOW  GRP_SRC_DBA_PAW        -> GRP_SRV_GOLD   : TCP 22,3389</code></p
   </tbody>
 </table>
 <p><strong>גם וגם — לא IPS ולא decryption:</strong> ניהול FMC ↔ FTD, וגיבוי / רפליקציה / storage בתוך ה-DC.</p>
-<p><strong>מה המערכת עושה:</strong> בחוקת ה-decryption, חוק decrypt שתופס מערכת CORE, או אחד משירותי הזהות והניהול לפי פורט (636, 3269, 2083, 8305, 8910), לפני שחוק Do-Not-Decrypt החריג אותם — מקבל המלצת <code>ssl_exempt_core</code>. LDAPS לא נחשב "TLS שצריך לפענח" בהמלצת ה-known-key. mTLS, pinning ומכשירים לא מנוהלים לא ניתנים לזיהוי לפי כתובת ופורט — את ההחרגות שלהם מנהלים ידנית, וכדאי לתכנן שהרשימה תגדל.</p>
+<p><strong>מה המערכת עושה:</strong> בחוקת ה-decryption, חוק decrypt שתופס מערכת CORE, או אחד משירותי הזהות והניהול לפי פורט (636, 3269, 2083, 8305, 8910), לפני שחוק Do-Not-Decrypt החריג אותם — מקבל המלצת <code>ssl_exempt_core</code>. LDAPS אינו HTTPS ולכן לא מפוענח אף פעם. mTLS, pinning ומכשירים לא מנוהלים לא ניתנים לזיהוי לפי כתובת ופורט — את ההחרגות שלהם מנהלים ידנית, וכדאי לתכנן שהרשימה תגדל.</p>
 
-<h2>SSL decryption דו-כיווני</h2>
-<p>שני מנועי decryption הפוכים רצים על אותו box, עם cert handling הפוך. אלה לא שני כללים באותה policy — אלה שתי לוגיקות הצפנה נפרדות. ה-SSL policy מכיל את שתיהן, אבל כל כלל שייך לאחת בלבד.</p>
+<h2>SSL decryption: Decrypt-Resign על HTTPS בלבד</h2>
+<p>יש policy אחת של SSL decryption לארגון, ויש בה סוג אחד של פענוח: <strong>Decrypt-Resign</strong>, ורק על HTTPS (TCP/443). ה-FTD עוצר את החיבור, פותח אותו, מעביר את התוכן ל-IPS ול-file policy, וחותם מחדש על תעודת השרת ב-CA פנימי של הארגון. לא משתמשים ב-Known-Key: הוא דורש לייבא ל-FMC את התעודה והמפתח הפרטי של כל שרת ולעדכן אותם בכל חידוש תעודה.</p>
 <table>
-  <thead><tr><th></th><th><strong>Outbound — Decrypt-Resign</strong></th><th><strong>Inbound — Decrypt-Known-Key</strong></th></tr></thead>
+  <thead><tr><th></th><th><strong>Decrypt-Resign על HTTPS</strong></th></tr></thead>
   <tbody>
-    <tr><td>מי השרת</td><td>חיצוני, לא שלך</td><td>שלך, מחזיק cert + key</td></tr>
-    <tr><td>איך עובד</td><td>מזייף cert בזמן אמת עם ה-CA שלך</td><td>טוען את ה-key האמיתי של השרת</td></tr>
-    <tr><td>מה צריך</td><td>internal CA + הפצת root ל-endpoints</td><td>import של כל server cert+key ל-FMC</td></tr>
-    <tr><td>מגן על</td><td>המשתמש (malware/exfil ביוצא)</td><td>השרת (attacks בנכנס)</td></tr>
-    <tr><td>כיוון בזרימה</td><td>users → outside</td><td>→ <code>GRP_SRV_GOLD</code> / <code>SILVER</code></td></tr>
+    <tr><td>על מה</td><td>מערכות GOLD ו-SILVER, על TCP/443 (או חוק עם אפליקציית HTTPS)</td></tr>
+    <tr><td>איך עובד</td><td>חותם מחדש על תעודת השרת ב-CA הפנימי של הארגון</td></tr>
+    <tr><td>מה צריך</td><td>internal CA ב-FMC, והפצת ה-root CA לכל הלקוחות</td></tr>
+    <tr><td>מה לא מפענחים</td><td>TLS שאינו HTTPS (מייל, 8443, LDAPS), מערכות CORE ושירותי זהות וניהול</td></tr>
+    <tr><td>מגן על</td><td>השרת, מפני תקיפות שמסתתרות בתוך HTTPS נכנס</td></tr>
   </tbody>
 </table>
-<p>ההבדל המהותי: ה-outbound <strong>מייצר אמון יש מאין</strong> (cert מזויף); ה-inbound <strong>משתמש באמון קיים</strong> (ה-key האמיתי).</p>
-<p><strong>החוט שמחבר לכל השאר:</strong> ה-inbound decryption הוא הזרוע שמממשת את "gold מקבל inspection מלא". בלי ה-known-key, ה-IPS על gold עיוור ל-payload המוצפן — ה-inbound decryption הוא מה שהופך את ה-gold-inspection ממשאלה למציאות.</p>
+<p><strong>החוט שמחבר לכל השאר:</strong> ה-decryption הוא מה שנותן ל-IPS ול-file policy לראות את התוכן של HTTPS אל ה-GOLD וה-SILVER. בלעדיו הם עיוורים לתוכן המוצפן.</p>
 
 <h2>סדר ה-SSL policy</h2>
 <p>First-match גם כאן, וה-<strong>do-not-decrypt עולה לראש</strong>.</p>
 <pre><code>1.  DO-NOT-DECRYPT   CORE + identity/mgmt      (AD/LDAPS/RADIUS/ISE/FMC — שובר אם תיגע)
 2.  DO-NOT-DECRYPT   mTLS / pinned / unmanaged (רשימה מתוחזקת)
 3.  DO-NOT-DECRYPT   regulatory bypass         (banking/health/gov — outbound)
-4.  DECRYPT-KNOWN-KEY  -> GRP_SRV_GOLD         (inbound, ה-cert שלך)
-5.  DECRYPT-KNOWN-KEY  -> GRP_SRV_SILVER       (inbound)
-6.  DECRYPT-RESIGN   GRP_USERS -> outside      (outbound, ה-CA שלך)
-7.  default          do-not-decrypt + log</code></pre>
-<p>הסדר קריטי: אם כלל decrypt רחב היה יושב מעל ה-core/regulatory ותופס אותם קודם — שברת פרודקשן או עברת רגולציה. לכן ה-do-not-decrypt למעלה. ה-inbound (known-key) לפני ה-outbound (resign) כי הוא ספציפי יותר ליעד.</p>
+4.  DECRYPT-RESIGN   -> GRP_SRV_GOLD, GRP_SRV_SILVER, TCP/443   (ה-CA שלך)
+5.  default          do-not-decrypt + log</code></pre>
+<p>הסדר קריטי: אם כלל decrypt רחב היה יושב מעל ה-core/regulatory ותופס אותם קודם — שברת פרודקשן או עברת רגולציה. לכן ה-do-not-decrypt למעלה. חוק ה-Decrypt-Resign בא רק אחרי כל ה-do-not-decrypt, וצר ליעד ולפורט: רק HTTPS למערכות ה-GOLD וה-SILVER.</p>
 
 <h2>נקודות כשל, ולידציה ופלטפורמה</h2>
-<p>שלוש נקודות כשל שה-decryption הדו-כיווני מוסיף — סמן אותן עכשיו:</p>
+<p>שלוש נקודות כשל ש-Decrypt-Resign מוסיף — סמן אותן עכשיו:</p>
 <ol>
-  <li><strong>Certificate pinning (outbound).</strong> אפליקציות ו-OS updates שעושים pinning יישברו תחת decrypt-resign, כי ה-cert המזויף ייפסל. חייב bypass list מתוחזק — ותכנן שהיא תגדל לאורך זמן, זה לא חד-פעמי.</li>
-  <li><strong>Cert lifecycle (inbound).</strong> כל server cert ב-known-key דורש renewal מסונכרן: כשה-cert על השרת מתחדש ולא עדכנת ב-FMC, ה-decryption נשבר וה-inbound traffic נופל. זו תלות תפעולית חדשה — תכנן אוטומציה/תזכורות.</li>
-  <li><strong>Root CA distribution (outbound).</strong> resign עובד רק אם ה-root CA ב-trust store של כל endpoint. BYOD/אורח/לא-מנוהל יראו cert errors על הכול. כאן ה-machine-SGT שימושי: תפוס "מכונות מנוהלות בלבד" ל-resign, והוצא את הלא-מנוהלות ל-do-not-decrypt.</li>
+  <li><strong>Certificate pinning ו-mutual TLS.</strong> אפליקציות, עדכוני מערכת הפעלה ושירותים עם תעודת לקוח יישברו תחת Decrypt-Resign, כי התעודה שנחתמה מחדש נפסלת. חייבת להיות רשימת do-not-decrypt מתוחזקת, ותכנן שהיא תגדל לאורך זמן.</li>
+  <li><strong>הפצת ה-root CA.</strong> Decrypt-Resign עובד רק אם ה-root CA ב-trust store של כל endpoint. BYOD, אורח ולא-מנוהל יראו שגיאות תעודה על הכול. כאן ה-machine-SGT שימושי: תפוס "מכונות מנוהלות בלבד" ל-resign, והוצא את הלא-מנוהלות ל-do-not-decrypt.</li>
+  <li><strong>תעודות שרת לא תקינות.</strong> אחרי החתימה מחדש הלקוח כבר לא רואה את תעודת השרת האמיתית ולא יכול לשפוט אותה, לכן ה-FTD צריך לחסום תעודות לא תקינות (פג תוקף, CA לא מוכר) במקומו.</li>
 </ol>
 <p><strong>ולידציה.</strong> לכל חוק לפני production: packet-tracer / hit-count שמוכיח שהוא נתפס. מבחן ה-gold: הבלוק עונה בכוחות עצמו על "מי מגיע לזהב ולמה" — אם צריך לקרוא בלוקים אחרים כדי לענות, שבור אותו.</p>
 <p><strong>פלטפורמה.</strong> ב-<strong>FTD</strong> — prefilter ו-fastpath רק לשני סוגי תעבורה: מתוך ה-CORE, שירותים פשוטים כמו NTP; ובנוסף, תעבורת תשתית כבדה או רגישה בתוך ה-DC (storage, רפליקציה, routing, BFD, ניהול FMC↔FTD). AD, DNS ו-PKI, וכל השאר, עוברים דרך Snort עם IPS. סדר בבלוק = shadowing (בדוק עם packet-tracer), ו-FMC משטח הכול ל-Lina ACL + Snort, אז ה-scale מתרחב גם כשהחוק נראה נקי. זו הסיבה שה-expansion שדיברנו עליו נבדק לפני כל הרחבה — חוק אחד נקי יכול להפוך לעשרות ACEs בפועל.</p>

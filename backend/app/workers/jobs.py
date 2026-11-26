@@ -431,6 +431,7 @@ def resume_rollback_job(batch_id: int, run_id: int | None = None) -> dict[str, A
                 audit=get_audit(),
                 settings=get_settings(),
                 lock=redis_lock(get_redis()),
+                run_id=run_id,
             )
         )
         _enforce_outcome(result)

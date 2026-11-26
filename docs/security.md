@@ -58,6 +58,19 @@ per-file Docker secret mounts, while no other host user can traverse the directo
 * UI: `infra/certs/ui/ui.pem` + `ui.key` from the organisation's PKI; until then a
   self-signed default from `scripts/gen-certs --ui <host>`. Mounted per file.
 
+### FMC certificate pinning (connect by IP address)
+
+A connection may carry a **pinned certificate** (trust on first use, confirmed by an admin):
+the admin fetches the certificate the FMC presents, compares the SHA-256 fingerprint and
+confirms it; the PEM is stored in `fmc_connections.pinned_cert`. Such a connection is verified
+against exactly that certificate (`CERT_REQUIRED`, partial chain, TLS 1.2+) instead of the CA
+bundle, and the host name is not checked - the pin is the trust anchor. TLS verification is
+never disabled and there is no option for it. The only unverified handshake is the read-only
+certificate fetch, which sends nothing and whose result is merely displayed. If the FMC later
+presents a different certificate (renewal), the connection fails with `certificate_changed`;
+the admin must fetch and confirm again, never automatic. Pin set / changed / removed and every
+fetch are audited with the fingerprint. Without a pin, the CA-bundle + host-name check applies.
+
 ## Security gates (scripts/ci.*, also the pre-push hook)
 
 ruff (incl. bandit rules) · ruff format · mypy `--strict` · bandit · pytest (unit +

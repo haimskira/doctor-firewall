@@ -44,6 +44,7 @@ RECOMMENDATION_KINDS = (
     "literal_to_object",
     # Phase 6: inspection where the doctrine wants it (IPS / file policy, SSL decryption).
     "add_inspection",
+    "add_file_policy",
     "ssl_exempt_core",
     "ssl_decrypt_inbound",
     # The same object reachable twice (rule field / group): remove the redundant copy.
@@ -66,6 +67,7 @@ BEHAVIOR_CHANGING = frozenset(
         "tighten_source",
         "tighten_ports",
         "add_inspection",
+        "add_file_policy",
         "ssl_decrypt_inbound",
         "fastpath_candidate",
     }
@@ -168,20 +170,22 @@ class NamingConvention(Base):
     )
 
 
-INSPECTION_TIERS = ("CORE", "GOLD", "SILVER", "BRONZE")
+# The organisation has one intrusion policy and one file policy: one row, this key.
+ORG_PROFILE = "ALL"
+INSPECTION_KEYS = (ORG_PROFILE,)
 
 
 class InspectionProfile(Base):
-    """Which FMC intrusion / file policy implements the doctrine's inspection for a tier.
+    """The organisation's intrusion policy and file policy (one row, key ``ALL``).
 
-    Values are policy names as they appear in the FMC; a missing row falls back to the
-    doctrine default (Cisco's built-in intrusion policies; no file policy).
+    Values are policy names as they appear in the FMC; a missing row (or a missing value)
+    falls back to the policy most allow rules of the snapshot already carry.
     """
 
     __tablename__ = "inspection_profiles"
     __table_args__ = (
         CheckConstraint(
-            "tier IN (" + ",".join(f"'{t}'" for t in INSPECTION_TIERS) + ")", name="tier_known"
+            "tier IN (" + ",".join(f"'{t}'" for t in INSPECTION_KEYS) + ")", name="tier_known"
         ),
     )
 

@@ -44,6 +44,7 @@ PHASES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "tighten_source",
             "tighten_ports",
             "add_inspection",
+            "add_file_policy",
             "ssl_exempt_core",
             "ssl_decrypt_inbound",
             "fastpath_candidate",

@@ -31,6 +31,7 @@ const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['rename_convention', 'rename'],
   ['literal_to_object', 'object'],
   ['add_inspection', 'inspect'],
+  ['add_file_policy', 'inspect'],
   ['ssl_exempt_core', 'inspect'],
   ['ssl_decrypt_inbound', 'inspect'],
   ['fastpath_candidate', 'inspect'],

@@ -1138,7 +1138,7 @@ a.button-link:hover { background: var(--primary-soft); }
 .doc-layout { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1rem; align-items: start; }
 .doc-toc { position: sticky; top: calc(var(--top-h) + 1rem); max-height: calc(100vh - var(--top-h) - 2rem); overflow-y: auto; font-size: 0.85rem; }
 .doc-toc-title { font-weight: 650; margin-block-end: 0.5rem; }
-.doc-toc ol { margin: 0; padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.doc-toc ol { margin: 0; padding-inline-start: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
 .doc-toc a { color: var(--muted); text-decoration: none; }
 .doc-toc a:hover { color: var(--primary); }
 .doc-page { max-width: 60rem; padding: 1.5rem 2rem 3rem; line-height: 1.75; font-size: 0.97rem; }

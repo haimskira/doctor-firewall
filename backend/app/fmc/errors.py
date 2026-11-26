@@ -11,6 +11,12 @@ class FmcTlsError(FmcError):
     code = "tls_error"
 
 
+class FmcCertificateChangedError(FmcTlsError):
+    """A pinned connection met a different certificate (renewal or interception)."""
+
+    code = "certificate_changed"
+
+
 class FmcAuthError(FmcError):
     code = "auth_failed"
 

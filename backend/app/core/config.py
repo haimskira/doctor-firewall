@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # A rollback that could not finish (FMC unreachable) is retried after this pause.
     rollback_retry_seconds: float = Field(default=30.0, ge=0, le=600)
     write_lock_ttl_seconds: int = Field(default=4 * 3600, ge=300, le=24 * 3600)
+    # Four eyes: when on, a changeset's author may not approve or run its batches (a second
+    # approver is needed). Off by default (owner's decision 2026-11-26): the approver role,
+    # the traffic proof and the audit trail still gate every write.
+    four_eyes: bool = False
     # After a deployment: watch hit counters this long, this often (app.enforce.watch); alert
     # when a BLOCK rule behind a changed rule gets at least this many new hits and this many
     # times its rate before the deployment.
