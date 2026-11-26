@@ -564,7 +564,8 @@ export type RecommendationKind =
   | 'remove_redundant_member'
   | 'remove_disabled_rule'
   | 'compact_group'
-  | 'fastpath_candidate';
+  | 'fastpath_candidate'
+  | 'use_dynamic_object';
 
 export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_shadowed_rule',
@@ -589,6 +590,7 @@ export const RECOMMENDATION_KINDS: readonly RecommendationKind[] = [
   'remove_disabled_rule',
   'compact_group',
   'fastpath_candidate',
+  'use_dynamic_object',
 ];
 
 export type DecisionStatus = 'accepted' | 'dismissed';
@@ -710,6 +712,27 @@ export interface RecommendationPreview {
   rules?: { policy: string; index: number; name: string; id: string }[];
   /** Redundant references / members: what goes and the object that already holds it. */
   redundant?: { field?: string; removed: string; kept: string; chain: string[] }[];
+  /** use_dynamic_object: the address list and the dynamic object it was cross-checked with. */
+  dynamic?: DynamicPreview;
+}
+
+export interface DynamicPreview {
+  match: 'identical' | 'close' | 'none';
+  name: string;
+  id: string | null;
+  create: boolean;
+  source: { type: 'group' | 'rule'; id: string; name: string; side?: 'source' | 'destination' };
+  addresses: number;
+  covered: number;
+  missing: string[];
+  missing_count: number;
+  extra: string[];
+  extra_count: number;
+  mapped: number;
+  mapped_total: number;
+  truncated: boolean;
+  not_mappable: number;
+  sample: string[];
 }
 
 export interface PlanOp {
@@ -830,6 +853,9 @@ export interface ConnectivityMap {
   total_edges: number;
   truncated: boolean;
   risk_counts: Record<MapRisk, number>;
+  /** The asset table changed since this snapshot was analysed (the map shows the old systems). */
+  assets_changed: boolean;
+  analyzed_at: string | null;
 }
 
 export interface MapChangeEdge {

@@ -793,7 +793,7 @@ function StageForm({ snapshotId, accepted }: { snapshotId: number; accepted: num
           dir="ltr"
           className="ltr"
           required
-          pattern="[A-Za-z0-9][A-Za-z0-9._/\-]{1,63}"
+          pattern="[A-Za-z0-9][A-Za-z0-9._\/\-]{1,63}"
           maxLength={64}
           value={ticket}
           onChange={(e) => {

@@ -160,6 +160,8 @@ class AssetDomain(Base):
     description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # A deleted discovery suggestion: hidden, and never suggested again.
+    rejected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

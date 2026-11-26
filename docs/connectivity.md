@@ -4,6 +4,11 @@ A dynamic map of who talks to whom, built from the local copy at analysis time (
 traffic data). Source: `backend/app/analysis/connectivity.py` (edges, written by the analysis
 job) and `backend/app/api/connectivity.py` (`GET /api/snapshots/{id}/map`).
 
+The nodes are the assets confirmed **when the snapshot was analysed**. The analysis records a
+fingerprint of the asset table; when the table has changed since, the endpoint returns
+`assets_changed: true` and the page shows a warning with **Rebuild map**, which re-analyses the
+snapshot (`POST /api/snapshots/{id}/analyze`) and reloads the map when the job ends.
+
 ## Nodes and edges
 
 * **Nodes** are the assets of the confirmed asset table (`TIER|ASSET`; an asset's components

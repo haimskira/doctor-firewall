@@ -100,7 +100,7 @@
 <li><strong>אוצר מילים כללי</strong> בשמות אובייקטים, קבוצות, zones, ממשקים ואובייקטים דינמיים: users, switch, voice, mgmt, dmz וכדומה. לא שמות של אתר.</li>
 <li><strong>התנהגות בחוקים:</strong> מקור לכיוון יעדים רבים הוא לקוח, ויעד של שירותים מסוימים הוא שרת. פורטי SIP / SCCP / RTP מעידים על טלפוניה, SNMP / NETCONF לכיוון הכתובת מעיד על ציוד רשת, ומקור שמותאם עם SGT מנוהל ב-ISE (SDA).</li>
 <li><strong>קונצנזוס:</strong> קבוצה או אובייקט דינמי שרוב הכתובות המסווגות שלהם חולקות תפקיד משאילים אותו לשאר הכתובות. כך האובייקט הדינמי של המתגים מזוהה לפי התוכן שלו, בלי קשר לשם. סגמנט שרוב הכתובות בו שרתים הוא סגמנט DC.</li>
-<li><strong>דומיינים</strong> נלמדים: מילים שחוזרות בשמות אובייקטי משתמשים בכמה אוכלוסיות (כל אוכלוסייה קיימת בכל דומיין), או prefix של realm בתנאי משתמש (<code>DOMAIN\user</code>).</li>
+<li><strong>דומיינים</strong> נלמדים: קוד קצר (2 עד 6 אותיות, בלי ספרות) שמופיע בתחילת השם או בסופו של לפחות שלושה אובייקטי משתמשים / טלפוניה, מלפחות שתי אוכלוסיות (כל אוכלוסייה קיימת בכל דומיין), או prefix של realm בתנאי משתמש (<code>DOMAIN\user</code>). ההחלטות של המפעיל קובעות: דומיין שאושר או נוסף תמיד מוכר, דומיין שהתגלה ונמחק לא יוצע שוב, וסגמנט ששויך לדומיין (למשל <code>55.0.0.0/8</code> ← X) קובע את הדומיין של כל מה שבתוכו, מיד ובכל הרצה הבאה.</li>
 <li><strong>מערכות:</strong> הקבוצה הקטנה ביותר שחוק משתמש בה ורובה שרתים, אחרת המילה המבחינה הראשונה בשם (<code>PAY-DB01</code> ו-<code>PAY-APP02</code> הופכים ל-PAY). התפקיד של כל רכיב נקבע לפי השם או לפי השירותים שהחוקים פותחים אליו. ה-tier נקבע לפי ה-zone שהשרתים יושבים מאחוריו, אחרת לפי השם.</li>
 </ul>
 <p>התוצאות נשמרות כהצעות שמחכות לאישור, עם הראיות. הרצה חוזרת מחליפה רק הצעות שלא אושרו, ואת שורות ה-bootstrap הישנות. טבלת הסגמנטים וטבלת הדומיינים ניתנות לעריכה. מחיקה גורפת של כל הנכסים, של הלא-משויכים או של ההצעות דורשת הקלדת DELETE.</p>
@@ -208,11 +208,12 @@
 <tr><td><code>add_inspection</code></td><td>חוק מתיר ליעד מסווג שאין בו ה-intrusion policy של הארגון (חסרה, אחרת, או שהחוק TRUST)</td><td>GOLD 70, CORE 60, SILVER 55, BRONZE 40, + בונוס</td><td>כן</td></tr>
 <tr><td><code>add_file_policy</code></td><td>חוק מתיר ל-GOLD או ל-SILVER בלי file policy</td><td>כמו <code>add_inspection</code> פחות 5, + בונוס</td><td>כן</td></tr>
 <tr><td><code>fastpath_candidate</code></td><td>חוק מתיר שכל התעבורה שלו כבדה או רגישה ובין מערכות ידועות (storage, רפליקציה, routing, BFD, ניהול FMC↔FTD), או NTP ל-CORE</td><td>35 עם IPS, 25 בלי, + בונוס</td><td>הצעה בלבד (חסומה להרצה)</td></tr>
+<tr><td><code>use_dynamic_object</code></td><td>חוק מתיר פעיל בחוקת access שמפנה לקבוצת רשתות עם 50 כתובות ומעלה (כולל קבוצות מקוננות), או שצד אחד שלו מונה 50 אובייקטים ישירות. הכתובות מוצלבות מול התוכן של כל אובייקט דינמי שנאסף מה-FMC: זהה (אותן כתובות בדיוק), קרוב (לפחות 80%, עם מה שחסר ומה שעודף), או אין, ואז מוצע ליצור אובייקט חדש</td><td>30 כשיש אובייקט זהה, 20 אחרת, + בונוס</td><td>הצעה בלבד (חסומה להרצה)</td></tr>
 <tr><td><code>ssl_exempt_core</code></td><td>חוק decrypt תופס יעדי CORE או שירותי זהות וניהול לפי פורט</td><td>80</td><td>הצעה בלבד (חסומה להרצה)</td></tr>
 <tr><td><code>ssl_decrypt_inbound</code></td><td>HTTPS (TCP/443) ל-GOLD או ל-SILVER בלי חוק Decrypt-Resign בחוקת ה-decryption</td><td>GOLD 65, SILVER 45</td><td>הצעה בלבד (חסומה להרצה)</td></tr>
 </tbody>
 </table>
-<p>"משנה תעבורה" לפי <code>BEHAVIOR_CHANGING</code>: <code>remove_dead_rule</code>, <code>tighten_source</code>, <code>tighten_ports</code>, <code>add_inspection</code>, <code>add_file_policy</code>, <code>ssl_decrypt_inbound</code>, <code>fastpath_candidate</code>. כל השאר "משמרות": ההוכחה דורשת שאף flow לא ישנה פסק.</p>
+<p>"משנה תעבורה" לפי <code>BEHAVIOR_CHANGING</code>: <code>remove_dead_rule</code>, <code>tighten_source</code>, <code>tighten_ports</code>, <code>add_inspection</code>, <code>add_file_policy</code>, <code>ssl_decrypt_inbound</code>, <code>fastpath_candidate</code>, <code>use_dynamic_object</code> (התוכן של אובייקט דינמי משתנה בזמן ריצה, מחוץ ל-FMC). כל השאר "משמרות": ההוכחה דורשת שאף flow לא ישנה פסק.</p>
 
 <h3>פיצול חוק (<code>split_rule</code>)</h3>
 <p>העיקרון: כלל אחד, רמת יעד אחת. תנאים (כולם):</p>
@@ -345,7 +346,7 @@
 <tr><td>1</td><td>חוקים שלא תופסים כלום</td><td><code>remove_disabled_rule</code>, <code>remove_shadowed_rule</code></td><td>לא משתנה</td></tr>
 <tr><td>2</td><td>אובייקטים וקבוצות</td><td>מיזוג כפילויות וקבוצות, הפניות וחברים מיותרים, דחיסת קבוצות, literal לאובייקט, שמות</td><td>לא משתנה</td></tr>
 <tr><td>3</td><td>מבנה לפי רמות</td><td><code>split_group</code>, <code>split_rule</code>, <code>merge_rules</code></td><td>לא משתנה</td></tr>
-<tr><td>4</td><td>שינויי גישה</td><td><code>remove_dead_rule</code>, <code>tighten_source</code>, <code>tighten_ports</code>, <code>add_inspection</code>, <code>add_file_policy</code>, <code>fastpath_candidate</code>, <code>ssl_exempt_core</code>, <code>ssl_decrypt_inbound</code></td><td><strong>משתנה</strong>: אישור בעלים וניטור אחרי deploy</td></tr>
+<tr><td>4</td><td>שינויי גישה</td><td><code>remove_dead_rule</code>, <code>tighten_source</code>, <code>tighten_ports</code>, <code>add_inspection</code>, <code>add_file_policy</code>, <code>fastpath_candidate</code>, <code>use_dynamic_object</code>, <code>ssl_exempt_core</code>, <code>ssl_decrypt_inbound</code></td><td><strong>משתנה</strong>: אישור בעלים וניטור אחרי deploy</td></tr>
 <tr><td>5</td><td>סגירה</td><td><code>remove_unused_object</code></td><td>לא משתנה</td></tr>
 </tbody>
 </table>

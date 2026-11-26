@@ -48,6 +48,7 @@ PHASES: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "ssl_exempt_core",
             "ssl_decrypt_inbound",
             "fastpath_candidate",
+            "use_dynamic_object",
         ),
     ),
     ("closing", ("remove_unused_object",)),

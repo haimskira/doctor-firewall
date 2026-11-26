@@ -122,10 +122,13 @@ def test_domains_are_learnt_from_names_recurring_across_populations() -> None:
         [
             _unit("10.10.0.0/24", "AH-SDA-USERS", sgt_hits=1),
             _unit("10.11.0.0/24", "AH-Legacy-Users"),
+            _unit("10.17.0.0/24", "AH-VC-LEGACY-USERS"),
             _unit("10.12.0.0/24", "OA-SDA-USERS", sgt_hits=1),
             _unit("10.13.0.0/24", "OA-LEGACY-USERS"),
+            _unit("10.18.0.0/24", "OA-VC-SDA-USERS", sgt_hits=1),
             _unit("10.14.0.0/24", "LOTR-VC-LEGACY-USERS"),
             _unit("10.15.0.0/24", "LOTR-SDA-USERS", sgt_hits=1),
+            _unit("10.19.0.0/24", "LOTR-LEGACY-USERS"),
             _unit("10.16.0.0/24", "FLOOR3-USERS"),  # one population only: not a domain
         ]
     )
@@ -138,6 +141,60 @@ def test_domains_are_learnt_from_names_recurring_across_populations() -> None:
     assert segs["10.14.0.0/24"].domain == "LOTR"
     populations = {s.name for s in result.systems if s.kind == "user_segment"}
     assert {"SDA-USERS AH", "LEGACY-USERS OA", "VC-LEGACY LOTR"} <= populations
+
+
+def test_words_that_are_not_domain_codes_are_not_domains() -> None:
+    facts = _facts(
+        [
+            # "building" is long, "b2" carries a digit, "west" sits in the middle of the name,
+            # "tlv" names only two objects: none is a domain code.
+            _unit("10.30.0.0/24", "BUILDING-SDA-USERS", sgt_hits=1),
+            _unit("10.31.0.0/24", "BUILDING-LEGACY-USERS"),
+            _unit("10.32.0.0/24", "BUILDING-VC-LEGACY-USERS"),
+            _unit("10.33.0.0/24", "B2-SDA-USERS", sgt_hits=1),
+            _unit("10.34.0.0/24", "B2-LEGACY-USERS"),
+            _unit("10.35.0.0/24", "B2-VC-SDA-USERS", sgt_hits=1),
+            _unit("10.36.0.0/24", "SDA-WEST-USERS", sgt_hits=1),
+            _unit("10.37.0.0/24", "LEGACY-WEST-USERS"),
+            _unit("10.38.0.0/24", "VC-LEGACY-WEST-USERS"),
+            _unit("10.39.0.0/24", "TLV-SDA-USERS", sgt_hits=1),
+            _unit("10.40.0.0/24", "TLV-LEGACY-USERS"),
+        ]
+    )
+    assert not set(discover(facts).domains) & {"building", "b2", "west", "tlv"}
+
+
+def test_a_range_belongs_to_a_domain_segment_only_when_both_ends_are_inside() -> None:
+    from app.analysis.discovery import _DomainRanges
+
+    ranges = _DomainRanges([("55.0.0.0/8", "X"), ("10.0.0.0/8", "Y")])
+    assert ranges.find("55.1.1.1-55.1.1.9") == "X"
+    assert ranges.find("55.255.255.250-56.0.0.5") is None  # spills past the segment
+    assert ranges.find("10.1.0.0/16") == "Y"
+    assert ranges.find("2001:db8::/64") is None
+
+
+def test_operator_decisions_outrank_inferred_domains() -> None:
+    facts = _facts(
+        [
+            _unit("10.50.0.0/24", "AH-SDA-USERS", sgt_hits=1),
+            _unit("10.51.0.0/24", "AH-LEGACY-USERS"),
+            _unit("10.52.0.0/24", "AH-VC-LEGACY-USERS"),
+            _unit("55.1.0.0/24", "SDA-USERS-1", sgt_hits=1),
+            _unit("55.2.0.0/24", "LEGACY-USERS-2"),
+        ]
+    )
+    facts.rejected_domains = {"ah"}  # deleted by the operator: never suggested again
+    facts.known_domains = {"oa"}  # added by the operator: always known
+    facts.domain_ranges = [("55.0.0.0/8", "X")]  # a segment the operator assigned to X
+    result = discover(facts)
+    assert "ah" not in result.domains
+    assert result.domains["oa"][0]["source"] == "operator"
+    segs = {s.network: s for s in result.segments}
+    assert segs["10.50.0.0/24"].domain is None
+    assert segs["55.1.0.0/24"].domain == "X"
+    assert segs["55.2.0.0/24"].domain == "X"
+    assert {s.domain for s in result.systems if s.kind == "user_segment" and s.name.endswith(" X")}
 
 
 def test_realm_prefixes_of_user_conditions_are_domains() -> None:

@@ -1,9 +1,12 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { SortedTable } from '../components/sort';
 
+import { api, errorCode } from '../api/client';
 import type { Cluster, ConnectivityMap, MapEdge, MapNode, MapRisk, MapView } from '../api/types';
+import { useAuth } from '../auth/AuthProvider';
+import { useJobs } from '../components/jobs';
 import { Alert, Ltr } from '../components/common';
 import { FlowInsights } from '../components/FlowInsights';
 import { FlowSankey } from '../components/FlowSankey';
@@ -55,6 +58,32 @@ export function MapPage() {
   if (mode === 'graph') for (const r of risks) params.append('risk', r);
   const map = useApi<ConnectivityMap>(snapshotId === null ? null : `/api/snapshots/${String(snapshotId)}/map?${params.toString()}`);
   const data = map.data;
+  const { can } = useAuth();
+  const jobs = useJobs();
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  // The map is built when a snapshot is analysed: an analysis of this snapshot in progress means
+  // a new map is on its way; reload when it ends.
+  const analysing = jobs.jobs.some(
+    (j) => j.kind === 'analyze' && j.snapshot_id === snapshotId && (j.status === 'queued' || j.status === 'running'),
+  );
+  const wasAnalysing = useRef(false);
+  const reloadMap = map.reload;
+  useEffect(() => {
+    if (wasAnalysing.current && !analysing) reloadMap();
+    wasAnalysing.current = analysing;
+  }, [analysing, reloadMap]);
+
+  async function refresh() {
+    if (snapshotId === null) return;
+    setRefreshError(null);
+    try {
+      await api(`/api/snapshots/${String(snapshotId)}/analyze`, 'POST');
+      jobs.kick();
+    } catch (err) {
+      setRefreshError(errorCode(err));
+    }
+  }
+  const canRefresh = can('collect:run') && snapshotId !== null;
   const nodeLabel = useNodeLabel();
   const columnLabel = useColumnLabel();
 
@@ -144,10 +173,30 @@ export function MapPage() {
         <div className="row page-filters">
           <SnapshotPicker snapshots={snapshots} value={snapshotId} onChange={setSnapshotId} />
           <PolicyPicker scope={scope} />
+          {canRefresh && (
+            <button type="button" className="secondary" disabled={analysing} aria-busy={analysing} onClick={() => void refresh()}>
+              {analysing ? t('map.refreshing') : t('map.refresh')}
+            </button>
+          )}
         </div>
       </div>
       <ScopeNote scope={scope} traffic />
       {error !== null && <Alert kind="error">{tError(error)}</Alert>}
+      {refreshError !== null && <Alert kind="error">{tError(refreshError)}</Alert>}
+      {analysing && <Alert kind="info">{t('map.analysing')}</Alert>}
+      {!analysing && data !== null && data.assets_changed && (
+        <Alert kind="warning">
+          {t('map.assetsChanged')}{' '}
+          {canRefresh && (
+            <button type="button" onClick={() => void refresh()}>
+              {t('map.refresh')}
+            </button>
+          )}
+        </Alert>
+      )}
+      {!analysing && data !== null && data.total_edges === 0 && !data.assets_changed && (
+        <Alert kind="info">{t(data.analyzed_at === null ? 'map.notAnalysed' : 'map.empty')}</Alert>
+      )}
       {snapshotId === null && snapError === null && <Alert kind="info">{t('snap.none')}</Alert>}
 
       <div className="pe-flow" role="tablist" aria-label={t('map.view')}>

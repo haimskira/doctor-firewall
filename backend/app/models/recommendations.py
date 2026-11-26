@@ -56,6 +56,8 @@ RECOMMENDATION_KINDS = (
     "compact_group",
     # Heavy / fragile traffic between known DC systems: consider fastpath instead of IPS.
     "fastpath_candidate",
+    # A large address list in rules that a dynamic object could carry (advisory only).
+    "use_dynamic_object",
 )
 # What a recommendation does to traffic. Behaviour-preserving changes leave every flow's verdict
 # (and inspection) as it was — the batch verifier proves it before and after deployment.
@@ -70,6 +72,8 @@ BEHAVIOR_CHANGING = frozenset(
         "add_file_policy",
         "ssl_decrypt_inbound",
         "fastpath_candidate",
+        # The dynamic object's content is managed outside the FMC and changes at runtime.
+        "use_dynamic_object",
     }
 )
 

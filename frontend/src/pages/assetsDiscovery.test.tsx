@@ -89,6 +89,18 @@ describe('asset discovery', () => {
     });
   });
 
+  it('gives the segment name and notes a column each, with a placeholder', async () => {
+    setup('/assets?tab=segments');
+    expect(await screen.findByText('10.20.0.0/16')).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(within(table).getByRole('columnheader', { name: /Notes/ })).toBeInTheDocument();
+    const name = screen.getByLabelText('Name — 10.20.0.0/16');
+    const notes = screen.getByLabelText('Notes — 10.20.0.0/16');
+    expect(name).toHaveAttribute('placeholder', 'Name');
+    expect(notes).toHaveAttribute('placeholder', 'Notes');
+    expect(name.closest('td')).not.toBe(notes.closest('td'));
+  });
+
   it('sends a purge only after DELETE is typed', async () => {
     const calls = setup('/assets');
     const user = userEvent.setup();

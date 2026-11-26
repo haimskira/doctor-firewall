@@ -23,6 +23,21 @@ are stored unconfirmed with their evidence; a re-run replaces only unconfirmed s
 the old per-address rows). Bulk delete (`POST /api/assets/purge`, `scope` all / unassigned /
 suggested) requires `confirm: "DELETE"`.
 
+Domains (0.7.13): a learnt domain must be a short code (2-6 letters, no digits) that qualifies at
+least three user / voice objects of two or more populations, in two or more networks, and sits
+at the start or the end of the name in at least 75% of them (rare ones, under 5% of the largest,
+are dropped). The operator's decisions outrank inference: confirmed / added domains are always
+known; deleting a discovered domain marks it `rejected` (migration 0032) so it is never
+suggested again; assigning a segment to a domain (e.g. `55.0.0.0/8 -> X`, the domain is created
+if new) gives that domain to every suggested segment and asset inside it at once and decides it
+in every later run (a narrower operator segment keeps its own domain; a range must lie wholly inside;
+a domain code counts only at the start or the end of a name). `POST /api/asset-domains/purge` (`all` = fresh start, rejections included;
+`suggested` = reject the pending ones) and `POST /api/asset-domains/confirm`.
+
+Connectivity map: the map is built by the analysis from the assets confirmed at that time. The
+analysis records a fingerprint of the effective asset table; the map endpoint returns
+`assets_changed` when the table differs now, and the map page offers to rebuild (re-analyse).
+
 ### D-032 — Connect to the FMC by IP address: certificate pinning, verification never off
 A hostname-verified connection needed the name `firepower`, an `extra_hosts` mapping and the FMC
 certificate in the trust bundle. Now an admin can type the IP address: the UI fetches the

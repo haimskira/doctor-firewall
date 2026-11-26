@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analysis.assets import effective_assets
+from app.analysis.assets import effective_assets, fingerprint
 from app.analysis.connectivity import ANY, RISK_ORDER, SERVER_TIERS, UNCLASSIFIED, node_tier
 from app.analysis.space import AddressSet
 from app.api.scope import PolicyQuery, enforced
@@ -60,6 +61,10 @@ class MapOut(BaseModel):
     total_edges: int
     truncated: bool
     risk_counts: dict[str, int]
+    # The asset table changed since the snapshot was analysed: the map shows the old systems
+    # until the snapshot is analysed again.
+    assets_changed: bool
+    analyzed_at: datetime | None
 
 
 def _filter_set(value: str | None, name: str) -> AddressSet | None:
@@ -71,6 +76,16 @@ def _filter_set(value: str | None, name: str) -> AddressSet | None:
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"invalid_{name}") from exc
     return AddressSet.build([canonical])
+
+
+def _assets_changed(snap: Snapshot, assets: list[Any]) -> bool:
+    if snap.analyzed_at is None:
+        return False
+    stats = snap.stats or {}
+    recorded = stats.get("assets_fingerprint")
+    if recorded is None:  # analysed before the fingerprint was recorded
+        return int(stats.get("assets_used", -1)) != len(assets)
+    return bool(recorded != fingerprint(assets))
 
 
 def _in_view(view: str, src: str, dst: str) -> bool:
@@ -101,7 +116,8 @@ def connectivity_map(
     ``src`` / ``dst`` (IP, CIDR or range) keep edges whose node networks intersect them;
     ``both`` also keeps the reverse direction. ``ANY`` matches every filter.
     """
-    if db.get(Snapshot, snapshot_id) is None:
+    snap = db.get(Snapshot, snapshot_id)
+    if snap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     src_filter, dst_filter = _filter_set(src, "src"), _filter_set(dst, "dst")
     query = select(MapEdge).where(MapEdge.snapshot_id == snapshot_id)
@@ -122,7 +138,8 @@ def connectivity_map(
     # Node networks from the current (confirmed) asset table.
     networks: dict[str, list[str]] = defaultdict(list)
     user_types: dict[str, str | None] = {}
-    for a in effective_assets(db):
+    assets = effective_assets(db)
+    for a in assets:
         nid = f"{a.tier}|{a.system}"
         networks[nid].append(a.network)
         user_types.setdefault(nid, a.user_type)
@@ -219,4 +236,6 @@ def connectivity_map(
         total_edges=total,
         truncated=total > len(edges),
         risk_counts=counts,
+        assets_changed=_assets_changed(snap, assets),
+        analyzed_at=snap.analyzed_at,
     )

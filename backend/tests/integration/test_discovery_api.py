@@ -10,7 +10,7 @@ from app.analysis.assets import effective_assets
 from app.collector import runner
 from app.db.session import get_sessionmaker
 from app.fmc.client import ThrottlePolicy
-from app.models.assets import Asset, AssetGroup, Segment
+from app.models.assets import Asset, AssetDomain, AssetGroup, Segment
 from tests.integration.conftest import login, make_user
 from tests.integration.test_phase2 import _snapshot
 
@@ -159,8 +159,10 @@ def test_segments_and_domains_are_editable(client: TestClient, admin: dict[str, 
         == 422
     )
 
-    domain = client.post("/api/asset-domains", headers=admin, json={"name": "ah"}).json()
-    assert domain["name"] == "AH"
+    # Assigning a segment to a domain that does not exist yet creates it.
+    domain = next(d for d in client.get("/api/asset-domains").json() if d["name"] == "AH")
+    assert domain["source"] == "manual"
+    assert client.post("/api/asset-domains", headers=admin, json={"name": "ah"}).status_code == 409
     assert domain["segments"] == 1
     renamed = client.patch(
         f"/api/asset-domains/{domain['id']}", headers=admin, json={"name": "ah-corp"}
@@ -176,6 +178,62 @@ def test_segments_and_domains_are_editable(client: TestClient, admin: dict[str, 
     )
     assert _segment(client, "10.66.1.0/24")["source"] == "manual"  # not a suggestion: kept
     assert client.delete(f"/api/segments/{seg['id']}", headers=admin).status_code == 204
+
+
+def test_a_segment_domain_applies_inside_and_deleted_suggestions_stay_away(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    with get_sessionmaker().begin() as s:
+        for network in ("55.1.0.0/24", "56.1.0.0/24", "55.9.1.0/24"):
+            s.add(Segment(network=network, source="discovery", confirmed=False, updated_by="x"))
+        # A narrower operator decision: 55.9.0.0/16 belongs to W, whatever 55/8 says.
+        s.add(Segment(network="55.9.0.0/16", domain="W", source="manual", updated_by="x"))
+        s.add(AssetDomain(name="W", source="manual", updated_by="x"))
+        s.add(AssetDomain(name="ZZ", source="discovery", confirmed=False, updated_by="x"))
+    outer = client.post(
+        "/api/segments", headers=admin, json={"network": "55.0.0.0/8", "domain": "x"}
+    )
+    assert outer.status_code == 201, outer.text
+    assert outer.json()["domain"] == "X"
+    assert _segment(client, "55.1.0.0/24")["domain"] == "X"  # inside: follows the decision
+    assert _segment(client, "56.1.0.0/24")["domain"] is None  # outside: untouched
+    assert _segment(client, "55.9.1.0/24")["domain"] is None  # inside a narrower decision
+    names = {d["name"]: d for d in client.get("/api/asset-domains").json()}
+    assert names["X"]["confirmed"]
+
+    # A deleted suggestion is remembered as rejected: hidden, and not suggested again.
+    assert (
+        client.delete(f"/api/asset-domains/{names['ZZ']['id']}", headers=admin).status_code == 204
+    )
+    assert "ZZ" not in {d["name"] for d in client.get("/api/asset-domains").json()}
+    with get_sessionmaker()() as s:
+        assert s.scalar(select(AssetDomain.rejected).where(AssetDomain.name == "ZZ")) is True
+
+    # Renaming a domain to a rejected name is allowed (the rejected row gives way).
+    renamed = client.patch(
+        f"/api/asset-domains/{names['W']['id']}", headers=admin, json={"name": "zz"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "ZZ"
+    assert _segment(client, "55.9.0.0/16")["domain"] == "ZZ"
+
+    # Approve all, then delete every domain: assignments go, and the rejections are forgotten.
+    assert (
+        client.post("/api/asset-domains/confirm", headers=admin, json={"all": True}).status_code
+        == 200
+    )
+    purged = client.post(
+        "/api/asset-domains/purge", headers=admin, json={"scope": "all", "confirm": "DELETE"}
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["deleted"] >= 1
+    assert client.get("/api/asset-domains").json() == []
+    assert _segment(client, "55.0.0.0/8")["domain"] is None
+    with get_sessionmaker()() as s:
+        assert s.scalar(select(func.count()).select_from(AssetDomain)) == 0
+    for network in ("55.0.0.0/8", "55.1.0.0/24", "56.1.0.0/24", "55.9.1.0/24", "55.9.0.0/16"):
+        seg = _segment(client, network)
+        assert client.delete(f"/api/segments/{seg['id']}", headers=admin).status_code == 204
 
 
 def test_readers_cannot_discover_or_purge(client: TestClient) -> None:

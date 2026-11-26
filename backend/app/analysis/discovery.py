@@ -16,9 +16,11 @@ evidence the FMC configuration already holds, cross-checked against each other:
   lends that role to its other members (so a dynamic object that tracks the network devices is
   recognised by what it contains, whatever it is called); a segment whose addresses are mostly
   servers is a data-centre segment.
-* **Domains** — learnt, not listed: the qualifiers that recur in the names of user objects
-  across *several* user populations (every population exists in every domain), or that match a
-  realm prefix of a user condition (``DOMAIN\\user``).
+* **Domains** — learnt, not listed: short codes that qualify the names of user / voice objects
+  of *several* populations (every population exists in every domain) consistently, at the start
+  or the end of the name, or a realm prefix of a user condition (``DOMAIN\\user``). The
+  operator's own domains are always known, deleted suggestions never come back, and a segment
+  the operator assigned to a domain decides the domain of everything inside it.
 
 Systems: servers are grouped by the smallest network group that holds mostly servers, then by
 the leading distinctive token of their names (``PAY-DB01`` and ``PAY-APP02`` -> ``PAY``). The
@@ -42,6 +44,8 @@ from sqlalchemy.orm import Session
 
 from app.analysis.bootstrap import TIER_TOKENS
 from app.analysis.expand import Resolver
+from app.models.assets import AssetDomain
+from app.models.assets import Segment as SegmentRow
 from app.models.inventory import Cluster, FwObject, GroupMember, Interface, Route, Rule, RuleRef
 
 # ------------------------------------------------------------------ vocabulary
@@ -157,6 +161,14 @@ def _qualifiers(words: Iterable[str]) -> list[str]:
     return [w for w in words if w not in vocabulary and not w.isdigit() and len(w) >= 2]
 
 
+def _edge_codes(name: str) -> set[str]:
+    """Qualifiers at the start or the end of a name (where a domain code sits)."""
+    kept = [w for w in tokens(name) if not w.isdigit()]
+    if not kept:
+        return set()
+    return set(_qualifiers([kept[0], kept[-1]]))
+
+
 def tier_of(names: Iterable[str]) -> str | None:
     words = {w.upper() for n in names for w in tokens(n)}
     for tier, keywords in TIER_TOKENS:
@@ -237,6 +249,10 @@ class Facts:
     realms: Counter[str]  # DOMAIN prefixes of user conditions
     sgt_names: list[str]
     live_groups: set[str] = field(default_factory=set)  # used by a rule, directly or nested
+    # The operator's decisions, which outrank every inference:
+    known_domains: set[str] = field(default_factory=set)  # confirmed / added (lower case)
+    rejected_domains: set[str] = field(default_factory=set)  # deleted suggestions (lower case)
+    domain_ranges: list[tuple[str, str]] = field(default_factory=list)  # (network, DOMAIN)
 
 
 def _canonical(value: str | None) -> str | None:
@@ -648,45 +664,17 @@ def discover(facts: Facts) -> Discovery:
             roles[n] = verdict
 
     # 4. Domains: qualifiers of user / voice names that recur across populations (or realms).
-    seen: dict[str, set[str]] = defaultdict(set)  # qualifier -> populations
-    count: Counter[str] = Counter()
-    for n, role in roles.items():
-        if role not in ("users", "voice"):
-            continue
-        u = facts.units[n]
-        for name in u.names | {
-            facts.groups[g][0] for g in u.groups if len(facts.groups[g][1]) <= 256
-        }:
-            words = tokens(name)
-            pop = (population(words) or "plain") + (
-                "-voice" if "voice" in word_roles(words) else ""
-            )
-            for q in set(_qualifiers(words)):
-                seen[q].add(pop)
-                count[q] += 1
-    domains: dict[str, list[dict[str, str]]] = {}
-    for q, pops in seen.items():
-        if q in facts.realms:
-            domains[q] = [
-                {"source": "identity", "detail": f"realm prefix {q.upper()}\\ in user conditions"}
-            ]
-        elif len(pops) >= 2 and count[q] >= 2:
-            domains[q] = [
-                {
-                    "source": "names",
-                    "detail": f"named with {len(pops)} user populations ({count[q]} objects)",
-                }
-            ]
-    for realm, hits in facts.realms.items():
-        domains.setdefault(
-            realm, [{"source": "identity", "detail": f"realm prefix in {hits} user conditions"}]
-        )
+    domains = _domains(facts, roles)
+    ranges = _DomainRanges(facts.domain_ranges)
 
     def domain_of(u: Unit) -> str | None:
+        fixed = ranges.find(u.network)  # an operator's segment -> domain decision wins
+        if fixed is not None:
+            return fixed
         names = list(u.names) + [
             facts.groups[g][0] for g in u.groups if len(facts.groups[g][1]) <= 256
         ]
-        hits = Counter(q for name in names for q in set(_qualifiers(tokens(name))) if q in domains)
+        hits = Counter(q for name in names for q in _edge_codes(name) if q in domains)
         return hits.most_common(1)[0][0].upper() if hits else None
 
     # 5. Segments: topology segments get the role of what they hold; network units join.
@@ -747,12 +735,112 @@ def discover(facts: Facts) -> Discovery:
         ):
             seg.why("identity", "no ISE / security group tag evidence")
         seg.in_dc = seg.role == "dc_servers"
+        seg.domain = ranges.find(seg.network) or seg.domain
 
     # 6. Systems and population assets.
     systems = _systems(facts, roles, index, domain_of)
     return Discovery(
         sorted(segments.values(), key=lambda s: _sort_key(s.network)), systems, domains, roles
     )
+
+
+MAX_DOMAIN_LEN = 6  # a domain is a short code (AH, LOTR ...), not a descriptive word
+MIN_DOMAIN_OBJECTS = 3
+DOMAIN_EDGE_SHARE = 0.75  # how often the qualifier sits at the start or the end of the name
+DOMAIN_MIN_SHARE = 0.05  # of the most used domain's objects
+
+
+def _domains(facts: Facts, roles: dict[str, str]) -> dict[str, list[dict[str, str]]]:
+    """Domains: realm prefixes of user conditions, the operator's own domains, and short codes
+    that qualify user / voice objects of several populations consistently (same edge of the
+    name, several objects and networks). Rejected suggestions never come back."""
+    pops: dict[str, set[str]] = defaultdict(set)  # qualifier -> populations
+    objects: dict[str, set[str]] = defaultdict(set)  # qualifier -> object / group names
+    units: dict[str, set[str]] = defaultdict(set)  # qualifier -> networks
+    edge: Counter[str] = Counter()  # qualifier -> names where it is the first / last token
+    for n, role in roles.items():
+        if role not in ("users", "voice"):
+            continue
+        u = facts.units[n]
+        for name in u.names | {
+            facts.groups[g][0] for g in u.groups if len(facts.groups[g][1]) <= 256
+        }:
+            words = tokens(name)
+            pop = (population(words) or "plain") + (
+                "-voice" if "voice" in word_roles(words) else ""
+            )
+            kept = [w for w in words if not w.isdigit()]
+            for q in set(_qualifiers(words)):
+                if any(c.isdigit() for c in q) or len(q) > MAX_DOMAIN_LEN:
+                    continue
+                pops[q].add(pop)
+                units[q].add(n)
+                if name not in objects[q]:
+                    objects[q].add(name)
+                    edge[q] += bool(kept) and q in (kept[0], kept[-1])
+    found: dict[str, list[dict[str, str]]] = {}
+    for q in sorted(facts.known_domains):
+        found[q] = [{"source": "operator", "detail": "a domain the operator confirmed or added"}]
+    for realm, hits in facts.realms.items():
+        found.setdefault(
+            realm, [{"source": "identity", "detail": f"realm prefix in {hits} user conditions"}]
+        )
+    candidates = {
+        q
+        for q, p in pops.items()
+        if len(p) >= 2
+        and len(objects[q]) >= MIN_DOMAIN_OBJECTS
+        and len(units[q]) >= 2
+        and edge[q] >= DOMAIN_EDGE_SHARE * len(objects[q])
+    }
+    if candidates:
+        floor = DOMAIN_MIN_SHARE * max(len(objects[q]) for q in candidates)
+        for q in sorted(candidates):
+            if len(objects[q]) < floor:
+                continue
+            found.setdefault(
+                q,
+                [
+                    {
+                        "source": "names",
+                        "detail": (
+                            f"qualifies {len(objects[q])} user / voice objects of"
+                            f" {len(pops[q])} populations ({', '.join(sorted(pops[q]))})"
+                        ),
+                    }
+                ],
+            )
+    return {q: e for q, e in found.items() if q not in facts.rejected_domains}
+
+
+class _DomainRanges:
+    """Longest-prefix lookup of the operator's segment -> domain decisions."""
+
+    def __init__(self, ranges: Iterable[tuple[str, str]]) -> None:
+        self.items = sorted(
+            ((n, d) for network, d in ranges if (n := _net(network)) is not None),
+            key=lambda x: -x[0].prefixlen,
+        )
+
+    def find(self, network: str) -> str | None:
+        if not self.items:
+            return None
+        targets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        single = _net(network)
+        if single is not None:
+            targets.append(single)
+        else:  # a range: both ends must be inside
+            try:
+                targets += [ipaddress.ip_network(x.strip()) for x in network.split("-", 1)]
+            except ValueError:
+                return None
+        for net, domain in self.items:
+            if all(
+                t.version == net.version and t.subnet_of(net)  # type: ignore[arg-type]
+                for t in targets
+            ):
+                return domain
+        return None
 
 
 def _sort_key(network: str) -> tuple[int, int, int]:
@@ -986,4 +1074,22 @@ USER_TYPE = {
 
 
 def run(session: Session, snapshot_id: int) -> Discovery:
-    return discover(load_facts(session, snapshot_id))
+    facts = load_facts(session, snapshot_id)
+    for name, source, confirmed, rejected in session.execute(
+        select(AssetDomain.name, AssetDomain.source, AssetDomain.confirmed, AssetDomain.rejected)
+    ).all():
+        if rejected:
+            facts.rejected_domains.add(name.lower())
+        elif confirmed or source == "manual":
+            facts.known_domains.add(name.lower())
+    facts.domain_ranges = [
+        (network, domain)
+        for network, domain in session.execute(
+            select(SegmentRow.network, SegmentRow.domain).where(
+                SegmentRow.domain.is_not(None),
+                (SegmentRow.source == "manual") | SegmentRow.confirmed.is_(True),
+            )
+        ).all()
+        if domain
+    ]
+    return discover(facts)

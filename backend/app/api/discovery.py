@@ -8,6 +8,7 @@ of the old name-only bootstrap) and never touches what an operator confirmed or 
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -146,6 +147,14 @@ class SegmentPurge(StrictModel):
     confirm: Literal["DELETE"]
 
 
+class DomainPurge(StrictModel):
+    """``all``: every domain (and every segment / asset assignment) - discovery starts afresh;
+    ``suggested``: reject every pending suggestion (never suggested again)."""
+
+    scope: Literal["all", "suggested"]
+    confirm: Literal["DELETE"]
+
+
 class PurgeResult(BaseModel):
     deleted: int
 
@@ -183,7 +192,9 @@ def _suggestions_cleared(db: Session) -> int:
     )
     db.execute(
         delete(AssetDomain).where(
-            AssetDomain.source == "discovery", AssetDomain.confirmed.is_(False)
+            AssetDomain.source == "discovery",
+            AssetDomain.confirmed.is_(False),
+            AssetDomain.rejected.is_(False),  # a rejection is a decision: kept
         )
     )
     return removed
@@ -401,7 +412,15 @@ def create_segment(
     )
     db.add(seg)
     db.flush()
-    _audit(audit, db, who, request, "segment.create", {"network": seg.network, "role": seg.role})
+    inside = _apply_domain(db, seg, who.username)
+    _audit(
+        audit,
+        db,
+        who,
+        request,
+        "segment.create",
+        {"network": seg.network, "role": seg.role, "domain": seg.domain, "inside": inside},
+    )
     db.commit()
     return _segment_out(seg)
 
@@ -425,9 +444,88 @@ def update_segment(
         seg.in_dc = seg.role == "dc_servers"
         seg.confirmed = changes.get("confirmed", True)  # an operator's choice is a decision
     seg.updated_by = who.username
+    if changes.get("domain") is not None:
+        if "confirmed" not in changes:
+            seg.confirmed = True  # assigning a domain is a decision too
+        changes["inside"] = _apply_domain(db, seg, who.username)
     _audit(audit, db, who, request, "segment.update", {"network": seg.network, **changes})
     db.commit()
     return _segment_out(seg)
+
+
+def _inside(network: str, outer: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
+    try:
+        if "-" in network:
+            start, _, end = network.partition("-")
+            a, b = ipaddress.ip_address(start), ipaddress.ip_address(end)
+            return a.version == outer.version and a in outer and b in outer
+        net = ipaddress.ip_network(network, strict=False)
+    except ValueError:
+        return False
+    return net.version == outer.version and net.subnet_of(outer)  # type: ignore[arg-type]
+
+
+def _apply_domain(db: Session, seg: Segment, who: str) -> int:
+    """An operator's segment -> domain decision: create the domain if it is new and give it to
+    every segment and suggested asset inside the segment that no operator decided otherwise
+    (manual / confirmed segments and confirmed assets keep their own). Returns how many."""
+    if seg.domain is None:
+        return 0
+    seg.domain = seg.domain.upper()
+    existing = db.scalar(select(AssetDomain).where(AssetDomain.name == seg.domain))
+    if existing is None:
+        db.add(AssetDomain(name=seg.domain, source="manual", confirmed=True, updated_by=who))
+    elif existing.rejected or not existing.confirmed:
+        existing.rejected, existing.confirmed = False, True
+    try:
+        outer = ipaddress.ip_network(seg.network, strict=False)
+    except ValueError:  # a range segment: applies to itself only
+        return 0
+    # Narrower operator decisions inside this segment keep their own domain (longest prefix
+    # wins, as in discovery).
+    narrower: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for network in db.scalars(
+        select(Segment.network).where(
+            Segment.id != seg.id,
+            Segment.domain.is_not(None),
+            (Segment.source == "manual") | Segment.confirmed.is_(True),
+        )
+    ):
+        try:
+            net = ipaddress.ip_network(network, strict=False)
+        except ValueError:
+            continue
+        if net != outer and _inside(network, outer):
+            narrower.append(net)
+
+    def ours(network: str) -> bool:
+        return _inside(network, outer) and not any(_inside(network, n) for n in narrower)
+
+    changed = 0
+    for other in db.scalars(
+        select(Segment).where(
+            Segment.id != seg.id, Segment.source == "discovery", Segment.confirmed.is_(False)
+        )
+    ):
+        if other.domain != seg.domain and ours(other.network):
+            other.domain = seg.domain
+            changed += 1
+    nets: dict[int, list[str]] = {}
+    for gid, network in db.execute(
+        select(Asset.group_id, Asset.network)
+        .join(AssetGroup, AssetGroup.id == Asset.group_id)
+        .where(AssetGroup.confirmed.is_(False), AssetGroup.source == "discovery")
+    ).all():
+        if gid is not None:
+            nets.setdefault(gid, []).append(network)
+    ids = list(nets)
+    for start in range(0, len(ids), 10_000):  # within PostgreSQL's bind-parameter limit
+        chunk = ids[start : start + 10_000]
+        for g in db.scalars(select(AssetGroup).where(AssetGroup.id.in_(chunk))):
+            if g.domain != seg.domain and all(ours(n) for n in nets[g.id]):
+                g.domain = seg.domain
+                changed += 1
+    return changed
 
 
 @router.delete("/segments/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -500,7 +598,9 @@ def list_domains(db: DbDep, _: ReaderDep) -> list[DomainOut]:
             segments=seg_count.get(d.name, 0),
             assets=asset_count.get(d.name, 0),
         )
-        for d in db.scalars(select(AssetDomain).order_by(AssetDomain.name))
+        for d in db.scalars(
+            select(AssetDomain).where(AssetDomain.rejected.is_(False)).order_by(AssetDomain.name)
+        )
     ]
 
 
@@ -509,10 +609,15 @@ def create_domain(
     body: DomainIn, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
 ) -> DomainOut:
     name = body.name.upper()
-    if db.scalar(select(AssetDomain.id).where(AssetDomain.name == name)) is not None:
+    d = db.scalar(select(AssetDomain).where(AssetDomain.name == name))
+    if d is not None and not d.rejected:
         raise HTTPException(status.HTTP_409_CONFLICT, "domain_exists")
-    d = AssetDomain(name=name, description=body.description, updated_by=who.username)
-    db.add(d)
+    if d is None:
+        d = AssetDomain(name=name, description=body.description, updated_by=who.username)
+        db.add(d)
+    else:  # an operator adds back a domain they had rejected
+        d.rejected, d.confirmed, d.source = False, True, "manual"
+        d.description, d.updated_by = body.description, who.username
     db.flush()
     _audit(audit, db, who, request, "domain.create", {"name": name})
     db.commit()
@@ -524,22 +629,39 @@ def update_domain(
     domain_id: int, body: DomainPatch, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
 ) -> DomainOut:
     d = db.get(AssetDomain, domain_id)
-    if d is None:
+    if d is None or d.rejected:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     changes = body.model_dump(exclude_unset=True)
     old = d.name
     if "name" in changes:
         changes["name"] = changes["name"].upper()
-        if changes["name"] != old and db.scalar(
-            select(AssetDomain.id).where(AssetDomain.name == changes["name"])
-        ):
+        clash = (
+            db.scalar(select(AssetDomain).where(AssetDomain.name == changes["name"]))
+            if changes["name"] != old
+            else None
+        )
+        if clash is not None and not clash.rejected:
             raise HTTPException(status.HTTP_409_CONFLICT, "domain_exists")
+        if clash is not None:  # a rejected suggestion the operator now uses as a name
+            db.delete(clash)
+            db.flush()
     for key, value in changes.items():
         setattr(d, key, value)
     d.updated_by = who.username
     if d.name != old:  # a rename follows into the segments and assets that carry it
         db.execute(update(Segment).where(Segment.domain == old).values(domain=d.name))
         db.execute(update(AssetGroup).where(AssetGroup.domain == old).values(domain=d.name))
+        if d.source == "discovery":  # the operator's now; the old spelling is not suggested
+            d.source, d.confirmed = "manual", True
+            db.add(
+                AssetDomain(
+                    name=old,
+                    source="discovery",
+                    confirmed=False,
+                    rejected=True,
+                    updated_by=who.username,
+                )
+            )
     _audit(audit, db, who, request, "domain.update", {"name": d.name, **changes})
     db.commit()
     return next(x for x in list_domains(db, who) if x.id == d.id)
@@ -549,11 +671,64 @@ def update_domain(
 def delete_domain(
     domain_id: int, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
 ) -> None:
+    """Remove a domain from every segment and asset. A discovered one is remembered as
+    rejected, so the next discovery run does not suggest it again."""
     d = db.get(AssetDomain, domain_id)
-    if d is None:
+    if d is None or d.rejected:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    db.execute(update(Segment).where(Segment.domain == d.name).values(domain=None))
-    db.execute(update(AssetGroup).where(AssetGroup.domain == d.name).values(domain=None))
-    db.delete(d)
-    _audit(audit, db, who, request, "domain.delete", {"name": d.name})
+    _unassign(db, [d.name])
+    if d.source == "discovery":
+        d.rejected, d.confirmed, d.updated_by = True, False, who.username
+    else:
+        db.delete(d)
+    _audit(audit, db, who, request, "domain.delete", {"name": d.name, "source": d.source})
     db.commit()
+
+
+def _unassign(db: Session, names: list[str]) -> None:
+    db.execute(update(Segment).where(Segment.domain.in_(names)).values(domain=None))
+    db.execute(update(AssetGroup).where(AssetGroup.domain.in_(names)).values(domain=None))
+
+
+@router.post("/asset-domains/confirm", response_model=ConfirmResult)
+def confirm_domains(
+    body: ConfirmIds, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
+) -> ConfirmResult:
+    query = update(AssetDomain).where(
+        AssetDomain.confirmed.is_(False), AssetDomain.rejected.is_(False)
+    )
+    if not body.all:
+        if not body.ids:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "ids_or_all")
+        query = query.where(AssetDomain.id.in_(body.ids))
+    count = _rows(db.execute(query.values(confirmed=True, updated_by=who.username)))
+    _audit(audit, db, who, request, "domain.confirm", {"count": count, "all": body.all})
+    db.commit()
+    return ConfirmResult(confirmed=count)
+
+
+@router.post("/asset-domains/purge", response_model=PurgeResult)
+def purge_domains(
+    body: DomainPurge, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
+) -> PurgeResult:
+    """Bulk delete domains (see :class:`DomainPurge`). Requires ``confirm: "DELETE"``."""
+    if body.scope == "all":
+        db.execute(update(Segment).values(domain=None))
+        db.execute(update(AssetGroup).values(domain=None))
+        deleted = _rows(db.execute(delete(AssetDomain).where(AssetDomain.rejected.is_(False))))
+        db.execute(delete(AssetDomain))  # forget the rejections too: a fresh start
+    else:
+        pending = list(
+            db.scalars(
+                select(AssetDomain).where(
+                    AssetDomain.confirmed.is_(False), AssetDomain.rejected.is_(False)
+                )
+            )
+        )
+        _unassign(db, [d.name for d in pending])
+        for d in pending:
+            d.rejected, d.updated_by = True, who.username
+        deleted = len(pending)
+    _audit(audit, db, who, request, "domain.purge", {"scope": body.scope, "deleted": deleted})
+    db.commit()
+    return PurgeResult(deleted=deleted)

@@ -7,6 +7,8 @@ Only confirmed entries count (discovery suggestions wait for an operator).
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -48,3 +50,13 @@ def effective_assets(session: Session) -> list[AssetRow]:
             )
         )
     return rows
+
+
+def fingerprint(rows: Iterable[AssetRow]) -> str:
+    """What the map and the scores depend on: changes when an asset is added, moved, renamed,
+    re-tiered or removed (recorded at analysis time; the map compares it with the table now)."""
+    digest = hashlib.sha256()
+    for line in sorted(f"{r.network}|{r.system}|{r.tier}|{r.user_type or ''}" for r in rows):
+        digest.update(line.encode())
+        digest.update(bytes([10]))
+    return digest.hexdigest()

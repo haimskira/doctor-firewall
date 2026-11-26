@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
-from app.analysis.assets import effective_assets
+from app.analysis.assets import effective_assets, fingerprint
 from app.analysis.basic import FindingRow
 from app.analysis.connectivity import MapBuilder
 from app.analysis.expand import Resolver, RuleSpace, rule_spaces
@@ -33,6 +33,10 @@ def load_assets(session: Session) -> AssetIndex:
     return AssetIndex(
         [(a.network, a.system, a.tier, a.user_type) for a in effective_assets(session)]
     )
+
+
+def _assets_fingerprint(session: Session) -> str:
+    return fingerprint(effective_assets(session))
 
 
 def _rule_ref(rs: RuleSpace) -> dict[str, Any]:
@@ -278,6 +282,7 @@ def analyze_semantics(
                     **snap.stats,
                     "ace_by_cluster": ace_totals,
                     "assets_used": len(assets),
+                    "assets_fingerprint": _assets_fingerprint(session),
                     "map_edges": edge_count,
                 }
             )

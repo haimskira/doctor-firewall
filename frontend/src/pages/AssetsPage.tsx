@@ -97,12 +97,14 @@ export function AssetsPage() {
     }
   }
 
-  async function run(action: () => Promise<string>) {
+  async function run(action: () => Promise<string>): Promise<boolean> {
     try {
       setMessage({ kind: 'success', text: await action() });
       reload();
+      return true;
     } catch (err: unknown) {
       setMessage({ kind: 'error', text: tError(errorCode(err)) });
+      return false;
     }
   }
 
@@ -169,11 +171,16 @@ export function AssetsPage() {
                 {t('assets.import')}
                 <input type="file" accept=".csv,text/csv" className="visually-hidden" onChange={(e) => void importFile(e)} />
               </label>
-              {snapshotId !== null && (
-                <button type="button" className="secondary" disabled={busy} aria-busy={busy} onClick={() => void run(discover)}>
-                  {busy ? t('disc.running') : t('disc.run')}
-                </button>
-              )}
+              <button
+                type="button"
+                className="secondary"
+                disabled={busy || snapshotId === null}
+                aria-busy={busy}
+                title={snapshotId === null ? t('disc.needSnapshot') : undefined}
+                onClick={() => void run(discover)}
+              >
+                {busy ? t('disc.running') : t('disc.run')}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -216,7 +223,7 @@ export function AssetsPage() {
       {tab === 'segments' && (
         <SegmentsTab segments={segments.data ?? []} domains={domains.data ?? []} writable={writable} run={run} onPurge={setPurge} />
       )}
-      {tab === 'domains' && <DomainsTab domains={domains.data ?? []} writable={writable} run={run} />}
+      {tab === 'domains' && <DomainsTab domains={domains.data ?? []} writable={writable} run={run} onPurge={setPurge} />}
 
       {tab === 'assets' && (
         <>
@@ -566,7 +573,7 @@ function GroupForm({
         {forUsers && (
           <label>
             {t('assets.userType')}
-            <input dir="ltr" maxLength={16} pattern="[A-Za-z0-9_-]+" value={form.user_type} onChange={(e) => { setForm({ ...form, user_type: e.target.value }); }} />
+            <input dir="ltr" maxLength={16} pattern="[A-Za-z0-9_\-]+" value={form.user_type} onChange={(e) => { setForm({ ...form, user_type: e.target.value }); }} />
           </label>
         )}
         <label>
@@ -600,7 +607,7 @@ function GroupDetail({
   group: AssetGroup;
   groups: AssetGroup[];
   writable: boolean;
-  run: (action: () => Promise<string>) => Promise<void>;
+  run: (action: () => Promise<string>) => Promise<boolean>;
   onDeleted: () => void;
 }) {
   const { t } = useI18n();
@@ -648,9 +655,23 @@ function GroupDetail({
           <span className={`tier tier-${group.tier.toLowerCase()}`}>{group.tier}</span>
           <span className="muted small">{t(`assets.kind.${group.kind}`)}</span>
           {group.user_type !== null && <span className="badge">{group.user_type}</span>}
+          {!group.confirmed && <span className="badge status-pending">{t('disc.pending')}</span>}
         </div>
         {writable && (
           <div className="row">
+            {!group.confirmed && (
+              <button
+                type="button"
+                onClick={() =>
+                  void run(async () => {
+                    await api('/api/asset-groups/confirm', 'POST', { ids: [group.id] });
+                    return t('disc.done');
+                  })
+                }
+              >
+                {t('disc.approve')}
+              </button>
+            )}
             <button
               type="button"
               className="secondary"

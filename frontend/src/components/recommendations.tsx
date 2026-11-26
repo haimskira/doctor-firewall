@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 
 import type {
   AffectedRule,
+  DynamicPreview,
   PreviewObject,
   PreviewRule,
   RecommendationKind,
@@ -39,6 +40,7 @@ const TAG_GROUPS = new Map<RecommendationKind, TagGroup>([
   ['remove_redundant_member', 'remove'],
   ['remove_disabled_rule', 'remove'],
   ['compact_group', 'merge'],
+  ['use_dynamic_object', 'object'],
 ]);
 
 export function tagGroup(kind: RecommendationKind): TagGroup {
@@ -102,6 +104,12 @@ const CORE_FIELDS: ReadonlySet<PreviewFieldName> = new Set<PreviewFieldName>([
   'dst_port',
 ]);
 
+/** Other conditions on the same side: with one of them, an empty network field is not "any". */
+const SIDE_CONDITIONS = new Map<PreviewFieldName, PreviewFieldName[]>([
+  ['src_net', ['src_dyn', 'src_sgt', 'user']],
+  ['dst_net', ['dst_dyn', 'dst_sgt']],
+]);
+
 /** How a value is drawn: removed (red, struck), added / changed (green), the object that
  * already holds a removed one (green, outlined), or unchanged. */
 type Mark = 'del' | 'add' | 'keep' | undefined;
@@ -154,9 +162,11 @@ function FieldValues({
   const change = inline ? fieldChange(rule, field) : undefined;
   const added = new Set(change?.added ?? []);
   const removed = change?.removed ?? [];
+  const others = SIDE_CONDITIONS.get(field) ?? [];
+  const elsewhere = others.some((f) => fieldValues(rule, f).length > 0);
   return (
     <span className="chips-inline">
-      {values.length === 0 && removed.length === 0 && <span className="chip any">{t('rules.any')}</span>}
+      {values.length === 0 && removed.length === 0 && !elsewhere && <span className="chip any">{t('rules.any')}</span>}
       {values.map((v) => (
         <Chip key={v} value={v} mark={added.has(v) ? 'add' : classify?.(field, v)} />
       ))}
@@ -331,6 +341,64 @@ function AffectedRules({ rules, total, snapshotId }: { rules: AffectedRule[]; to
 }
 
 /** Inline (changes in place) or split (before | after) preview of one recommendation. */
+/** use_dynamic_object: what the address list was cross-checked with, and how close it is. */
+function DynamicPanel({ dynamic }: { dynamic: DynamicPreview }) {
+  const { t } = useI18n();
+  const source =
+    dynamic.source.type === 'group'
+      ? t('rec.dyn.sourceGroup', { name: dynamic.source.name })
+      : t(dynamic.source.side === 'destination' ? 'rec.dyn.sourceRuleDst' : 'rec.dyn.sourceRuleSrc', { name: dynamic.source.name });
+  return (
+    <div className="card dyn-panel">
+      <h3>{t('rec.dyn.title')}</h3>
+      <p className="small">
+        {source} · {t('rec.dyn.addresses', { count: dynamic.addresses })}
+      </p>
+      <p className="small">
+        <strong>{t(`rec.dyn.match.${dynamic.match}`, { name: dynamic.name, covered: dynamic.covered, total: dynamic.addresses })}</strong>
+      </p>
+      {!dynamic.create && (
+        <p className="muted small">
+          {t('rec.dyn.mapped', { count: dynamic.mapped_total })}
+          {dynamic.truncated && <> · {t('rec.dyn.truncated', { kept: dynamic.mapped })}</>}
+        </p>
+      )}
+      {dynamic.missing_count > 0 && (
+        <div>
+          <h4>{t('rec.dyn.missing', { count: dynamic.missing_count })}</h4>
+          <span className="chips-inline">
+            {dynamic.missing.map((a) => (
+              <Chip key={a} value={a} mark="del" />
+            ))}
+          </span>
+        </div>
+      )}
+      {dynamic.extra_count > 0 && (
+        <div>
+          <h4>{t('rec.dyn.extra', { count: dynamic.extra_count })}</h4>
+          <span className="chips-inline">
+            {dynamic.extra.map((a) => (
+              <Chip key={a} value={a} mark="add" />
+            ))}
+          </span>
+        </div>
+      )}
+      {dynamic.create && (
+        <div>
+          <h4>{t('rec.dyn.sample', { count: dynamic.addresses })}</h4>
+          <span className="chips-inline">
+            {dynamic.sample.map((a) => (
+              <Chip key={a} value={a} mark={undefined} />
+            ))}
+          </span>
+        </div>
+      )}
+      {dynamic.not_mappable > 0 && <p className="muted small">{t('rec.dyn.notMappable', { count: dynamic.not_mappable })}</p>}
+      <p className="muted small">{t('rec.dyn.advisory')}</p>
+    </div>
+  );
+}
+
 export function RecommendationPreviewView({
   preview,
   view,
@@ -388,6 +456,7 @@ export function RecommendationPreviewView({
             </div>
           </div>
         ))}
+      {preview.dynamic !== undefined && <DynamicPanel dynamic={preview.dynamic} />}
       {preview.map !== undefined && <MapChange before={preview.map.before} after={preview.map.after} />}
       {preview.rules !== undefined && preview.rules.length > 0 && (
         <div>

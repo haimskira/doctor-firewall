@@ -1917,13 +1917,14 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
     """Recompute all recommendations of a snapshot (idempotent). Caller commits."""
     session.execute(delete(Recommendation).where(Recommendation.snapshot_id == snapshot_id))
     # Phase-6 inspection builds on this module's primitives (imported here: no cycle).
-    from app.analysis import compact, inspection, redundancy
+    from app.analysis import compact, dynamic, inspection, redundancy
 
     estate = Estate(session, snapshot_id)
     drafts: list[Draft] = []
     renames, naming_stats = recommend_renames(estate)
     profile = inspection.load_profile(session, snapshot_id)
     ssl = inspection.SslAdvisor(estate)
+    dynamics = dynamic.DynamicCatalog(estate)
     ordered = sorted(estate.policies.values(), key=lambda p: (p.kind, p.name))
     ace_rules: dict[int, RuleInfo] = {}
     for n, policy in enumerate(ordered):
@@ -1947,6 +1948,7 @@ def recommend(session: Session, snapshot_id: int) -> dict[str, int]:
             drafts += recommend_tighten(estate, policy, rules)
             drafts += recommend_rule_renames(estate, policy, rules, naming_stats)
             drafts += inspection.recommend_inspection(estate, policy, rules, profile)
+            drafts += dynamic.recommend_dynamic_objects(estate, policy, rules, dynamics)
             ssl.access(policy, rules)
         elif policy.kind == "decryption":
             ssl.decryption_policy(policy, rules)

@@ -44,6 +44,10 @@ RECOMMENDATIONS: dict[str, str] = {
     "ssl_exempt_core": "Exempt CORE services from decryption.",
     "ssl_decrypt_inbound": "Decrypt-Resign HTTPS (TCP/443) to GOLD and SILVER servers.",
     "fastpath_candidate": "Consider fastpath for heavy traffic between known data-centre systems.",
+    "use_dynamic_object": (
+        "Advisory: carry a large address list (50+) in a dynamic object, cross-checked with the"
+        " dynamic objects' content; never executed."
+    ),
     "remove_unused_object": "Delete an object nothing uses.",
 }
 

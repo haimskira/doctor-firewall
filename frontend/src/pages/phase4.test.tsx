@@ -88,12 +88,14 @@ const MAP: ConnectivityMap = {
   ],
   total_edges: 2,
   truncated: false,
+  assets_changed: false,
+  analyzed_at: '2026-10-20T11:00:00Z',
   risk_counts: { red: 1, yellow: 1, green: 0 },
 };
 
-function setup(path: string, routes: ReactNode, handler: (req: Recorded) => { status: number; body?: unknown } | undefined): Recorded[] {
+function setup(path: string, routes: ReactNode, handler: (req: Recorded) => { status: number; body?: unknown } | undefined, me: Me = ME): Recorded[] {
   const calls = mockFetch((req) => {
-    if (req.url === '/api/auth/me') return { status: 200, body: ME };
+    if (req.url === '/api/auth/me') return { status: 200, body: me };
     if (req.url.startsWith('/api/snapshots?')) return { status: 200, body: [SNAP] };
     if (req.url === '/api/snapshots/7/clusters') return { status: 200, body: [] };
     return handler(req) ?? { status: 404, body: { detail: 'not_found' } };
@@ -199,6 +201,30 @@ describe('MapPage', () => {
     await userEvent.type(screen.getByLabelText('From (IP / subnet / range)'), 'bogus');
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
     expect(await screen.findByText('The source is not a valid IP, subnet or range.')).toBeInTheDocument();
+  });
+});
+
+describe('MapPage refresh', () => {
+  it('warns when the asset table changed and rebuilds the map on request', async () => {
+    const admin: Me = { ...ME, roles: ['admin'], permissions: ['policy:read', 'collect:run'] };
+    const calls = setup(
+      '/map',
+      <Route path="/map" element={<MapPage />} />,
+      (req) => {
+        if (req.url.startsWith('/api/snapshots/7/map?')) return { status: 200, body: { ...MAP, assets_changed: true } };
+        if (req.url === '/api/snapshots/7/analyze') return { status: 202, body: { snapshot_id: 7 } };
+        if (req.url.startsWith('/api/jobs')) return { status: 200, body: { active: 0, rows: [], alerts: 0 } };
+        return undefined;
+      },
+      admin,
+    );
+    expect(await screen.findByText(/The asset table changed after this snapshot was analysed/)).toBeInTheDocument();
+    const buttons = screen.getAllByRole('button', { name: 'Rebuild map' });
+    expect(buttons.length).toBe(2); // in the header and in the warning
+    await userEvent.click(buttons[1] ?? buttons[0] ?? document.body);
+    await waitFor(() => {
+      expect(calls.some((c) => c.url === '/api/snapshots/7/analyze' && c.method === 'POST')).toBe(true);
+    });
   });
 });
 

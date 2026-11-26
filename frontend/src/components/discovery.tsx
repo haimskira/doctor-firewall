@@ -10,8 +10,9 @@ import type { MessageKey } from '../i18n/messages';
 import { Ltr } from './common';
 import { SortedTable } from './sort';
 
-/** Runs an action, shows its success text (or the translated error) and reloads the page's data. */
-export type Run = (action: () => Promise<string>) => Promise<void>;
+/** Runs an action, shows its success text (or the translated error) and reloads the page's
+ * data. Resolves to whether the action succeeded. */
+export type Run = (action: () => Promise<string>) => Promise<boolean>;
 
 const PAGE = 50;
 export const DELETE_WORD = 'DELETE';
@@ -262,6 +263,7 @@ export function SuggestionsSection({
           }}
           head={(th) => (
             <tr>
+              {writable && <th>{t('disc.col.actions')}</th>}
               {th('name', t('disc.col.name'))}
               {th('kind', t('disc.col.kind'))}
               {th('tier', t('disc.col.tier'))}
@@ -269,13 +271,41 @@ export function SuggestionsSection({
               {th('components', t('disc.col.components'), true)}
               {th('confidence', t('disc.col.confidence'), true)}
               <th>{t('disc.col.evidence')}</th>
-              {writable && <th>{t('disc.col.actions')}</th>}
             </tr>
           )}
         >
           {(g) => (
             <Fragment key={g.id}>
               <tr className="inactive">
+                {writable && (
+                  <td className="actions">
+                    <button
+                      type="button"
+                      aria-label={`${t('disc.approve')} — ${g.name}`}
+                      onClick={() =>
+                        void run(async () => {
+                          await api('/api/asset-groups/confirm', 'POST', { ids: [g.id] });
+                          return t('disc.done');
+                        })
+                      }
+                    >
+                      {t('disc.approve')}
+                    </button>
+                    <button
+                      type="button"
+                      className="danger"
+                      aria-label={`${t('common.delete')} — ${g.name}`}
+                      onClick={() =>
+                        void run(async () => {
+                          await api(`/api/asset-groups/${String(g.id)}`, 'DELETE');
+                          return t('disc.done');
+                        })
+                      }
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </td>
+                )}
                 <td>
                   <button
                     type="button"
@@ -331,35 +361,6 @@ export function SuggestionsSection({
                     }}
                   />
                 </td>
-                {writable && (
-                  <td className="actions">
-                    <button
-                      type="button"
-                      aria-label={`${t('disc.approve')} — ${g.name}`}
-                      onClick={() =>
-                        void run(async () => {
-                          await api('/api/asset-groups/confirm', 'POST', { ids: [g.id] });
-                          return t('disc.done');
-                        })
-                      }
-                    >
-                      {t('disc.approve')}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      aria-label={`${t('common.delete')} — ${g.name}`}
-                      onClick={() =>
-                        void run(async () => {
-                          await api(`/api/asset-groups/${String(g.id)}`, 'DELETE');
-                          return t('disc.done');
-                        })
-                      }
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </td>
-                )}
               </tr>
               {expanded.has(g.id) && (
                 <tr className="evidence-row">
@@ -404,17 +405,35 @@ function RoleSelect({ label, value, onChange }: { label: string; value: SegmentR
 }
 
 /** A text input that saves on blur, only when the value changed. */
-function BlurInput({ label, value, maxLength, onSave }: { label: string; value: string; maxLength: number; onSave: (value: string) => void }) {
+function BlurInput({
+  label,
+  value,
+  maxLength,
+  placeholder,
+  onSave,
+}: {
+  label: string;
+  value: string;
+  maxLength: number;
+  placeholder?: string;
+  /** Resolves to false when the save failed: the field then shows the saved value again. */
+  onSave: (value: string) => Promise<boolean>;
+}) {
   return (
     <input
       key={value}
       aria-label={label}
       dir="auto"
       maxLength={maxLength}
+      placeholder={placeholder}
       defaultValue={value}
       onBlur={(e) => {
-        const next = e.target.value.trim();
-        if (next !== value) onSave(next);
+        const input = e.target;
+        const next = input.value.trim();
+        if (next === value) return;
+        void onSave(next).then((ok) => {
+          if (!ok) input.value = value;
+        });
       }}
     />
   );
@@ -470,7 +489,7 @@ export function SegmentsTab({
         network: form.network.trim(),
         role: form.role,
         ...(form.name.trim() !== '' ? { name: form.name.trim() } : {}),
-        ...(form.domain !== '' ? { domain: form.domain } : {}),
+        ...(form.domain.trim() !== '' ? { domain: form.domain.trim().toUpperCase() } : {}),
       });
       setForm({ network: '', name: '', role: 'unknown', domain: '' });
       return t('assets.saved');
@@ -593,11 +612,26 @@ export function SegmentsTab({
           </label>
           <label>
             {t('disc.seg.domain')}
-            <DomainSelect label={t('disc.seg.domain')} value={form.domain === '' ? null : form.domain} domains={domains} onChange={(d) => { setForm({ ...form, domain: d ?? '' }); }} />
+            <input
+              dir="ltr"
+              list="segment-domains"
+              maxLength={64}
+              pattern="[\w .\-]+"
+              value={form.domain}
+              onChange={(e) => {
+                setForm({ ...form, domain: e.target.value });
+              }}
+            />
+            <datalist id="segment-domains">
+              {domains.map((d) => (
+                <option key={d.id} value={d.name} />
+              ))}
+            </datalist>
           </label>
           <button type="submit" disabled={form.network.trim() === ''}>
             <PlusIcon size={14} aria-hidden="true" /> {t('disc.seg.add')}
           </button>
+          <p className="muted small">{t('disc.seg.domainHelp')}</p>
         </form>
       )}
 
@@ -612,6 +646,7 @@ export function SegmentsTab({
               columns={{
                 network: (s) => s.network,
                 name: (s) => s.name,
+                notes: (s) => s.notes,
                 role: (s) => s.role,
                 domain: (s) => s.domain ?? '',
                 where: (s) => `${s.cluster} ${s.interface}`,
@@ -621,8 +656,10 @@ export function SegmentsTab({
               }}
               head={(th) => (
                 <tr>
+                  {writable && <th>{t('disc.col.actions')}</th>}
                   {th('network', t('disc.seg.network'))}
                   {th('name', t('disc.seg.name'))}
+                  {th('notes', t('disc.seg.notes'))}
                   {th('role', t('disc.seg.role'))}
                   {th('domain', t('disc.seg.domain'))}
                   {th('where', t('disc.seg.where'))}
@@ -630,26 +667,61 @@ export function SegmentsTab({
                   {th('confidence', t('disc.col.confidence'), true)}
                   {th('status', t('disc.col.status'))}
                   <th>{t('disc.col.evidence')}</th>
-                  {writable && <th>{t('disc.col.actions')}</th>}
                 </tr>
               )}
             >
               {(s) => (
                 <Fragment key={s.id}>
                   <tr className={s.confirmed ? '' : 'inactive'}>
+                    {writable && (
+                      <td className="actions">
+                        {!s.confirmed && (
+                          <button type="button" aria-label={`${t('disc.approve')} — ${s.network}`} onClick={() => void patch(s, { confirmed: true })}>
+                            {t('disc.approve')}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="danger"
+                          aria-label={`${t('common.delete')} — ${s.network}`}
+                          onClick={() =>
+                            void run(async () => {
+                              await api(`/api/segments/${String(s.id)}`, 'DELETE');
+                              return t('disc.done');
+                            })
+                          }
+                        >
+                          {t('common.delete')}
+                        </button>
+                      </td>
+                    )}
                     <td>
                       <Ltr>{s.network}</Ltr>
                     </td>
                     <td className="edit-cell">
                       {writable ? (
-                        <BlurInput label={`${t('disc.seg.name')} — ${s.network}`} value={s.name} maxLength={128} onSave={(name) => void patch(s, { name })} />
+                        <BlurInput
+                          label={`${t('disc.seg.name')} — ${s.network}`}
+                          placeholder={t('disc.seg.name')}
+                          value={s.name}
+                          maxLength={128}
+                          onSave={(name) => patch(s, { name })}
+                        />
                       ) : (
                         <bdi>{s.name}</bdi>
                       )}
+                    </td>
+                    <td className="edit-cell">
                       {writable ? (
-                        <BlurInput label={`${t('disc.seg.notes')} — ${s.network}`} value={s.notes} maxLength={512} onSave={(notes) => void patch(s, { notes })} />
+                        <BlurInput
+                          label={`${t('disc.seg.notes')} — ${s.network}`}
+                          placeholder={t('disc.seg.notes')}
+                          value={s.notes}
+                          maxLength={512}
+                          onSave={(notes) => patch(s, { notes })}
+                        />
                       ) : (
-                        s.notes !== '' && <div className="muted small"><bdi>{s.notes}</bdi></div>
+                        <bdi className="muted small">{s.notes}</bdi>
                       )}
                     </td>
                     <td className="edit-cell">
@@ -685,32 +757,10 @@ export function SegmentsTab({
                         }}
                       />
                     </td>
-                    {writable && (
-                      <td className="actions">
-                        {!s.confirmed && (
-                          <button type="button" aria-label={`${t('disc.approve')} — ${s.network}`} onClick={() => void patch(s, { confirmed: true })}>
-                            {t('disc.approve')}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="danger"
-                          aria-label={`${t('common.delete')} — ${s.network}`}
-                          onClick={() =>
-                            void run(async () => {
-                              await api(`/api/segments/${String(s.id)}`, 'DELETE');
-                              return t('disc.done');
-                            })
-                          }
-                        >
-                          {t('common.delete')}
-                        </button>
-                      </td>
-                    )}
                   </tr>
                   {expanded.has(s.id) && (
                     <tr className="evidence-row">
-                      <td colSpan={writable ? 10 : 9}>
+                      <td colSpan={writable ? 11 : 10}>
                         <EvidenceList evidence={s.evidence} />
                       </td>
                     </tr>
@@ -732,7 +782,7 @@ export function SegmentsTab({
   );
 }
 
-export function DomainsTab({ domains, writable, run }: { domains: AssetDomain[]; writable: boolean; run: Run }) {
+export function DomainsTab({ domains, writable, run, onPurge }: { domains: AssetDomain[]; writable: boolean; run: Run; onPurge: (request: PurgeRequest) => void }) {
   const { t } = useI18n();
   const expanded = useExpanded();
   const [form, setForm] = useState({ name: '', description: '' });
@@ -758,6 +808,41 @@ export function DomainsTab({ domains, writable, run }: { domains: AssetDomain[];
   return (
     <div className="stack">
       <p className="muted small">{t('disc.dom.help')}</p>
+      {writable && domains.length > 0 && (
+        <div className="row">
+          <button
+            type="button"
+            disabled={!domains.some((d) => !d.confirmed)}
+            onClick={() =>
+              void run(async () => {
+                const r = await api<{ confirmed: number }>('/api/asset-domains/confirm', 'POST', { all: true });
+                return t('disc.confirmedCount', { count: r.confirmed });
+              })
+            }
+          >
+            {t('disc.approveAll')}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            disabled={!domains.some((d) => !d.confirmed)}
+            onClick={() => {
+              onPurge({ path: '/api/asset-domains/purge', scope: 'suggested', text: 'disc.dialog.domainsSuggested' });
+            }}
+          >
+            {t('disc.dom.rejectSuggested')}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              onPurge({ path: '/api/asset-domains/purge', scope: 'all', text: 'disc.dialog.domainsAll' });
+            }}
+          >
+            {t('disc.dom.deleteAll')}
+          </button>
+        </div>
+      )}
       {writable && (
         <form className="card row" onSubmit={add} aria-label={t('disc.dom.add')}>
           <label>
@@ -790,6 +875,7 @@ export function DomainsTab({ domains, writable, run }: { domains: AssetDomain[];
               }}
               head={(th) => (
                 <tr>
+                  {writable && <th>{t('disc.col.actions')}</th>}
                   {th('name', t('disc.dom.name'))}
                   {th('description', t('disc.dom.description'))}
                   {th('source', t('disc.seg.source'))}
@@ -797,52 +883,12 @@ export function DomainsTab({ domains, writable, run }: { domains: AssetDomain[];
                   {th('segments', t('disc.dom.segments'), true)}
                   {th('assets', t('disc.dom.assets'), true)}
                   <th>{t('disc.col.evidence')}</th>
-                  {writable && <th>{t('disc.col.actions')}</th>}
                 </tr>
               )}
             >
               {(d) => (
                 <Fragment key={d.id}>
                   <tr className={d.confirmed ? '' : 'inactive'}>
-                    <td className="edit-cell">
-                      {writable ? (
-                        <input
-                          key={d.name}
-                          aria-label={`${t('disc.dom.name')} — ${d.name}`}
-                          dir="ltr"
-                          maxLength={64}
-                          defaultValue={d.name}
-                          onBlur={(e) => {
-                            const next = e.target.value.trim();
-                            if (next !== '' && next !== d.name) void patch(d, { name: next });
-                          }}
-                        />
-                      ) : (
-                        <Ltr>{d.name}</Ltr>
-                      )}
-                    </td>
-                    <td className="edit-cell">
-                      {writable ? (
-                        <BlurInput label={`${t('disc.dom.description')} — ${d.name}`} value={d.description} maxLength={512} onSave={(description) => void patch(d, { description })} />
-                      ) : (
-                        <bdi>{d.description}</bdi>
-                      )}
-                    </td>
-                    <td>{t(d.source === 'manual' ? 'disc.seg.source.manual' : 'disc.seg.source.discovery')}</td>
-                    <td>
-                      <StatusBadge confirmed={d.confirmed} />
-                    </td>
-                    <td className="num">{d.segments}</td>
-                    <td className="num">{d.assets}</td>
-                    <td>
-                      <EvidenceToggle
-                        evidence={d.evidence}
-                        open={expanded.has(d.id)}
-                        onToggle={() => {
-                          expanded.toggle(d.id);
-                        }}
-                      />
-                    </td>
                     {writable && (
                       <td className="actions">
                         {!d.confirmed && (
@@ -866,6 +912,52 @@ export function DomainsTab({ domains, writable, run }: { domains: AssetDomain[];
                         </button>
                       </td>
                     )}
+                    <td className="edit-cell">
+                      {writable ? (
+                        <input
+                          key={d.name}
+                          aria-label={`${t('disc.dom.name')} — ${d.name}`}
+                          dir="ltr"
+                          maxLength={64}
+                          defaultValue={d.name}
+                          onBlur={(e) => {
+                            const next = e.target.value.trim();
+                            const input = e.target;
+                            if (next === '' || next === d.name) {
+                              input.value = d.name;
+                              return;
+                            }
+                            void patch(d, { name: next }).then((ok) => {
+                              if (!ok) input.value = d.name;
+                            });
+                          }}
+                        />
+                      ) : (
+                        <Ltr>{d.name}</Ltr>
+                      )}
+                    </td>
+                    <td className="edit-cell">
+                      {writable ? (
+                        <BlurInput label={`${t('disc.dom.description')} — ${d.name}`} value={d.description} maxLength={512} onSave={(description) => patch(d, { description })} />
+                      ) : (
+                        <bdi>{d.description}</bdi>
+                      )}
+                    </td>
+                    <td>{t(d.source === 'manual' ? 'disc.seg.source.manual' : 'disc.seg.source.discovery')}</td>
+                    <td>
+                      <StatusBadge confirmed={d.confirmed} />
+                    </td>
+                    <td className="num">{d.segments}</td>
+                    <td className="num">{d.assets}</td>
+                    <td>
+                      <EvidenceToggle
+                        evidence={d.evidence}
+                        open={expanded.has(d.id)}
+                        onToggle={() => {
+                          expanded.toggle(d.id);
+                        }}
+                      />
+                    </td>
                   </tr>
                   {expanded.has(d.id) && (
                     <tr className="evidence-row">

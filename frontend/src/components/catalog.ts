@@ -26,4 +26,5 @@ export const CHANGING_KINDS: ReadonlySet<RecommendationKind> = new Set<Recommend
   'add_file_policy',
   'ssl_decrypt_inbound',
   'fastpath_candidate',
+  'use_dynamic_object',
 ]);
