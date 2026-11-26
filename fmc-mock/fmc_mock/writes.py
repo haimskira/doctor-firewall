@@ -515,7 +515,8 @@ def build_write_router(
 
     @router.post("/mock/hits")
     async def add_hits(request: Request) -> Response:
-        """Traffic on a rule: ``{"rule": <name>, "hits": n}`` adds n hits on the active unit."""
+        """Traffic on a rule: ``{"rule": <name>, "hits": n}`` adds n hits to the pair (both
+        units serve the pair's counts)."""
         if not token_ok(request):
             return _error(401, "Access token invalid.")
         body = await request.json()

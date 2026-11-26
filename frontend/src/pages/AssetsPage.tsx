@@ -5,14 +5,19 @@ import { SortedTable } from '../components/sort';
 
 import { ApiError, api, errorCode, notifyUnauthorized } from '../api/client';
 import { ASSET_KINDS, TIERS } from '../api/types';
-import type { Asset, AssetGroup, AssetKind, Tier } from '../api/types';
+import type { Asset, AssetDomain, AssetGroup, AssetKind, DiscoveryResult, Segment, Tier } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
 import { Alert, Ltr } from '../components/common';
+import { DomainsTab, PurgeDialog, SegmentsTab, SuggestionsSection } from '../components/discovery';
+import type { PurgeRequest } from '../components/discovery';
 import { useApi, useQueryParam, useSnapshotSelection } from '../hooks';
 import { useI18n } from '../i18n/I18nProvider';
 
 type Message = { kind: 'error' | 'success'; text: string } | null;
 
+const TABS = ['assets', 'segments', 'domains'] as const;
+type Tab = (typeof TABS)[number];
+const LIST_PAGE = 300;
 const MAX_FILE_BYTES = 1_000_000;
 const EMPTY_GROUP = { name: '', kind: 'system' as AssetKind, tier: 'GOLD' as Tier, user_type: '', owner: '', description: '' };
 const EMPTY_COMPONENT = { name: '', network: '', role: '', ports: '', notes: '' };
@@ -47,8 +52,15 @@ export function AssetsPage() {
   const writable = can('assets:write');
   const groups = useApi<AssetGroup[]>('/api/asset-groups');
   const entries = useApi<Asset[]>('/api/assets');
+  const segments = useApi<Segment[]>('/api/segments');
+  const domains = useApi<AssetDomain[]>('/api/asset-domains');
   const { snapshotId } = useSnapshotSelection();
   const [selectedParam, setSelected] = useQueryParam('asset');
+  const [tabParam, setTabParam] = useQueryParam('tab');
+  const tab: Tab = TABS.find((x) => x === tabParam) ?? 'assets';
+  const [busy, setBusy] = useState(false);
+  const [purge, setPurge] = useState<PurgeRequest | null>(null);
+  const [listLimit, setListLimit] = useState(LIST_PAGE);
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState('');
   const [tierFilter, setTierFilter] = useState<Tier | null>(null);
@@ -56,8 +68,10 @@ export function AssetsPage() {
 
   const unassigned = (entries.data ?? []).filter((a) => a.group_id === null);
   const pending = unassigned.filter((a) => !a.confirmed);
+  const suggestions = (groups.data ?? []).filter((g) => !g.confirmed);
   const shown = (groups.data ?? []).filter(
     (g) =>
+      g.confirmed &&
       (tierFilter === null || g.tier === tierFilter) &&
       (filter.trim() === '' ||
         g.name.toLowerCase().includes(filter.trim().toLowerCase()) ||
@@ -68,6 +82,19 @@ export function AssetsPage() {
   function reload() {
     groups.reload();
     entries.reload();
+    segments.reload();
+    domains.reload();
+  }
+
+  async function discover(): Promise<string> {
+    if (snapshotId === null) throw new Error('no_snapshot');
+    setBusy(true);
+    try {
+      const r = await api<DiscoveryResult>('/api/assets/discover', 'POST', { snapshot_id: snapshotId });
+      return t('disc.summary', { segments: r.segments, assets: r.assets, components: r.components, domains: r.domains, replaced: r.replaced });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function run(action: () => Promise<string>) {
@@ -143,17 +170,8 @@ export function AssetsPage() {
                 <input type="file" accept=".csv,text/csv" className="visually-hidden" onChange={(e) => void importFile(e)} />
               </label>
               {snapshotId !== null && (
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() =>
-                    void run(async () => {
-                      const r = await api<{ created: number }>('/api/assets/bootstrap', 'POST', { snapshot_id: snapshotId });
-                      return t('assets.bootstrapDone', { count: r.created });
-                    })
-                  }
-                >
-                  {t('assets.bootstrap')}
+                <button type="button" className="secondary" disabled={busy} aria-busy={busy} onClick={() => void run(discover)}>
+                  {busy ? t('disc.running') : t('disc.run')}
                 </button>
               )}
               <button
@@ -171,6 +189,81 @@ export function AssetsPage() {
       </div>
       {groups.error !== null && <Alert kind="error">{tError(groups.error)}</Alert>}
       {message !== null && <Alert kind={message.kind}>{message.text}</Alert>}
+      <p className="muted small">{t('disc.help')}</p>
+      <div className="row" role="tablist" aria-label={t('disc.tabs')}>
+        {TABS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            aria-selected={tab === name}
+            className={tab === name ? '' : 'secondary'}
+            onClick={() => {
+              setTabParam(name === 'assets' ? null : name);
+            }}
+          >
+            {t(`disc.tab.${name}`)}
+          </button>
+        ))}
+      </div>
+      <PurgeDialog
+        request={purge}
+        run={run}
+        onClose={() => {
+          setPurge(null);
+        }}
+      />
+      {tab === 'segments' && (
+        <SegmentsTab segments={segments.data ?? []} domains={domains.data ?? []} writable={writable} run={run} onPurge={setPurge} />
+      )}
+      {tab === 'domains' && <DomainsTab domains={domains.data ?? []} writable={writable} run={run} />}
+
+      {tab === 'assets' && (
+        <>
+      <SuggestionsSection
+        groups={suggestions}
+        domains={domains.data ?? []}
+        writable={writable}
+        run={run}
+        onOpen={(id) => {
+          setSelected(String(id));
+          setCreating(false);
+        }}
+        onPurge={setPurge}
+      />
+      {writable && (
+        <div className="row">
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setPurge({ path: '/api/assets/purge', scope: 'unassigned', text: 'disc.dialog.unassigned' });
+            }}
+          >
+            {t('disc.purgeUnassigned')}
+          </button>
+          {snapshotId !== null && (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                setPurge({ path: '/api/assets/purge', scope: 'unassigned', text: 'disc.dialog.rerun', after: discover });
+              }}
+            >
+              {t('disc.purgeRerun')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setPurge({ path: '/api/assets/purge', scope: 'all', text: 'disc.dialog.assets' });
+            }}
+          >
+            {t('disc.purgeAll')}
+          </button>
+        </div>
+      )}
 
       <div className="asset-layout">
         <section className="card asset-list" aria-label={t('assets.title')}>
@@ -202,7 +295,7 @@ export function AssetsPage() {
           </div>
           {groups.data !== null && groups.data.length === 0 && <p className="muted small">{t('assets.none')}</p>}
           <ul className="asset-items">
-            {shown.map((g) => (
+            {shown.slice(0, listLimit).map((g) => (
               <li key={g.id}>
                 <button
                   type="button"
@@ -220,6 +313,12 @@ export function AssetsPage() {
                     </strong>
                     <span className="muted small">
                       {t(`assets.kind.${g.kind}`)} · {t('assets.componentsCount', { count: g.components.length })}
+                      {g.domain !== null && (
+                        <>
+                          {' · '}
+                          <span className="badge">{g.domain}</span>
+                        </>
+                      )}
                     </span>
                   </span>
                   <span className={`tier tier-${g.tier.toLowerCase()}`}>{g.tier}</span>
@@ -227,6 +326,17 @@ export function AssetsPage() {
               </li>
             ))}
           </ul>
+          {shown.length > listLimit && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setListLimit(listLimit + LIST_PAGE);
+              }}
+            >
+              {t('disc.showMore', { count: shown.length - listLimit })}
+            </button>
+          )}
         </section>
 
         <section className="card asset-detail" aria-live="polite">
@@ -366,6 +476,8 @@ export function AssetsPage() {
         </section>
       )}
       {writable && <p className="muted small">{t('assets.csvHelp')}</p>}
+        </>
+      )}
     </div>
   );
 }

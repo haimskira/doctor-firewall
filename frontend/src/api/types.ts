@@ -309,6 +309,82 @@ export interface AssetGroup {
   description: string;
   updated_by: string;
   components: Asset[];
+  source: 'manual' | 'csv' | 'discovery';
+  confirmed: boolean;
+  domain: string | null;
+  confidence: number;
+  evidence: Evidence[];
+}
+
+/** One reason the discovery engine reached a conclusion. */
+export interface Evidence {
+  source: string;
+  detail: string;
+}
+
+export type SegmentRole =
+  | 'dc_servers'
+  | 'sda_users'
+  | 'legacy_users'
+  | 'vc_sda'
+  | 'vc_legacy'
+  | 'network_devices'
+  | 'management'
+  | 'dmz'
+  | 'outside'
+  | 'unknown';
+export const SEGMENT_ROLES: readonly SegmentRole[] = [
+  'dc_servers',
+  'sda_users',
+  'legacy_users',
+  'vc_sda',
+  'vc_legacy',
+  'network_devices',
+  'management',
+  'dmz',
+  'outside',
+  'unknown',
+];
+
+export const EVIDENCE_SOURCES = ['interface', 'route', 'names', 'behaviour', 'identity', 'composition', 'consensus', 'group', 'topology', 'default'] as const;
+
+export interface Segment {
+  id: number;
+  network: string;
+  name: string;
+  role: SegmentRole;
+  domain: string | null;
+  cluster: string;
+  interface: string;
+  zone: string;
+  gateway: boolean;
+  in_dc: boolean;
+  source: 'manual' | 'discovery';
+  confirmed: boolean;
+  confidence: number;
+  evidence: Evidence[];
+  notes: string;
+  updated_by: string;
+}
+
+export interface AssetDomain {
+  id: number;
+  name: string;
+  description: string;
+  source: 'manual' | 'discovery';
+  confirmed: boolean;
+  evidence: Evidence[];
+  segments: number;
+  assets: number;
+}
+
+export interface DiscoveryResult {
+  segments: number;
+  assets: number;
+  components: number;
+  domains: number;
+  replaced: number;
+  skipped: number;
 }
 
 export interface ClusterLimits {
@@ -632,6 +708,8 @@ export interface RecommendationPreview {
   tier?: string;
   systems?: string[];
   rules?: { policy: string; index: number; name: string; id: string }[];
+  /** Redundant references / members: what goes and the object that already holds it. */
+  redundant?: { field?: string; removed: string; kept: string; chain: string[] }[];
 }
 
 export interface PlanOp {

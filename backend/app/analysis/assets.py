@@ -2,7 +2,7 @@
 
 A component inside an asset is analysed as the asset: the map node, the naming tokens and
 the tier come from the asset; the address, ports and role stay the component's own.
-Only confirmed entries count (bootstrap suggestions wait for an operator).
+Only confirmed entries count (discovery suggestions wait for an operator).
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ def effective_assets(session: Session) -> list[AssetRow]:
         select(Asset, AssetGroup)
         .outerjoin(AssetGroup, AssetGroup.id == Asset.group_id)
         .where(Asset.confirmed.is_(True))
+        .where((AssetGroup.id.is_(None)) | AssetGroup.confirmed.is_(True))
         .order_by(Asset.network)
     ).all():
         g: AssetGroup | None = joined  # outer join: None for a stand-alone entry

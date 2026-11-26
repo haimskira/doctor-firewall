@@ -52,7 +52,7 @@ All containers run as non-root from the first process, `read_only` root FS,
 | `audit/` | HMAC hash-chained, append-only audit log |
 | `fmc/` | FMC REST client (token lifecycle, verified TLS, token-bucket throttle, 429 backoff, paging), `normalize` (canonical values), `records` (version-neutral records), `adapters/` (FMC 10.1) |
 | `collector/` | snapshot lifecycle (`runner`), staged checkpointed collection (`service`), bulk storage (`store`), rule match signature |
-| `analysis/` | graph algorithms (cycles, depth, duplicate paths), match spaces (`space`), group expansion (`expand`), shadowing (`shadow`), scoring (`score`), asset bootstrap, phase-1/2 findings |
+| `analysis/` | graph algorithms (cycles, depth, duplicate paths), match spaces (`space`), group expansion (`expand`), shadowing (`shadow`), scoring (`score`), asset discovery (`discovery`), phase-1/2 findings |
 | `api/` | routers; every route declares a guard (enforced by test) |
 | `models/` + `alembic/` | ORM models, migrations (run as owner role) |
 | `workers/` | queues, jobs, allow-list worker, scheduler |
@@ -80,7 +80,7 @@ All containers run as non-root from the first process, `read_only` root FS,
 |---|---|---|
 | 0 | Secure foundation: auth, RBAC, audit, secrets, FMC client core + connection test, mock, offline build/CI/bundle, UI shell (he/en) | **done** |
 | 1 | Collection & mapping (MVP): version adapter 10.1, paged/checkpointed pull of policies, rules (order + category), objects, groups, zones, interfaces, static routes, BGP, hit counts; snapshots with retention and auto-sync; object graph; faithful rulebase view; where-used / membership; basic duplicates, nesting, cycles, literals, unused | **done** |
-| 2 | Analysis & score: ACE expansion, shadowing / overlaps, dead rules, asset table (manual, CSV, bootstrap + confirm), per-cluster limits, explained rule score — see [scoring.md](scoring.md) | **done** |
+| 2 | Analysis & score: ACE expansion, shadowing / overlaps, dead rules, asset table (manual, CSV, discovery + confirm; segments and domains), per-cluster limits, explained rule score — see [scoring.md](scoring.md) | **done** |
 | 3 | Recommendations: split/merge groups & rules, tightening, role naming, naming convention + renames, preview (inline / split) & deploy cost, local accept / dismiss — see [recommendations.md](recommendations.md); UI in the current FMC look ([ui-design.md](ui-design.md)) | **done** |
 | 4 | Connectivity map: three views, filtering, risk colouring, before/after — see [connectivity.md](connectivity.md) | **done** |
 | 5 | Controlled enforcement: executable plans, changesets, batching under the per-cluster deploy limit, four-eyes approval, drift-checked writes, verification, deploy, rollback — see [enforcement.md](enforcement.md) | **done** |
@@ -97,7 +97,7 @@ worker: run_collection
   policies of every kind (inventory): access, prefilter, decryption, identity, NAT,
     intrusion, file, DNS — and which clusters each one governs
   rules (paged; count verified per sub-resource): assigned access policies (+ categories,
-    hit counts per unit), prefilter, decryption, identity, NAT (manual + auto)
+    hit counts once per cluster: the FMC returns the whole HA pair's counts for either unit), prefilter, decryption, identity, NAT (manual + auto)
   per cluster (primary unit): interfaces (4 kinds), IPv4 static routes, BGP
   stub objects for referenced-only ids (applications, …); connected routes from interfaces
   per cluster, one device at a time: runtime routing table ("show route") -> dynamic routes

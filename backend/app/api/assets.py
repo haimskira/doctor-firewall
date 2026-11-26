@@ -12,7 +12,6 @@ from pydantic import AfterValidator, BaseModel, Field, ValidationError, field_va
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analysis.bootstrap import suggest
 from app.api.schemas import StrictModel
 from app.audit.chain import AuditEvent, AuditLog
 from app.auth.deps import Principal, client_ip, require
@@ -21,7 +20,6 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.fmc import normalize
 from app.models.assets import ASSET_KINDS, Asset, AssetGroup, ClusterSetting
-from app.models.inventory import Snapshot
 from app.runtime import get_audit
 
 router = APIRouter(prefix="/api", tags=["assets"])
@@ -124,11 +122,13 @@ class GroupPatch(StrictModel):
     user_type: UserType | None = None
     owner: Annotated[str, Field(max_length=128)] | None = None
     description: Annotated[str, Field(max_length=512)] | None = None
+    domain: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[\w .-]+$")] | None = None
+    confirmed: bool | None = None
 
-    # user_type is nullable; the rest are not.
-    _required = field_validator("name", "kind", "tier", "owner", "description", mode="after")(
-        _not_null
-    )
+    # user_type and domain are nullable; the rest are not.
+    _required = field_validator(
+        "name", "kind", "tier", "owner", "description", "confirmed", mode="after"
+    )(_not_null)
 
 
 class ComponentIn(StrictModel):
@@ -149,6 +149,11 @@ class GroupOut(BaseModel):
     description: str
     updated_by: str
     components: list[AssetOut]
+    source: str = "manual"
+    confirmed: bool = True
+    domain: str | None = None
+    confidence: int = 100
+    evidence: list[dict[str, str]] = []
 
 
 class CsvImport(StrictModel):
@@ -469,34 +474,11 @@ def export_assets(db: DbDep, _: ReaderDep) -> Response:
 def bootstrap_assets(
     body: BootstrapRequest, request: Request, db: DbDep, audit: AuditDep, who: WriterDep
 ) -> ImportResult:
-    """Suggest classifications from object names; stored unconfirmed for review."""
-    snap = db.get(Snapshot, body.snapshot_id)
-    if snap is None or snap.status != "complete":
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    existing = set(db.scalars(select(Asset.network)))
-    suggestions = suggest(db, body.snapshot_id, existing)
-    for s in suggestions:
-        db.add(
-            Asset(
-                network=s.network,
-                system=s.system,
-                tier=s.tier,
-                user_type=s.user_type,
-                source="bootstrap",
-                confirmed=False,
-                updated_by=who.username,
-            )
-        )
-    _audit(
-        audit,
-        db,
-        who,
-        request,
-        "asset.bootstrap",
-        {"snapshot_id": body.snapshot_id, "suggested": len(suggestions)},
-    )
-    db.commit()
-    return ImportResult(created=len(suggestions), updated=0)
+    """Kept for older clients: runs discovery (``POST /api/assets/discover``)."""
+    from app.api.discovery import DiscoverRequest, discover_assets
+
+    result = discover_assets(DiscoverRequest(snapshot_id=body.snapshot_id), request, db, audit, who)
+    return ImportResult(created=result.assets + result.segments, updated=0)
 
 
 # ------------------------------------------------------------------ asset groups
@@ -513,6 +495,11 @@ def _group_out(g: AssetGroup, components: list[Asset]) -> GroupOut:
         description=g.description,
         updated_by=g.updated_by,
         components=[_out(a) for a in components],
+        source=g.source,
+        confirmed=g.confirmed,
+        domain=g.domain,
+        confidence=g.confidence,
+        evidence=g.evidence,
     )
 
 
@@ -529,7 +516,11 @@ def list_groups(db: DbDep, _: ReaderDep) -> list[GroupOut]:
             members.setdefault(a.group_id, []).append(a)
     return [
         _group_out(g, members.get(g.id, []))
-        for g in db.scalars(select(AssetGroup).order_by(AssetGroup.tier, AssetGroup.name))
+        for g in db.scalars(
+            select(AssetGroup).order_by(
+                AssetGroup.confirmed.desc(), AssetGroup.tier, AssetGroup.name
+            )
+        )
     ]
 
 

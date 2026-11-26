@@ -159,9 +159,15 @@ def test_full_collection_and_analysis(client: TestClient, admin: dict[str, str])
     assert sql_rule["ips_policy"] == "Maximum Detection"
     assert [x["name"] for x in sql_rule["refs"]["dst_net"]] == ["GRP_SRV_GOLD"]
     assert sql_rule["refs"]["dst_port"][0]["kind"] == "port"
+    # Both units of a pair serve the pair's counts: they are read once (primary unit), not summed.
+    primaries = {ha["primary"]["id"] for ha in DATA.ha_pairs}
     hits_expected = sum(
-        h["hitCount"] for (pid, _), items in DATA.hitcounts.items() if pid == policy for h in items
+        h["hitCount"]
+        for (pid, dev), items in DATA.hitcounts.items()
+        if pid == policy and dev in primaries
+        for h in items
     )
+    assert hits_expected > 0
     with get_sessionmaker()() as s:
         hits = s.scalar(
             select(func.sum(Rule.hit_count)).where(

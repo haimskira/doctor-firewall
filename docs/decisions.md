@@ -3,6 +3,26 @@
 Short records of choices that deviate from, or refine, the specification and the agreed
 decisions. Newest first.
 
+### D-033 — Asset discovery from cross-checked evidence, never from a site's names
+The name-only bootstrap suggested one unconfirmed row per address (40,000 rows at a customer) and
+knew nothing of segments. Discovery (`app/analysis/discovery.py`, `POST /api/assets/discover`)
+infers **segments** with a role (DC servers, SDA / legacy users, SDA / legacy voice, network
+devices, management, DMZ, outside), **domains** and **suggested assets** (systems, servers,
+network devices, management, user populations per domain) by adding up independent evidence the
+FMC already holds: FTD interfaces (the FTD is the gateway of each interface subnet) and routes
+(segments behind a next hop; the default route's interface faces outside); generic words in
+object / group / zone / interface / dynamic-object names; how rules use each address (client,
+server, voice ports, SNMP / NETCONF, SGTs = ISE-managed); and consensus — a group or dynamic
+object whose classified members mostly share a role lends it to the rest, so the dynamic object
+that tracks the switches is recognised by its content, whatever it is called. Domains are learnt:
+qualifiers recurring in user-object names across several populations, or realm prefixes of user
+conditions. Systems are the smallest *used* group of servers, else the leading distinctive name
+token (a family too large to be one system is split by its next token); the tier comes from the
+tier zone the servers sit behind, else from the names. No customer name is in the code. Results
+are stored unconfirmed with their evidence; a re-run replaces only unconfirmed suggestions (and
+the old per-address rows). Bulk delete (`POST /api/assets/purge`, `scope` all / unassigned /
+suggested) requires `confirm: "DELETE"`.
+
 ### D-032 — Connect to the FMC by IP address: certificate pinning, verification never off
 A hostname-verified connection needed the name `firepower`, an `extra_hosts` mapping and the FMC
 certificate in the trust bundle. Now an admin can type the IP address: the UI fetches the

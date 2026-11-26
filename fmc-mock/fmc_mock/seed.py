@@ -619,24 +619,27 @@ def generate(clusters: int = 3, rules_per_policy: int = 200, seed: int = 1) -> F
             r["metadata"]["ruleIndex"] = index
         b.data.rules[policy["id"]] = rules
 
-        # Hit counts per device of the pair (active unit only gets hits).
-        for d, active in ((devs[0], True), (devs[1], False)):
+        # Hit counts of the pair. Like the real FMC (seen on 10.x), a query for either unit of
+        # an HA pair returns the counts of the whole pair, so both units serve the same counts.
+        pair_counts = [
+            # About one rule in five never hit (dead), as in a typical estate.
+            0 if rng.random() < 0.2 else rng.randint(1, 10_000_000)
+            for _ in rules
+        ]
+        for d in devs[:2]:
             b.data.hitcounts[(policy["id"], d["id"])] = [
                 {
                     "type": "HitCount",
-                    # About one rule in five never hit (dead), as in a typical estate.
-                    "hitCount": (
-                        (0 if rng.random() < 0.2 else rng.randint(1, 10_000_000)) if active else 0
-                    ),
+                    "hitCount": count,
                     "firstHitTimeStamp": " ",
-                    "lastHitTimeStamp": "2026-10-01T10:00:00Z" if active else " ",
+                    "lastHitTimeStamp": "2026-10-01T10:00:00Z",
                     "lastDeployedTimeStamp": "2026-01-15T08:00:00Z",
                     # The FMC serves counts from a cache refreshed at this time: just now.
                     "lastFetchTimeStamp": FETCHED_AT,
                     "rule": {"id": r["id"], "name": r["name"], "type": "AccessRule"},
                     "metadata": {"policy": _ref(policy), "device": _ref(d)},
                 }
-                for r in rules
+                for r, count in zip(rules, pair_counts, strict=True)
             ]
 
         # Interfaces, routes, BGP — configured on the primary unit.

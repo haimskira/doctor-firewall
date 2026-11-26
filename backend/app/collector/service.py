@@ -476,11 +476,10 @@ class Collector:
                 .values(rule_count=total)
             )
         if kind is PolicyKind.ACCESS:
+            # One query per cluster: for either unit of an HA pair the FMC returns the counts
+            # of the whole pair, so asking both units would count every hit twice.
             devices = [
-                m["id"]
-                for c in clusters
-                if c["policy_fmc_id"] == policy.fmc_id
-                for m in c["members"]
+                c["primary_device_fmc_id"] for c in clusters if c["policy_fmc_id"] == policy.fmc_id
             ]
             trace.set_step(f"{label}: hit counts")
             await self._hitcounts(

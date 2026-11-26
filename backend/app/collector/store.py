@@ -329,7 +329,8 @@ def delete_policy_rules(session: Session, snapshot_id: int, policy_id: str) -> N
 def apply_hitcounts(
     session: Session, snapshot_id: int, policy_id: str, hits: Iterable[HitCountRecord]
 ) -> None:
-    """Add hit counts per rule (summed across the units of an HA pair)."""
+    """Add hit counts per rule (summed across the clusters that run the policy; one query
+    per cluster, see ``Collector._hitcounts``)."""
     for h in hits:
         rule_id, count = h.rule_id, h.hit_count
         last = datetime.fromisoformat(h.last_hit) if h.last_hit else None

@@ -114,15 +114,14 @@ describe('RulebasePage scores', () => {
 describe('AssetsPage', () => {
   const component = { id: 1, group_id: 10, network: '10.20.5.0/24', system: 'SQL-FIN', tier: 'GOLD', system_type: 'DB', user_type: null, ports: 'TCP 1433', notes: '', source: 'manual', confirmed: true, updated_by: 'x' };
   const suggestion = { id: 2, group_id: null, network: '10.0.0.53/32', system: 'H_DNS1', tier: 'CORE', system_type: '', user_type: null, ports: '', notes: '', source: 'bootstrap', confirmed: false, updated_by: 'x' };
-  const finCore = { id: 10, name: 'FIN-CORE', kind: 'system', tier: 'GOLD', user_type: null, owner: 'Finance IT', description: '', updated_by: 'x', components: [component] };
+  const finCore = { id: 10, name: 'FIN-CORE', kind: 'system', tier: 'GOLD', user_type: null, owner: 'Finance IT', description: '', updated_by: 'x', components: [component], source: 'manual', confirmed: true, domain: null, confidence: 100, evidence: [] };
 
-  it('reports CSV errors by line, bootstraps and confirms suggestions', async () => {
+  it('reports CSV errors by line and confirms suggestions', async () => {
     let assets = [component, suggestion];
     const calls = setup('/assets', <Route path="/assets" element={<AssetsPage />} />, (req) => {
       if (req.url === '/api/asset-groups' && req.method === 'GET') return { status: 200, body: [finCore] };
       if (req.url === '/api/assets' && req.method === 'GET') return { status: 200, body: assets };
       if (req.url === '/api/assets/import') return { status: 422, body: { detail: 'csv_invalid_rows', errors: [{ line: 3, fields: ['network'] }, { line: 7, fields: ['tier'] }] } };
-      if (req.url === '/api/assets/bootstrap') return { status: 200, body: { created: 4, updated: 0 } };
       if (req.url === '/api/assets/confirm') {
         assets = assets.map((a) => ({ ...a, confirmed: true }));
         return { status: 200, body: { created: 0, updated: 1 } };
@@ -138,9 +137,6 @@ describe('AssetsPage', () => {
     expect(await screen.findByText('The file was not imported. Fix lines: 3, 7')).toBeInTheDocument();
     const upload = calls.find((c) => c.url === '/api/assets/import');
     expect(upload?.body).toEqual({ csv: 'network,system,tier\nbad,x,GOLD\n' });
-    await user.click(screen.getByRole('button', { name: 'Suggest from snapshot' }));
-    expect(await screen.findByText(/4 suggestions added/)).toBeInTheDocument();
-    expect(calls.find((c) => c.url === '/api/assets/bootstrap')?.body).toEqual({ snapshot_id: 7 });
     await user.click(screen.getByRole('button', { name: 'Confirm all suggestions (1)' }));
     expect(calls.find((c) => c.url === '/api/assets/confirm')?.body).toEqual({ ids: [2] });
   });
@@ -150,7 +146,7 @@ describe('AssetsPage', () => {
     const calls = setup('/assets', <Route path="/assets" element={<AssetsPage />} />, (req) => {
       if (req.url === '/api/asset-groups' && req.method === 'GET') return { status: 200, body: groups };
       if (req.url === '/api/asset-groups' && req.method === 'POST') {
-        const made = { id: 11, name: 'HR-STAFF', kind: 'user_segment', tier: 'USERS', user_type: 'HR', owner: '', description: '', updated_by: 'opt', components: [] };
+        const made = { id: 11, name: 'HR-STAFF', kind: 'user_segment', tier: 'USERS', user_type: 'HR', owner: '', description: '', updated_by: 'opt', components: [], source: 'manual', confirmed: true, domain: null, confidence: 100, evidence: [] };
         groups = [...groups, made];
         return { status: 201, body: made };
       }

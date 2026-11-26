@@ -117,29 +117,6 @@ def test_csv_import_is_all_or_nothing_and_export_is_safe(
     assert "'=HYPERLINK" in export.text  # formula neutralised
 
 
-def test_bootstrap_suggests_unconfirmed_assets(client: TestClient, admin: dict[str, str]) -> None:
-    sid = _snapshot(client, admin)
-    result = client.post("/api/assets/bootstrap", headers=admin, json={"snapshot_id": sid})
-    assert result.json()["created"] > 0
-    assets = {a["network"]: a for a in client.get("/api/assets").json()}
-    assert all(a["confirmed"] is False and a["source"] == "bootstrap" for a in assets.values())
-    assert assets["10.20.5.11/32"]["tier"] == "GOLD"  # H_GOLD_DB1
-    assert assets["10.0.0.53/32"]["tier"] == "CORE"  # H_DNS1
-    assert assets["10.100.10.0/24"]["tier"] == "USERS"
-    assert assets["10.100.10.0/24"]["user_type"] == "FIN"
-    assert "0.0.0.0/0" not in assets  # any-ipv4 is never suggested
-    ids = [a["id"] for a in assets.values()]
-    assert client.post("/api/assets/confirm", headers=admin, json={"ids": ids}).json()[
-        "updated"
-    ] == len(ids)
-    assert (
-        client.post("/api/assets/bootstrap", headers=admin, json={"snapshot_id": sid}).json()[
-            "created"
-        ]
-        == 0
-    )  # idempotent
-
-
 def test_shadowing_dead_rules_and_scores(client: TestClient, admin: dict[str, str]) -> None:
     client.post("/api/assets/import", headers=admin, json={"csv": DOCTRINE_CSV})
     sid = _snapshot(client, admin)

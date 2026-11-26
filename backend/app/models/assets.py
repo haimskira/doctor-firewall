@@ -43,6 +43,7 @@ class AssetGroup(Base):
     __table_args__ = (
         CheckConstraint("tier IN ('CORE','GOLD','SILVER','BRONZE','USERS')", name="tier_known"),
         CheckConstraint("kind IN ('system','server','user','user_segment')", name="kind_known"),
+        CheckConstraint("source IN ('manual','csv','discovery')", name="source_known"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -52,6 +53,13 @@ class AssetGroup(Base):
     user_type: Mapped[str | None] = mapped_column(String(16))
     owner: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # Discovery suggestions wait unconfirmed (with the evidence behind them) until an operator
+    # accepts them; only confirmed assets feed the analysis.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    domain: Mapped[str | None] = mapped_column(String(64))
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=100)  # percent
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -69,7 +77,7 @@ class Asset(Base):
     __tablename__ = "assets"
     __table_args__ = (
         CheckConstraint("tier IN ('CORE','GOLD','SILVER','BRONZE','USERS')", name="tier_known"),
-        CheckConstraint("source IN ('manual','csv','bootstrap')", name="source_known"),
+        CheckConstraint("source IN ('manual','csv','bootstrap','discovery')", name="source_known"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -88,6 +96,71 @@ class Asset(Base):
     # Bootstrap suggestions stay unconfirmed until an operator accepts them; only
     # confirmed assets feed the analysis.
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+SEGMENT_ROLES = (
+    "dc_servers",
+    "sda_users",
+    "legacy_users",
+    "vc_sda",
+    "vc_legacy",
+    "network_devices",
+    "management",
+    "dmz",
+    "outside",
+    "unknown",
+)
+
+
+class Segment(Base):
+    """A network segment and what it is for: found by discovery (topology, names, behaviour)
+    or added by an operator. Operator-maintained like the assets: survives every pull."""
+
+    __tablename__ = "segments"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN (" + ",".join(f"'{r}'" for r in SEGMENT_ROLES) + ")", name="role_known"
+        ),
+        CheckConstraint("source IN ('manual','discovery')", name="source_known"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    network: Mapped[str] = mapped_column(String(96), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    domain: Mapped[str | None] = mapped_column(String(64))
+    cluster: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    interface: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    zone: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    gateway: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    in_dc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=100)  # percent
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    notes: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AssetDomain(Base):
+    """An administrative domain every user population belongs to (learnt or added)."""
+
+    __tablename__ = "asset_domains"
+    __table_args__ = (CheckConstraint("source IN ('manual','discovery')", name="source_known"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

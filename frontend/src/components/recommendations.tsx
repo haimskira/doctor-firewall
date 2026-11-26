@@ -93,6 +93,20 @@ const FIELD_ORDER: readonly PreviewFieldName[] = [
   'file_policy',
 ];
 
+/** Fields always shown on a rule card: empty means "any", and that must be visible. */
+const CORE_FIELDS: ReadonlySet<PreviewFieldName> = new Set<PreviewFieldName>([
+  'src_zone',
+  'src_net',
+  'dst_zone',
+  'dst_net',
+  'dst_port',
+]);
+
+/** How a value is drawn: removed (red, struck), added / changed (green), the object that
+ * already holds a removed one (green, outlined), or unchanged. */
+type Mark = 'del' | 'add' | 'keep' | undefined;
+type Classify = (field: string, value: string) => Mark;
+
 function fieldValues(rule: PreviewRule, field: PreviewFieldName): string[] {
   return new Map(Object.entries(rule.fields)).get(field) ?? [];
 }
@@ -101,37 +115,63 @@ function fieldChange(rule: PreviewRule, field: PreviewFieldName | 'name' | 'acti
   return new Map(Object.entries(rule.changes ?? {})).get(field);
 }
 
-function FieldValues({ rule, field, inline }: { rule: PreviewRule; field: PreviewFieldName; inline: boolean }) {
+function Chip({ value, mark }: { value: string; mark: Mark }) {
+  const { t } = useI18n();
+  if (mark === 'del') {
+    return (
+      <del className="chip diff-del" title={t('rec.mark.del')}>
+        <Ltr>{value}</Ltr>
+      </del>
+    );
+  }
+  if (mark === 'add') {
+    return (
+      <ins className="chip diff-add" title={t('rec.mark.add')}>
+        <Ltr>{value}</Ltr>
+      </ins>
+    );
+  }
+  return (
+    <span className={mark === 'keep' ? 'chip diff-keep' : 'chip'} title={mark === 'keep' ? t('rec.mark.keep') : undefined}>
+      <Ltr>{value}</Ltr>
+    </span>
+  );
+}
+
+function FieldValues({
+  rule,
+  field,
+  inline,
+  classify,
+}: {
+  rule: PreviewRule;
+  field: PreviewFieldName;
+  inline: boolean;
+  classify?: Classify | undefined;
+}) {
+  const { t } = useI18n();
   const values = fieldValues(rule, field);
   const change = inline ? fieldChange(rule, field) : undefined;
   const added = new Set(change?.added ?? []);
+  const removed = change?.removed ?? [];
   return (
     <span className="chips-inline">
-      {values.map((v) =>
-        added.has(v) ? (
-          <ins key={v} className="chip diff-add">
-            <Ltr>{v}</Ltr>
-          </ins>
-        ) : (
-          <span key={v} className="chip">
-            <Ltr>{v}</Ltr>
-          </span>
-        ),
-      )}
-      {(change?.removed ?? []).map((v) => (
-        <del key={`-${v}`} className="chip diff-del">
-          <Ltr>{v}</Ltr>
-        </del>
+      {values.length === 0 && removed.length === 0 && <span className="chip any">{t('rules.any')}</span>}
+      {values.map((v) => (
+        <Chip key={v} value={v} mark={added.has(v) ? 'add' : classify?.(field, v)} />
+      ))}
+      {removed.map((v) => (
+        <Chip key={`-${v}`} value={v} mark="del" />
       ))}
     </span>
   );
 }
 
-function RuleCard({ rule, inline }: { rule: PreviewRule; inline: boolean }) {
+function RuleCard({ rule, inline, classify }: { rule: PreviewRule; inline: boolean; classify?: Classify | undefined }) {
   const { t } = useI18n();
   const status = rule.status ?? 'unchanged';
   const fields = FIELD_ORDER.filter(
-    (f) => fieldValues(rule, f).length > 0 || (inline && fieldChange(rule, f) !== undefined),
+    (f) => CORE_FIELDS.has(f) || fieldValues(rule, f).length > 0 || (inline && fieldChange(rule, f) !== undefined),
   );
   const rename = inline ? fieldChange(rule, 'name') : undefined;
   const actionChange = inline ? fieldChange(rule, 'action') : undefined;
@@ -169,25 +209,21 @@ function RuleCard({ rule, inline }: { rule: PreviewRule; inline: boolean }) {
         )}
         {status !== 'unchanged' && <span className={`badge status-${status}`}>{t(`rec.status.${status}`)}</span>}
       </div>
-      {fields.length === 0 ? (
-        <div className="muted small">{t('rules.any')}</div>
-      ) : (
-        <dl className="rule-card-fields">
-          {fields.map((f) => (
-            <div key={f}>
-              <dt className="muted small">{t(`field.${f}`)}</dt>
-              <dd>
-                <FieldValues rule={rule} field={f} inline={inline} />
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      <dl className="rule-card-fields">
+        {fields.map((f) => (
+          <div key={f}>
+            <dt className="muted small">{t(`field.${f}`)}</dt>
+            <dd>
+              <FieldValues rule={rule} field={f} inline={inline} classify={classify} />
+            </dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
 
-function ObjectCard({ obj }: { obj: PreviewObject }) {
+function ObjectCard({ obj, classify }: { obj: PreviewObject; classify?: Classify | undefined }) {
   const { t } = useI18n();
   return (
     <div className={`rule-card status-${obj.status}`}>
@@ -210,15 +246,63 @@ function ObjectCard({ obj }: { obj: PreviewObject }) {
           <span className="muted">{t('rec.members')}: </span>
           <span className="chips-inline">
             {obj.members.map((m) => (
-              <span key={m} className="chip">
-                <Ltr>{m}</Ltr>
-              </span>
+              <Chip key={m} value={m} mark={classify?.('members', m)} />
             ))}
           </span>
         </div>
       )}
       {obj.references !== undefined && <div className="muted small">{t('rec.references', { count: obj.references })}</div>}
     </div>
+  );
+}
+
+// ---- before / after colouring ------------------------------------------------------------
+
+interface Valued {
+  id: string | null;
+  status?: string;
+}
+
+/** The other side's values of one field for a card: the same rule / object when it lives on,
+ * otherwise everything the other side keeps (a merged rule's values live on in the survivor). */
+function counterpart<T extends Valued>(item: T, other: T[], values: (x: T, field: string) => string[]): (field: string) => Set<string> {
+  const same = item.id === null ? undefined : other.find((o) => o.id === item.id && o.status !== 'removed');
+  if (same !== undefined) return (field) => new Set(values(same, field));
+  const alive = other.filter((o) => o.status !== 'removed');
+  return (field) => new Set(alive.flatMap((o) => values(o, field)));
+}
+
+/** Objects that already hold a removed one ("already inside AAA": AAA), per field. */
+function keptNames(preview: RecommendationPreview): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const r of preview.redundant ?? []) {
+    const field = r.field ?? 'members';
+    const set = out.get(field) ?? new Set<string>();
+    set.add(r.kept);
+    out.set(field, set);
+  }
+  return out;
+}
+
+function classifier(side: 'before' | 'after', lookup: (field: string) => Set<string>, kept: Map<string, Set<string>>): Classify {
+  return (field, value) => {
+    if (kept.get(field)?.has(value) === true) return 'keep';
+    if (lookup(field).has(value)) return undefined;
+    return side === 'before' ? 'del' : 'add';
+  };
+}
+
+const ruleValues = (r: PreviewRule, field: string): string[] => fieldValues(r, field as PreviewFieldName);
+const objectValues = (o: PreviewObject, field: string): string[] => (field === 'members' ? (o.members ?? []) : []);
+
+function MarkLegend() {
+  const { t } = useI18n();
+  return (
+    <p className="muted small mark-legend">
+      <del className="chip diff-del">{t('rec.mark.del')}</del>
+      <ins className="chip diff-add">{t('rec.mark.add')}</ins>
+      <span className="chip diff-keep">{t('rec.mark.keep')}</span>
+    </p>
   );
 }
 
@@ -259,14 +343,17 @@ export function RecommendationPreviewView({
   const { t } = useI18n();
   const before = preview.before ?? [];
   const after = preview.after ?? [];
+  const kept = keptNames(preview);
+  const keepOnly: Classify = (field, value) => (kept.get(field)?.has(value) === true ? 'keep' : undefined);
   const label = (key: MessageKey) => <h3>{t(key)}</h3>;
   return (
     <div className="rec-preview">
+      {(after.length > 0 || preview.objects !== undefined) && <MarkLegend />}
       {after.length > 0 &&
         (view === 'inline' ? (
           <div className="rule-cards">
             {after.map((r, i) => (
-              <RuleCard key={`${r.id ?? 'new'}-${String(i)}`} rule={r} inline />
+              <RuleCard key={`${r.id ?? 'new'}-${String(i)}`} rule={r} inline classify={keepOnly} />
             ))}
           </div>
         ) : (
@@ -275,7 +362,12 @@ export function RecommendationPreviewView({
               {label('rec.before')}
               <div className="rule-cards">
                 {before.map((r, i) => (
-                  <RuleCard key={`${r.id ?? 'b'}-${String(i)}`} rule={r} inline={false} />
+                  <RuleCard
+                    key={`${r.id ?? 'b'}-${String(i)}`}
+                    rule={r}
+                    inline={false}
+                    classify={classifier('before', counterpart(r, after, ruleValues), kept)}
+                  />
                 ))}
               </div>
             </div>
@@ -285,7 +377,12 @@ export function RecommendationPreviewView({
                 {after
                   .filter((r) => r.status !== 'removed')
                   .map((r, i) => (
-                    <RuleCard key={`${r.id ?? 'a'}-${String(i)}`} rule={r} inline={false} />
+                    <RuleCard
+                      key={`${r.id ?? 'a'}-${String(i)}`}
+                      rule={r}
+                      inline={false}
+                      classify={classifier('after', counterpart(r, before, ruleValues), kept)}
+                    />
                   ))}
               </div>
             </div>
@@ -310,7 +407,11 @@ export function RecommendationPreviewView({
             {label('rec.before')}
             <div className="rule-cards">
               {preview.objects.before.map((o) => (
-                <ObjectCard key={`b-${o.id ?? o.name}`} obj={o} />
+                <ObjectCard
+                  key={`b-${o.id ?? o.name}`}
+                  obj={o}
+                  classify={classifier('before', counterpart(o, preview.objects?.after ?? [], objectValues), kept)}
+                />
               ))}
             </div>
           </div>
@@ -318,7 +419,11 @@ export function RecommendationPreviewView({
             {label('rec.after')}
             <div className="rule-cards">
               {preview.objects.after.map((o) => (
-                <ObjectCard key={`a-${o.id ?? o.name}-${o.status}`} obj={o} />
+                <ObjectCard
+                  key={`a-${o.id ?? o.name}-${o.status}`}
+                  obj={o}
+                  classify={classifier('after', counterpart(o, preview.objects?.before ?? [], objectValues), kept)}
+                />
               ))}
             </div>
           </div>

@@ -225,7 +225,7 @@ async def _read_hits(
     devices: dict[str, list[str]],
     wanted: set[str],
 ) -> dict[str, int]:
-    """Hit counts of the wanted rules (summed over the units of each cluster)."""
+    """Hit counts of the wanted rules (one query per cluster, summed over clusters)."""
     out: dict[str, int] = {}
     resource = adapter.POLICY_RESOURCES[PolicyKind.ACCESS]
     for policy, units in devices.items():
@@ -252,8 +252,10 @@ def _devices(db: Session, snapshot_id: int, policies: set[str]) -> dict[str, lis
         )
     ):
         clusters[policy].append(cluster)
+    # One unit per cluster: for either unit of an HA pair the FMC returns the whole pair's
+    # counts, so reading both would count every hit twice.
     units = {
-        c.fmc_id: [str(m["id"]) for m in c.members if m.get("id")]
+        c.fmc_id: [c.primary_device_fmc_id]
         for c in db.scalars(select(Cluster).where(Cluster.snapshot_id == snapshot_id))
     }
     return {p: sorted({u for c in cs for u in units.get(c, [])}) for p, cs in clusters.items()}

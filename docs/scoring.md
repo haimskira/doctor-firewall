@@ -27,7 +27,7 @@ code and shown to the operator — no black box. Source: `backend/app/analysis/s
 | `no_logging` | 5 | A permit rule without logging |
 | `unclassified_destination` | 0 | Information: part of the destination is not in the asset table |
 
-Tiers come from the **confirmed** asset table only (bootstrap suggestions do not count until an
+Tiers come from the **confirmed** asset table only (discovery suggestions do not count until an
 operator confirms them). CORE is outside the tiers; USERS is the user space (with `user_type`).
 
 ## Shadowing and overlaps

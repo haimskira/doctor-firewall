@@ -618,6 +618,9 @@ label.button {
 .badge.status-modified { border-color: var(--warn); color: var(--warn); }
 ins.diff-add, .chip.diff-add { text-decoration: none; background: color-mix(in srgb, var(--allow) 15%, transparent); border-color: var(--allow); color: var(--allow); }
 del.diff-del, .chip.diff-del { background: color-mix(in srgb, var(--block) 12%, transparent); border-color: var(--block); color: var(--block); }
+.chip.diff-keep { background: color-mix(in srgb, var(--allow) 15%, transparent); border: 2px solid var(--allow); color: var(--allow); font-weight: 600; }
+.chip.any { font-style: italic; }
+.mark-legend { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
 .rename-line { font-size: 1.05rem; }
 ul.plain-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .small-chip { font-size: 0.75rem; }
@@ -1312,3 +1315,11 @@ a.button-link:hover { background: var(--primary-soft); }
 .fmclog-events td { vertical-align: top; }
 .nowrap { white-space: nowrap; }
 .snap-error-detail { font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; margin-block: 0.2rem; overflow-wrap: anywhere; text-align: start; }
+
+/* ---- asset discovery ---- */
+.modal-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.25rem; max-width: 30rem; width: 100%; display: flex; flex-direction: column; gap: 0.75rem; }
+.evidence-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+tr.evidence-row td { background: var(--primary-soft); }
+td.edit-cell input, td.edit-cell select { min-width: 7rem; max-width: 14rem; }
+.badge.status-approved { border-color: var(--ok); color: var(--ok); }

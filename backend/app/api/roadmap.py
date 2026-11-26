@@ -20,7 +20,7 @@ from app.auth.rbac import Permission
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.enforce.staleness import stale_since
-from app.models.assets import Asset, ClusterSetting
+from app.models.assets import Asset, AssetGroup, ClusterSetting
 from app.models.enforce import Changeset, ChangesetItem
 from app.models.inventory import Cluster, ClusterPolicy, Policy, Rule, Snapshot
 from app.models.recommendations import Recommendation, RecommendationDecision, behavior
@@ -66,7 +66,13 @@ class RoadmapOut(BaseModel):
 
 def _checks(db: Session, snap: Snapshot) -> list[Check]:
     sid = snap.id
-    assets = db.scalar(select(func.count()).select_from(Asset).where(Asset.confirmed.is_(True)))
+    assets = db.scalar(
+        select(func.count())
+        .select_from(Asset)
+        .outerjoin(AssetGroup, AssetGroup.id == Asset.group_id)
+        .where(Asset.confirmed.is_(True))
+        .where(AssetGroup.id.is_(None) | AssetGroup.confirmed.is_(True))
+    )
     clusters = list(db.scalars(select(Cluster.fmc_id).where(Cluster.snapshot_id == sid)))
     verified = set(
         db.scalars(
